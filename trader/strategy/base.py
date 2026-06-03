@@ -54,7 +54,7 @@ class Strategy(ABC):
         asof = pd.Timestamp(asof)
         visible = bars.loc[bars.index <= asof]
         if visible.empty:
-            return Signal(self.symbol, "hold", 0.0, "no data as of asof")
+            return Signal(self.symbol, "hold", 0.0, f"no data as of {asof}")
         return self._decide(visible, asof)
 
     @abstractmethod
