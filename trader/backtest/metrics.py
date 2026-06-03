@@ -60,9 +60,8 @@ def compute_metrics(equity: pd.Series, trades: list) -> Metrics:
 
     start, end = float(equity.iloc[0]), float(equity.iloc[-1])
     total_return = end / start - 1.0
-    periods = max(len(equity), 1)
+    periods = max(len(equity) - 1, 1)
     annualized = (1.0 + total_return) ** (TRADING_DAYS / periods) - 1.0
-
     wins = sum(1 for t in trades if t.return_pct > 0)
     win_rate = wins / len(trades) if trades else 0.0
 
