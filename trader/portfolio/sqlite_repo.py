@@ -6,8 +6,7 @@ destructive migration of real user data. A Postgres/Supabase adapter replaces th
 behind the same interface later.
 
 Concurrency: the scheduler and the Streamlit dashboard touch this DB at once, so we open
-in WAL mode with a busy timeout and use a short-lived connection per call. `check_same_
-thread=False` lets a connection cross threads safely given the per-call pattern.
+in WAL mode with a busy timeout and use a short-lived connection per call. `check_same_thread=False` lets a connection cross threads safely given the per-call pattern.
 """
 from __future__ import annotations
 
