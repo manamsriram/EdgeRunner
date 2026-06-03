@@ -1,149 +1,70 @@
-# Stock Analyzer Bot 📈
+# Stock Analyzer Bot → Autonomous Trading Agent 📈
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![LangChain](https://img.shields.io/badge/LangChain-AI-00B86B?logo=dataiku&logoColor=white)](https://langchain.com/)
-[![OpenAI](https://img.shields.io/badge/OpenAI-GPT4-10A37F?logo=openai&logoColor=white)](https://platform.openai.com/)
-[![yfinance](https://img.shields.io/badge/yfinance-Finance-73A1FB?logo=yahoo&logoColor=white)](https://pypi.org/project/yfinance/)
-[![DuckDuckGo](https://img.shields.io/badge/DuckDuckGo-Search-FE7A16?logo=duckduckgo&logoColor=white)](https://duckduckgo.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
----
-
-> **AI-powered Bot to analyze stocks using LLMs, real-time/historical price, financials, and news.**  
-> Get comprehensive investment insights from any device––no finance expertise required!
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Alpaca](https://img.shields.io/badge/Alpaca-Paper%20Trading-FFD700?style=for-the-badge&logo=alpaca&logoColor=black)](https://alpaca.markets/)
+[![Claude](https://img.shields.io/badge/Claude-Overlay-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://www.anthropic.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![pandas](https://img.shields.io/badge/pandas-Backtest-150458?style=for-the-badge&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
 ---
 
-## 🔥 Overview
-
-Stock Analyzer Bot uses LangChain, OpenAI LLMs, and live search/news/financial APIs to:
-- Fetch & analyze **real-time/historical stock prices**
-- Summarize **latest company news**
-- Parse **financial statements**
-- Return actionable investment analysis
+> **A read-only stock-research bot evolving into a disciplined, paper-first autonomous trading agent** — quant strategy, hard risk guardrails, a non-load-bearing Claude overlay, and human-in-the-loop approval that flips to full autonomy with a single config flag.
 
 ---
 
-## 🎯 Motivation
+## What this is going to do
 
-Stock analysis can be overwhelming for everyday investors. This bot centralizes data, automates analysis, and translates jargon, so you can focus on making smart decisions—faster.
+The project began as a LangChain/LLM stock-research chatbot (still runs — see [Legacy research app](#legacy-research-app)). It is being rebuilt, phase by phase, into a **personal autonomous trading agent on Alpaca** that:
 
----
+- **Executes a backtested quant strategy** (swing / daily bars, multi-day holds — sidesteps the PDT rule) on a **liquid US large-cap universe**.
+- **Proves edge before risking money** — an honest backtest harness (no lookahead, fees + slippage modelled) is the keystone, not an afterthought.
+- **Routes every order through one fail-closed risk gate** — allowlist, position cap, daily-loss breaker, max trades/day, no shorting, file-backed kill switch.
+- **Treats the broker as the source of truth** — reconciles against Alpaca every cycle; idempotent orders so a crash/retry never double-fires.
+- **Keeps a human in the loop now, autonomy later** — `AUTONOMY=manual` queues proposals for dashboard approval; flipping to `auto` is the *only* code-path difference, and it still passes the same gate + kill switch.
+- **Uses Claude as garnish, not the driver** — the LLM overlay can veto or nudge confidence with a written rationale, but **never originates a trade or sets size**.
 
-## 🚀 Features
-
-- **Conversational Q&A:** Ask investment questions in plain English.
-- **Comprehensive Pipeline:** Prices, news, financials—all in one workflow.
-- **Sentiment & Risk Analysis:** Latest market sentiment mixed with hard data.
-- **Integrated Dashboard:** History, authentication, easy exploration.
-- **Extensible Tools:** Add custom analysis, new data sources, or assets.
-
----
-
-## 🛠️ Tech Stack
-
-| [![Python](https://img.shields.io/badge/-Python-3A75A6?logo=python)](https://www.python.org/) | [![Streamlit](https://img.shields.io/badge/-Streamlit-FF4B4B?logo=streamlit)](https://streamlit.io/) | [![LangChain](https://img.shields.io/badge/-LangChain-29B88A?logo=dataiku)](https://langchain.com/) | [![OpenAI](https://img.shields.io/badge/-OpenAI-10A37F?logo=openai)](https://openai.com/) | [![yfinance](https://img.shields.io/badge/-yfinance-73A1FB?logo=yahoo)](https://github.com/ranaroussi/yfinance) | [![DuckDuckGo](https://img.shields.io/badge/-DuckDuckGo-FE7A16?logo=duckduckgo)](https://duckduckgo.com/) | [![BeautifulSoup](https://img.shields.io/badge/-BeautifulSoup-4E8B93?logo=pypi)](https://www.crummy.com/software/BeautifulSoup/) | [![Pandas](https://img.shields.io/badge/-Pandas-150458?logo=pandas)](https://pandas.pydata.org/) |
-|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+**Paper-first, and honest about it:** no system reliably "makes money." This builds an agent that runs *your* strategy with hard guardrails and **measures whether it has edge on historical + paper data before any real money**. The risk lives in the backtest's honesty, not the plumbing. Live trading stays gated in config until edge is proven.
 
 ---
 
-## 📦 Installation
-
-git clone https://github.com/manamsriram/Stock-Analyzer-Bot.git
-cd Stock-Analyzer-Bot
-
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-pip install -r requirements.txt
-
-
-Add your OpenAI API key to a `.env` file:
-
-OPENAI_API_KEY=sk-xxxxxxx
-
-
----
-
-## 🖥️ Usage
-
-streamlit run app.py
-
-Open the Streamlit link in your browser, register/login, and start asking investment questions!
-
----
-
-## 🗂️ Example Queries
-
-- "Should I invest in Tesla this month?"
-- "Show me financials and latest news for Yes Bank."
-- "What's the outlook for Apple stock?"
-
----
-
-## 🧰 Notebooks & Core Logic
-
-- **stock_analyzer_bot.ipynb** : Tool definitions, LLM workflow examples, testing
-- **app.py** : Streamlit web app, user authentication, query storage
-- **tools/fetch_stock_info.py** : All major tools for price, news, financials
-
----
-
-## 🏗️ Roadmap
-
-- Add: Technical analysis, charting
-- Support: More open-source LLMs (Claude, Mistral, Llama, ...), new markets
-- Deploy: HuggingFace Spaces, Streamlit Cloud
-- Modular: Crypto, mutual funds, asset categories
-- Enhanced: Visual dashboard, search tools
-
----
-
-## 🤖 Trading agent (paper-first)
-
-The `trader/` package evolves this read-only research tool into a disciplined,
-**paper-first Alpaca trading agent**. It is built in phases so guardrails exist *before*
-any automation. **Phases 0–3 are implemented (40 tests green); phases 4–7 are a
-documented roadmap.**
-
-### Current state
+## Where it is now (Phases 0–3 shipped, 45 tests green)
 
 ```text
 trader/
-  config.py       # env + paper/live URL swap + autonomy flag + risk limits   [0]
+  config.py       # env + paper/live URL swap + autonomy flag + risk limits     [0]
   data/           # historical daily bars from Alpaca (the strategy data source) [1]
-  strategy/       # Strategy interface + MA-crossover & momentum/RSI            [1]
-  backtest/       # bar-replay harness: decide on bar t, fill on t+1 open       [2]
-  risk/           # fail-closed risk gate every order passes + kill switch      [3]
-  execution/      # Alpaca broker adapter: reconcile + idempotent orders        [3]
-  portfolio/      # PortfolioRepository interface + SQLite audit/approval store [3]
+  strategy/       # Strategy interface + MA-crossover & momentum/RSI             [1]
+  backtest/       # bar-replay harness: decide on bar t, fill on t+1 open        [2]
+  risk/           # fail-closed risk gate every order passes + kill switch       [3]
+  execution/      # Alpaca broker adapter: reconcile + idempotent orders         [3]
+  portfolio/      # PortfolioRepository interface + SQLite audit/approval store  [3]
 ```
 
-What each phase earned:
+| Phase | What it earned |
+|-------|----------------|
+| **0 — Security & scaffolding** | Secrets moved to a gitignored `.env`; `users.db` untracked; `trader/` package + paper/live config established. See `SECURITY.md` for the leaked-key rotation note. |
+| **1 — Data + strategy** | A `Strategy` contract that *enforces* no-lookahead (truncates bars to `asof` before any subclass runs), with MA-crossover and momentum/RSI strategies fed by Alpaca daily bars. |
+| **2 — Backtest harness (keystone)** | Replays bars through the **same `Strategy` interface** the live loop uses, decides on bar *t* and **fills on bar *t+1* open**, and charges fees + slippage — an honest edge estimate before real money. |
+| **3 — Risk gate + execution + portfolio** | The single fail-closed checkpoint every order passes; the Alpaca adapter where the **broker is the source of truth** and orders are **idempotent**; and a `PortfolioRepository` (SQLite now, Supabase/Postgres later) sharing `users.db` with no destructive migration. |
 
-- **Phase 0 — Security & scaffolding.** Secrets moved to a gitignored `.env`; `users.db`
-  untracked; the `trader/` package and paper/live config established. See `SECURITY.md`
-  for the leaked-key rotation note.
-- **Phase 1 — Data + strategy.** A `Strategy` contract that *enforces* no-lookahead
-  (truncates bars to `asof` before any subclass runs), with MA-crossover and momentum/RSI
-  strategies fed by Alpaca daily bars.
-- **Phase 2 — Backtest harness (keystone).** Replays bars through the **same `Strategy`
-  interface** the live loop uses, decides on bar *t* and **fills on bar *t+1* open** (no
-  lookahead), and charges fees + slippage — an honest edge estimate before real money.
-- **Phase 3 — Risk gate + execution + portfolio (order path).**
-  - **Risk gate** is the single checkpoint *every* order — manual or auto — must pass:
-    allowlist, max position size (buys sized down to the cap), daily-loss circuit breaker,
-    max trades/day, no shorting, and a file-backed **kill switch**. It is **fail-closed** —
-    a failed reconciliation or unknown daily P&L *rejects* rather than trades blind.
-  - **Execution** wraps Alpaca; the **broker is the source of truth for positions**
-    (`reconcile()` on every cycle), and orders are **idempotent** via a deterministic
-    `client_order_id` so a crash/retry can never double-fire.
-  - **Portfolio** persists orders/trades/signals/runs/proposals behind a
-    `PortfolioRepository` interface (local SQLite now, Supabase/Postgres later) — sharing
-    `users.db` with no destructive migration of existing user data.
+---
 
-### Run it
+## Where it is going (Phases 4–7 roadmap)
+
+| Phase | Plan |
+|-------|------|
+| **4 — Decision pipeline + approval + scheduler** | `pipeline.py` spine: `tick → data → strategy → overlay → risk → decision → execute → record`. The decision gate is the *only* difference between `manual` (proposals queued for dashboard approval) and `auto`. Scheduler on Alpaca market hours; Streamlit dashboard with pending approvals, P&L, equity curve, and a kill-switch button. |
+| **5 — Claude overlay (non-load-bearing)** | Anthropic SDK + prompt caching (Sonnet default) adjusts confidence / vetoes with a written rationale. It never originates a trade or sets size. |
+| **6 — Observability + autonomy toggle (still paper)** | Structured logging, metrics, alerts on fills/breaker trips/errors; then `AUTONOMY=auto` **on paper only**, exercising kill switch + circuit breakers in real market hours. |
+| **7 — Go-live gate (checklist, not code)** | Real money only after out-of-sample backtest edge with costs, paper reproduction over a meaningful window, and PDT-rule + paper-fill-optimism validation. |
+| **Storage swap** | Replace the SQLite repo with a Supabase/Postgres `PortfolioRepository` adapter (interface already in place) for multi-device dashboards. |
+
+**Locked decisions:** Alpaca, paper first · autonomy manual now, flag-flip to auto later · quant signals + non-load-bearing Claude overlay · liquid US large-caps · swing/daily (no PDT) · Claude (Sonnet overlay, Opus deep) · Supabase/Postgres storage.
+
+---
+
+## Run it
 
 ```bash
 git clone https://github.com/manamsriram/Stock-Analyzer-Bot.git
@@ -169,8 +90,6 @@ touch kill_switch.flag        # gate now rejects every order
 rm kill_switch.flag
 ```
 
-The legacy research app still runs with `streamlit run app.py`.
-
 ### Configuration (`.env`)
 
 | Variable | Purpose | Default |
@@ -181,46 +100,44 @@ The legacy research app still runs with `streamlit run app.py`.
 | `PORTFOLIO_DB_PATH` | SQLite store for orders/trades/proposals | `users.db` |
 | `KILL_SWITCH_PATH` | File whose presence halts trading | `kill_switch.flag` |
 | `AUTONOMY` | `manual` (approval-gated) or `auto` (Phase 6) | `manual` |
-
-### Next steps (roadmap)
-
-- **Phase 4 — Decision pipeline + human-in-loop approval.** `pipeline.py` spine
-  (`tick → data → strategy → overlay → risk → decision → execute`); the decision gate is
-  the *only* difference between `manual` (proposals queued for dashboard approval) and
-  `auto`. Scheduler on Alpaca market hours; Streamlit dashboard with pending approvals,
-  P&L, equity curve, and a kill-switch button.
-- **Phase 5 — Claude overlay (non-load-bearing).** Anthropic SDK + prompt caching (Sonnet
-  default) adjusts confidence / vetoes with a written rationale — it never originates a
-  trade or sets size.
-- **Phase 6 — Observability + autonomy toggle (still paper).** Structured logging, alerts,
-  then `AUTONOMY=auto` on paper, exercising kill switch + circuit breakers in market hours.
-- **Phase 7 — Go-live gate (checklist, not code).** Real money only after out-of-sample
-  backtest edge with costs, paper reproduction, and PDT-rule validation.
-- **Storage:** swap the SQLite repo for a Supabase/Postgres `PortfolioRepository` adapter
-  (interface already in place) for multi-device dashboards.
-
-> **Honest framing:** no system reliably "makes money." This builds an agent that executes
-> *your* strategy with hard guardrails and **proves whether it has edge on historical +
-> paper data before any real money** — the risk lives in the backtest's honesty, not the
-> plumbing.
+| `OPENAI_API_KEY` | Legacy research chatbot only | — |
 
 ---
 
-## 👤 Author
+## Legacy research app
+
+The original read-only research tool still runs — a Streamlit app with SQLite login and a LangChain/GPT-4 ReAct agent that pulls prices, financials, and news and returns text analysis.
+
+```bash
+streamlit run app.py
+```
+
+Register/login, then ask questions like *"What's the outlook for Apple stock?"* or *"Show me financials and latest news for Tesla."* Core logic lives in `tools/fetch_stock_info.py` (price/news/financials tools) and `app.py` (web app + auth + query history). Its news/financials tools are reused as **LLM-overlay context** in the trading agent — never as a signal source.
+
+---
+
+## Architecture (target)
+
+```text
+tick (Alpaca clock)
+  → data        Alpaca daily bars
+  → strategy    Strategy.generate(bars, asof)  → Signal
+  → overlay     Claude veto / confidence + rationale (non-load-bearing)
+  → risk gate   allowlist · position cap · daily-loss · max trades · no short · kill switch
+  → decision    manual → proposal queue (dashboard approval) | auto → execute
+  → execute     idempotent Alpaca order (broker = source of truth, reconcile first)
+  → record      orders / trades / signals / runs / proposals  (PortfolioRepository)
+```
+
+The backtest harness replays history through the **same `Strategy` + risk path** as live, so sim and live cannot diverge.
+
+---
+
+## Author
 
 Sri Ram Mannam  
-[GitHub](https://github.com/manamsriram) | [LinkedIn](https://www.linkedin.com/in/sri-ram-mannam-8b61aa228/)
+[GitHub](https://github.com/manamsriram) · [LinkedIn](https://www.linkedin.com/in/sri-ram-mannam-8b61aa228/)
 
----
-
-## 📜 License
+## License
 
 MIT License. See [`LICENSE`](LICENSE).
-
----
-
-## 🌐 Demo
-
-Try it live: [stock-analyzer-bot.vercel.app](https://stock-analyzer-bot.vercel.app)
-
----
