@@ -100,36 +100,109 @@ Open the Streamlit link in your browser, register/login, and start asking invest
 
 ---
 
-## 🤖 Trading agent (paper-first) — foundation
+## 🤖 Trading agent (paper-first)
 
-The `trader/` package is the start of evolving this read-only research tool into a
-disciplined, **paper-first Alpaca trading agent**. This first iteration ships the
-foundation only (Phase 0–2); risk gate, execution, portfolio DB, decision pipeline,
-LLM overlay, and the autonomy toggle are documented as a roadmap, not yet built.
+The `trader/` package evolves this read-only research tool into a disciplined,
+**paper-first Alpaca trading agent**. It is built in phases so guardrails exist *before*
+any automation. **Phases 0–3 are implemented (40 tests green); phases 4–7 are a
+documented roadmap.**
+
+### Current state
 
 ```text
 trader/
-  config.py       # env + paper/live URL swap + autonomy flag + risk-limit placeholders
-  data/           # historical daily bars from Alpaca (the strategy data source)
-  strategy/       # Strategy interface + MA-crossover & momentum/RSI + native indicators
-  backtest/       # bar-replay harness: decide on bar t, fill on t+1 open, with costs
+  config.py       # env + paper/live URL swap + autonomy flag + risk limits   [0]
+  data/           # historical daily bars from Alpaca (the strategy data source) [1]
+  strategy/       # Strategy interface + MA-crossover & momentum/RSI            [1]
+  backtest/       # bar-replay harness: decide on bar t, fill on t+1 open       [2]
+  risk/           # fail-closed risk gate every order passes + kill switch      [3]
+  execution/      # Alpaca broker adapter: reconcile + idempotent orders        [3]
+  portfolio/      # PortfolioRepository interface + SQLite audit/approval store [3]
 ```
 
-The backtest replays bars through the **same `Strategy` interface** the live loop will
-use, fills on the bar *after* the decision (no lookahead), and charges fees + slippage —
-so results are an honest estimate of edge before any real money. See `SECURITY.md` for
-the leaked-key rotation note.
+What each phase earned:
+
+- **Phase 0 — Security & scaffolding.** Secrets moved to a gitignored `.env`; `users.db`
+  untracked; the `trader/` package and paper/live config established. See `SECURITY.md`
+  for the leaked-key rotation note.
+- **Phase 1 — Data + strategy.** A `Strategy` contract that *enforces* no-lookahead
+  (truncates bars to `asof` before any subclass runs), with MA-crossover and momentum/RSI
+  strategies fed by Alpaca daily bars.
+- **Phase 2 — Backtest harness (keystone).** Replays bars through the **same `Strategy`
+  interface** the live loop uses, decides on bar *t* and **fills on bar *t+1* open** (no
+  lookahead), and charges fees + slippage — an honest edge estimate before real money.
+- **Phase 3 — Risk gate + execution + portfolio (order path).**
+  - **Risk gate** is the single checkpoint *every* order — manual or auto — must pass:
+    allowlist, max position size (buys sized down to the cap), daily-loss circuit breaker,
+    max trades/day, no shorting, and a file-backed **kill switch**. It is **fail-closed** —
+    a failed reconciliation or unknown daily P&L *rejects* rather than trades blind.
+  - **Execution** wraps Alpaca; the **broker is the source of truth for positions**
+    (`reconcile()` on every cycle), and orders are **idempotent** via a deterministic
+    `client_order_id` so a crash/retry can never double-fire.
+  - **Portfolio** persists orders/trades/signals/runs/proposals behind a
+    `PortfolioRepository` interface (local SQLite now, Supabase/Postgres later) — sharing
+    `users.db` with no destructive migration of existing user data.
+
+### Run it
 
 ```bash
-cp .env.example .env          # add your Alpaca PAPER keys
-python scripts/smoke_alpaca.py  # prints paper account + one AAPL bar
-pytest                          # runs the strategy + no-lookahead + costs tests
+git clone https://github.com/manamsriram/Stock-Analyzer-Bot.git
+cd Stock-Analyzer-Bot
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+cp .env.example .env        # add Alpaca PAPER keys (ALPACA_PAPER=true)
+
+# 1) Run the test suite (no keys/network needed — risk gate, execution, portfolio,
+#    strategy, no-lookahead, and backtest costs are all offline):
+pytest
+
+# 2) Smoke-test paper connectivity (needs Alpaca paper keys):
+python scripts/smoke_alpaca.py   # prints paper account + one AAPL bar
+
+# 3) Drive ONE order through the real paper order path (places a small paper order;
+#    reconcile -> risk gate -> idempotent submit -> record, then proves idempotency):
+python scripts/smoke_order.py AAPL 50
+
+# Kill switch: create the flag file to halt the order path, delete it to resume.
+touch kill_switch.flag        # gate now rejects every order
+rm kill_switch.flag
 ```
 
-> **Honest framing:** no system reliably "makes money." This builds an agent that
-> executes *your* strategy with guardrails and **proves whether it has edge on
-> historical + paper data before any real money** — the risk lives in the backtest's
-> honesty, not the plumbing.
+The legacy research app still runs with `streamlit run app.py`.
+
+### Configuration (`.env`)
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Alpaca paper keys | — |
+| `ALPACA_PAPER` | `true` = paper (live is gated until edge is proven) | `true` |
+| `RISK_ALLOWLIST` | Comma-separated tradeable symbols | 8-ticker mega-cap basket |
+| `PORTFOLIO_DB_PATH` | SQLite store for orders/trades/proposals | `users.db` |
+| `KILL_SWITCH_PATH` | File whose presence halts trading | `kill_switch.flag` |
+| `AUTONOMY` | `manual` (approval-gated) or `auto` (Phase 6) | `manual` |
+
+### Next steps (roadmap)
+
+- **Phase 4 — Decision pipeline + human-in-loop approval.** `pipeline.py` spine
+  (`tick → data → strategy → overlay → risk → decision → execute`); the decision gate is
+  the *only* difference between `manual` (proposals queued for dashboard approval) and
+  `auto`. Scheduler on Alpaca market hours; Streamlit dashboard with pending approvals,
+  P&L, equity curve, and a kill-switch button.
+- **Phase 5 — Claude overlay (non-load-bearing).** Anthropic SDK + prompt caching (Sonnet
+  default) adjusts confidence / vetoes with a written rationale — it never originates a
+  trade or sets size.
+- **Phase 6 — Observability + autonomy toggle (still paper).** Structured logging, alerts,
+  then `AUTONOMY=auto` on paper, exercising kill switch + circuit breakers in market hours.
+- **Phase 7 — Go-live gate (checklist, not code).** Real money only after out-of-sample
+  backtest edge with costs, paper reproduction, and PDT-rule validation.
+- **Storage:** swap the SQLite repo for a Supabase/Postgres `PortfolioRepository` adapter
+  (interface already in place) for multi-device dashboards.
+
+> **Honest framing:** no system reliably "makes money." This builds an agent that executes
+> *your* strategy with hard guardrails and **proves whether it has edge on historical +
+> paper data before any real money** — the risk lives in the backtest's honesty, not the
+> plumbing.
 
 ---
 
