@@ -7,7 +7,6 @@ import warnings
 import json
 from langchain.agents import load_tools, AgentType, Tool, initialize_agent
 
-from langchain.agents import Tool
 from dotenv import load_dotenv
 
 # Load secrets from .env (gitignored). Never hardcode keys — see SECURITY.md.
