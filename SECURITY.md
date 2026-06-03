@@ -8,11 +8,11 @@ key") scrubbed the tree. **However, git history still contains three distinct re
 OpenAI keys** that were committed earlier. Treat all three as compromised and **revoke them at
 https://platform.openai.com/ (API keys)**:
 
-| Key prefix (truncated)        | Where it appeared                                   |
-|-------------------------------|-----------------------------------------------------|
-| `sk-proj-HyLWd4W6xkecfcsd...` | git history                                          |
-| `sk-proj-fqMX6eskib0mW2b64...`| git history                                          |
-| `sk-proj-rebDNOZD...`         | `stock_analyzer_bot.ipynb` + `tools/fetch_stock_info.py` (removed in `487595c`) |
+| Identifier | Where it appeared |
+|------------|-------------------|
+| OpenAI API key #1 (redacted) | git history |
+| OpenAI API key #2 (redacted) | git history |
+| OpenAI API key #3 (redacted) | `stock_analyzer_bot.ipynb` + `tools/fetch_stock_info.py` (removed in `487595c`) |
 
 ### Why history is not being rewritten
 
