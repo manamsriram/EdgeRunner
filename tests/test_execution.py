@@ -135,6 +135,37 @@ def test_duplicate_submit_returns_existing_no_double_fire():
     assert first.client_order_id == second.client_order_id
 
 
+def test_submit_sell_with_notional_routes_as_notional():
+    """sell + notional (no qty) should pass notional through, not set qty."""
+    client = FakeClient()
+    order = _broker(client).submit(
+        symbol="AAPL", side="sell", notional=500.0, client_order_id="sell-notional"
+    )
+    assert order.notional == 500.0
+    assert order.qty is None
+    assert order.side == "sell"
+
+
+class FakeValidationError(Exception):
+    """A 422 that is NOT a duplicate client_order_id (e.g. bad symbol)."""
+    def __init__(self) -> None:
+        super().__init__("invalid symbol")
+        self.status_code = 422
+
+
+def test_non_duplicate_422_is_not_swallowed():
+    """A 422 whose message doesn't mention client_order_id must propagate, not be
+    misclassified as a duplicate and silently routed to get_order_by_client_id."""
+    class RaisingClient(FakeClient):
+        def submit_order(self, order_data):
+            raise FakeValidationError()
+
+    with pytest.raises(FakeValidationError):
+        _broker(RaisingClient()).submit(
+            symbol="AAPL", side="buy", notional=100.0, client_order_id="any"
+        )
+
+
 def test_submit_rejects_bad_side():
     with pytest.raises(ValueError):
         _broker(FakeClient()).submit(

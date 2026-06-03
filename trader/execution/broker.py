@@ -173,10 +173,8 @@ def _is_filled(order: Any) -> bool:
 
 
 def _is_duplicate_order(exc: Exception) -> bool:
-    """Alpaca rejects a reused client_order_id with HTTP 422. Detect by status code or
-    message so we don't depend on the SDK's exception class being importable."""
-    if getattr(exc, "status_code", None) == 422:
-        return True
+    """Return True only when Alpaca signals a reused client_order_id (HTTP 422 with
+    an explicit duplicate-id message). Unrelated 422 validation errors are not caught."""
     text = str(exc).lower()
     return "client_order_id" in text and ("exist" in text or "duplicate" in text)
 

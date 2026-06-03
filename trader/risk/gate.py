@@ -55,10 +55,11 @@ class OrderIntent:
     reason: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "symbol", self.symbol.strip().upper())
         if self.side not in {"buy", "sell"}:
             raise ValueError(f"invalid side: {self.side!r}")
-        if self.notional < 0:
-            raise ValueError(f"notional must be >= 0, got {self.notional}")
+        if self.notional <= 0:
+            raise ValueError(f"notional must be > 0, got {self.notional}")
         if self.ref_price <= 0:
             raise ValueError(f"ref_price must be > 0, got {self.ref_price}")
 

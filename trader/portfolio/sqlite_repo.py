@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS signals (
     symbol  TEXT NOT NULL,
     side    TEXT NOT NULL,
     strength REAL NOT NULL,
-    reason  TEXT
+    reason  TEXT,
+    FOREIGN KEY(run_id) REFERENCES runs(id)
 );
 CREATE TABLE IF NOT EXISTS orders (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +88,7 @@ class SQLiteRepository(PortfolioRepository):
         # WAL lets readers (dashboard) and a writer (scheduler) proceed concurrently.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_schema(self) -> None:
@@ -150,11 +152,19 @@ class SQLiteRepository(PortfolioRepository):
             return int(cur.lastrowid)
 
     def set_proposal_status(self, proposal_id: int, status: str) -> None:
+        from trader.portfolio.repository import (
+            PROPOSAL_APPROVED, PROPOSAL_EXECUTED, PROPOSAL_REJECTED,
+        )
+        valid = {PROPOSAL_PENDING, PROPOSAL_APPROVED, PROPOSAL_REJECTED, PROPOSAL_EXECUTED}
+        if status not in valid:
+            raise ValueError(f"invalid proposal status {status!r}; must be one of {valid}")
         with self._connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE proposals SET status=?, decided_at=? WHERE id=?",
                 (status, _now(), proposal_id),
             )
+            if cur.rowcount == 0:
+                raise KeyError(f"proposal {proposal_id} not found")
 
     # ---- reads ----
 

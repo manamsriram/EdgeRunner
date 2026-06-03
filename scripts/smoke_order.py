@@ -44,7 +44,8 @@ def main() -> None:
           f"positions={state.positions} stale={state.stale}")
 
     end = datetime.now(timezone.utc)
-    bars = get_daily_bars(symbol, start=end.replace(year=end.year - 1), end=end, config=config)
+    from datetime import timedelta
+    bars = get_daily_bars(symbol, start=end - timedelta(days=365), end=end, config=config)
     if bars.empty:
         print("  no bars; cannot price the intent")
         return

@@ -89,6 +89,8 @@ class Config:
 
 
 def load_config() -> Config:
+    _db = (os.getenv("PORTFOLIO_DB_PATH") or "").strip() or "users.db"
+    _ks = (os.getenv("KILL_SWITCH_PATH") or "").strip() or "kill_switch.flag"
     return Config(
         alpaca_api_key=os.getenv("ALPACA_API_KEY"),
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY"),
@@ -96,7 +98,7 @@ def load_config() -> Config:
         autonomy=os.getenv("AUTONOMY", "manual").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        portfolio_db_path=os.getenv("PORTFOLIO_DB_PATH", "users.db"),
-        kill_switch_path=os.getenv("KILL_SWITCH_PATH", "kill_switch.flag"),
+        portfolio_db_path=_db,
+        kill_switch_path=_ks,
         risk=RiskLimits(allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST)),
     )
