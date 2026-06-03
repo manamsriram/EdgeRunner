@@ -23,7 +23,7 @@ class CostModel:
             return reference_price + slip
         if side == "sell":
             return reference_price - slip
-        return reference_price
+        raise ValueError(f"invalid side: {side!r}")
 
     def commission(self, notional: float) -> float:
         """Commission for a fill of the given notional value."""
