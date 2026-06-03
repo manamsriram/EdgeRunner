@@ -57,14 +57,15 @@ class FakeClient:
         self.submitted.append(order)
         return order
 
-    def get_order_by_client_order_id(self, client_order_id):
-        return self._by_coid[client_order_id]
+    def get_order_by_client_id(self, client_id):
+        return self._by_coid[client_id]
 
 
-def _fake_request_builder(symbol, notional, side, client_order_id):
+def _fake_request_builder(*, symbol, side, client_order_id, notional=None, qty=None):
     return {
         "symbol": symbol,
         "notional": notional,
+        "qty": qty,
         "side": side,
         "client_order_id": client_order_id,
     }
@@ -103,7 +104,26 @@ def test_submit_places_notional_order():
     assert len(client.submitted) == 1
     assert order.symbol == "AAPL"
     assert order.notional == 1234.567
+    assert order.qty is None
     assert order.side == "buy"
+
+
+def test_submit_sell_uses_qty_not_notional():
+    client = FakeClient()
+    order = _broker(client).submit(
+        symbol="AAPL", side="sell", qty=10.0, client_order_id="coid-sell"
+    )
+    assert order.qty == 10.0
+    assert order.notional is None
+
+
+def test_submit_requires_exactly_one_of_notional_or_qty():
+    with pytest.raises(ValueError):
+        _broker(FakeClient()).submit(symbol="AAPL", side="buy", client_order_id="x")
+    with pytest.raises(ValueError):
+        _broker(FakeClient()).submit(
+            symbol="AAPL", side="buy", notional=1.0, qty=1.0, client_order_id="x"
+        )
 
 
 def test_duplicate_submit_returns_existing_no_double_fire():
@@ -160,3 +180,34 @@ def test_reconcile_unknown_last_equity_is_none():
     state = _broker(client).reconcile()
     assert not state.stale
     assert state.daily_pnl_pct is None
+
+
+# ---- real alpaca-py SDK contract (skipped if the SDK isn't installed) ----
+# The fakes above never touch the real SDK, so these guard against signature/enum drift
+# in the lazy-import builders and the assumed TradingClient method names.
+
+def test_real_sdk_request_builders_construct():
+    pytest.importorskip("alpaca")
+    from trader.execution.broker import _build_market_order_request, _build_order_filters
+
+    buy = _build_market_order_request(
+        symbol="AAPL", side="buy", client_order_id="c1", notional=50.0
+    )
+    assert float(buy.notional) == 50.0 and buy.client_order_id == "c1"
+    sell = _build_market_order_request(
+        symbol="AAPL", side="sell", client_order_id="c2", qty=3.0
+    )
+    assert float(sell.qty) == 3.0
+    open_filter, closed_filter = _build_order_filters(date(2026, 6, 3))
+    assert open_filter.status is not None and closed_filter.after is not None
+
+
+def test_real_trading_client_has_assumed_methods():
+    pytest.importorskip("alpaca")
+    from alpaca.trading.client import TradingClient
+
+    for method in (
+        "get_account", "get_all_positions", "get_orders",
+        "submit_order", "get_order_by_client_id",
+    ):
+        assert hasattr(TradingClient, method), f"TradingClient missing {method}"

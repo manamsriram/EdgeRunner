@@ -130,6 +130,14 @@ def test_sell_with_position_approved(gate):
     assert decision.approved
 
 
+def test_sell_notional_capped_to_held_value_no_short(gate):
+    # Hold 5 sh * $100 = $500, but intent asks to sell $1000 — cap at held value.
+    intent = OrderIntent(symbol="AAPL", side="sell", notional=1_000.0, ref_price=100.0)
+    decision = gate.evaluate(intent, _state(positions={"AAPL": 5.0}))
+    assert decision.approved
+    assert decision.approved_notional == pytest.approx(500.0)
+
+
 # ---- ordering: first failure wins ----
 
 def test_first_failure_wins_kill_switch_before_allowlist(gate, tmp_path):

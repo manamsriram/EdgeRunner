@@ -146,12 +146,16 @@ class RiskGate:
                 f"max trades/day reached ({state.trades_today}/{limits.max_trades_per_day})"
             )
 
-        # 5. Side sanity — long/flat only, no shorting.
+        # 5. Side sanity — long/flat only, no shorting. A sell may never exceed the held
+        #    value, so even a notional misuse downstream cannot open a short.
         held = state.positions.get(intent.symbol, 0.0)
         if intent.side == "sell":
             if held <= 0.0:
                 return RiskDecision.reject(f"no {intent.symbol} position to sell")
-            return RiskDecision.approve(intent.notional, "sell approved")
+            held_value = held * intent.ref_price
+            return RiskDecision.approve(
+                min(intent.notional, held_value), "sell approved"
+            )
 
         # 6. Max position size (buys only) — size down to the cap, or reject as a no-op.
         cap = limits.max_position_pct * state.equity

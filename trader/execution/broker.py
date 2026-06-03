@@ -46,7 +46,7 @@ class _TradingClient(Protocol):
     def get_all_positions(self) -> list[Any]: ...
     def get_orders(self, filter: Any) -> list[Any]: ...  # noqa: A002 - alpaca's kw name
     def submit_order(self, order_data: Any) -> Any: ...
-    def get_order_by_client_order_id(self, client_order_id: str) -> Any: ...
+    def get_order_by_client_id(self, client_id: str) -> Any: ...
 
 
 class AlpacaBroker:
@@ -58,7 +58,7 @@ class AlpacaBroker:
         config: Config | None = None,
         *,
         client: _TradingClient | None = None,
-        request_builder: Callable[[str, float, Side, str], Any] | None = None,
+        request_builder: Callable[..., Any] | None = None,
         order_filter_builder: Callable[[date], tuple[Any, Any]] | None = None,
     ) -> None:
         self._config = config or load_config()
@@ -132,14 +132,29 @@ class AlpacaBroker:
     # ---- order submission (idempotent) ----
 
     def submit(
-        self, *, symbol: str, side: Side, notional: float, client_order_id: str
+        self,
+        *,
+        symbol: str,
+        side: Side,
+        client_order_id: str,
+        notional: float | None = None,
+        qty: float | None = None,
     ) -> Any:
-        """Place a notional (dollar) market order. Idempotent: a duplicate
-        `client_order_id` is swallowed and the existing order is returned."""
+        """Place a market order, exactly one of `notional` (dollars) or `qty` (shares).
+
+        Buys use notional (Alpaca's fractional path). Sells/exits use `qty` — Alpaca
+        restricts *notional* sells, and a long/flat exit closes the held quantity. Idem-
+        potent: a duplicate `client_order_id` is swallowed and the existing order returned.
+        """
         if side not in {"buy", "sell"}:
             raise ValueError(f"invalid side: {side!r}")
+        if (notional is None) == (qty is None):
+            raise ValueError("pass exactly one of notional or qty")
         client = self._ensure_client()
-        request = self._request_builder(symbol, notional, side, client_order_id)
+        request = self._request_builder(
+            symbol=symbol, side=side, client_order_id=client_order_id,
+            notional=notional, qty=qty,
+        )
         try:
             return client.submit_order(order_data=request)
         except Exception as exc:  # noqa: BLE001 - inspect for the duplicate case only
@@ -148,7 +163,7 @@ class AlpacaBroker:
                     "duplicate client_order_id %s; returning existing order",
                     client_order_id,
                 )
-                return client.get_order_by_client_order_id(client_order_id)
+                return client.get_order_by_client_id(client_order_id)
             raise
 
 
@@ -167,15 +182,22 @@ def _is_duplicate_order(exc: Exception) -> bool:
 
 
 def _build_market_order_request(
-    symbol: str, notional: float, side: Side, client_order_id: str
+    *,
+    symbol: str,
+    side: Side,
+    client_order_id: str,
+    notional: float | None = None,
+    qty: float | None = None,
 ) -> Any:
-    """Build a notional market order via alpaca-py (lazy import; never hit in tests)."""
+    """Build a market order via alpaca-py (lazy import; never hit in tests). Exactly one
+    of `notional` (dollars) or `qty` (shares) is set."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
 
     return MarketOrderRequest(
         symbol=symbol,
-        notional=round(notional, 2),
+        notional=round(notional, 2) if notional is not None else None,
+        qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         time_in_force=TimeInForce.DAY,
         client_order_id=client_order_id,
