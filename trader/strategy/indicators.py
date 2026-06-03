@@ -30,6 +30,8 @@ def rsi(series: pd.Series, window: int = 14) -> pd.Series:
     out = 100.0 - (100.0 / (1.0 + rs))
     # When there are no losses, RS is +inf -> RSI 100; encode that explicitly.
     out = out.where(avg_loss != 0.0, 100.0)
+    # If there are neither gains nor losses (flat series), RSI is neutral.
+    out = out.where(~((avg_gain == 0.0) & (avg_loss == 0.0)), 50.0)
     return out
 
 
