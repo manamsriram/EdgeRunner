@@ -232,7 +232,7 @@ Thought:{agent_scratchpad}"""
 from langchain.chat_models import ChatOpenAI
 from openai import OpenAI
 
-OPENAI_API_KEY="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"
+OPENAI_API_KEY="ENTER YOUR API KEY HERE"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
