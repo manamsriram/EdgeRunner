@@ -19,6 +19,14 @@ PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 LIVE_BASE_URL = "https://api.alpaca.markets"
 
 
+# Starter universe: liquid US large-caps (paper fills track live closely). The risk
+# gate refuses any symbol outside the allowlist, so this is the default tradeable set
+# when RISK_ALLOWLIST is unset. Tuned/expanded later, not hand-picked per trade.
+DEFAULT_ALLOWLIST: tuple[str, ...] = (
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "JPM",
+)
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -26,15 +34,25 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_allowlist(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Comma-separated tickers from env, upper/stripped. Unset/blank → `default`.
+    Never silently returns an empty allowlist (that would block every order)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    symbols = tuple(s.strip().upper() for s in raw.split(",") if s.strip())
+    return symbols or default
+
+
 @dataclass(frozen=True)
 class RiskLimits:
-    """Placeholder guardrail numbers. Real values are pinned when Phase 3 (the risk
-    gate) lands; they live here now so there is exactly one home for them."""
+    """Hard guardrail numbers enforced by the Phase 3 risk gate. One home for all of
+    them. Defaults are conservative placeholders; real tuning is walk-forward, later."""
 
     max_position_pct: float = 0.10          # max fraction of equity in one symbol
     max_trades_per_day: int = 5             # circuit breaker on churn
     daily_loss_limit_pct: float = 0.03      # halt trading after this daily drawdown
-    allowlist: tuple[str, ...] = ()         # empty = no symbol allowed until set
+    allowlist: tuple[str, ...] = DEFAULT_ALLOWLIST
 
 
 @dataclass(frozen=True)
@@ -45,6 +63,8 @@ class Config:
     autonomy: str                            # "manual" (default) or "auto"
     openai_api_key: str | None
     anthropic_api_key: str | None
+    portfolio_db_path: str                   # SQLite store for orders/trades/proposals
+    kill_switch_path: str                    # file flag that halts the order path
     risk: RiskLimits = field(default_factory=RiskLimits)
 
     @property
@@ -69,6 +89,8 @@ class Config:
 
 
 def load_config() -> Config:
+    _db = (os.getenv("PORTFOLIO_DB_PATH") or "").strip() or "users.db"
+    _ks = (os.getenv("KILL_SWITCH_PATH") or "").strip() or "kill_switch.flag"
     return Config(
         alpaca_api_key=os.getenv("ALPACA_API_KEY"),
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY"),
@@ -76,4 +98,7 @@ def load_config() -> Config:
         autonomy=os.getenv("AUTONOMY", "manual").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+        portfolio_db_path=_db,
+        kill_switch_path=_ks,
+        risk=RiskLimits(allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST)),
     )

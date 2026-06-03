@@ -3,10 +3,17 @@
 .env.*
 !.env.example
 
-# Local user database (contains real user data — do not track)
+# Local databases (real user data + trading state — do not track)
 users.db
+*.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
+
+# Risk kill-switch flag (local runtime state)
+kill_switch.flag
+*.flag
 
 # Python
 __pycache__/
