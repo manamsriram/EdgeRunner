@@ -236,9 +236,10 @@ from langchain.chat_models import ChatOpenAI
 from openai import OpenAI
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env (see .env.example) or export it in the environment.")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 def create_stock_analyzer():
     # Initialize the LLM
     llm = ChatOpenAI(
