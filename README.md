@@ -100,6 +100,39 @@ Open the Streamlit link in your browser, register/login, and start asking invest
 
 ---
 
+## 🤖 Trading agent (paper-first) — foundation
+
+The `trader/` package is the start of evolving this read-only research tool into a
+disciplined, **paper-first Alpaca trading agent**. This first iteration ships the
+foundation only (Phase 0–2); risk gate, execution, portfolio DB, decision pipeline,
+LLM overlay, and the autonomy toggle are documented as a roadmap, not yet built.
+
+```
+trader/
+  config.py       # env + paper/live URL swap + autonomy flag + risk-limit placeholders
+  data/           # historical daily bars from Alpaca (the strategy data source)
+  strategy/       # Strategy interface + MA-crossover & momentum/RSI + native indicators
+  backtest/       # bar-replay harness: decide on bar t, fill on t+1 open, with costs
+```
+
+The backtest replays bars through the **same `Strategy` interface** the live loop will
+use, fills on the bar *after* the decision (no lookahead), and charges fees + slippage —
+so results are an honest estimate of edge before any real money. See `SECURITY.md` for
+the leaked-key rotation note.
+
+```bash
+cp .env.example .env          # add your Alpaca PAPER keys
+python scripts/smoke_alpaca.py  # prints paper account + one AAPL bar
+pytest                          # runs the strategy + no-lookahead + costs tests
+```
+
+> **Honest framing:** no system reliably "makes money." This builds an agent that
+> executes *your* strategy with guardrails and **proves whether it has edge on
+> historical + paper data before any real money** — the risk lives in the backtest's
+> honesty, not the plumbing.
+
+---
+
 ## 👤 Author
 
 Sri Ram Mannam  

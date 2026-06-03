@@ -1,0 +1,17 @@
+# Secrets
+.env
+
+# Local user database (contains real user data — do not track)
+users.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+venv/
+.venv/
+
+# Tooling
+.serena/
