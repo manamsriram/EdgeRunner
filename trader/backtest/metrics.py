@@ -82,22 +82,20 @@ def format_report(result, strategy_name: str, symbol: str) -> str:
     `result` is a BacktestResult. Includes the standard honesty caveats so they travel
     with every report rather than living only in the docs.
     """
-    from trader.backtest.metrics import compute_metrics  # local to avoid cycle on import
-
     strat = compute_metrics(result.equity_curve, result.trades)
     bh = compute_metrics(result.buy_hold_curve, [])
     lines = [
         f"Backtest: {strategy_name} on {symbol}",
-        "-" * 56,
+        "-" * 52,
         f"{'metric':<20}{'strategy':>16}{'buy & hold':>16}",
-        f"{'total return':<20}{strat.total_return:>15.1%}{bh.total_return:>16.1%}",
-        f"{'annualized':<20}{strat.annualized_return:>15.1%}{bh.annualized_return:>16.1%}",
+        f"{'total return':<20}{strat.total_return:>16.1%}{bh.total_return:>16.1%}",
+        f"{'annualized':<20}{strat.annualized_return:>16.1%}{bh.annualized_return:>16.1%}",
         f"{'sharpe':<20}{strat.sharpe:>16.2f}{bh.sharpe:>16.2f}",
-        f"{'max drawdown':<20}{strat.max_drawdown:>15.1%}{bh.max_drawdown:>16.1%}",
-        f"{'win rate':<20}{strat.win_rate:>15.1%}{'n/a':>16}",
+        f"{'max drawdown':<20}{strat.max_drawdown:>16.1%}{bh.max_drawdown:>16.1%}",
+        f"{'win rate':<20}{strat.win_rate:>16.1%}{'n/a':>16}",
         f"{'round trips':<20}{strat.turnover:>16d}{0:>16d}",
         f"{'final equity':<20}{strat.final_equity:>16.0f}{bh.final_equity:>16.0f}",
-        "-" * 56,
+        "-" * 52,
         f"slippage {result.cost_model.slippage_bps:.0f}bps, "
         f"commission ${result.cost_model.commission_per_trade:.2f}/trade",
         "Caveats: free data is survivorship-biased (delisted names absent); paper/live",

@@ -7,4 +7,4 @@ from trader.strategy.base import Signal, Strategy
 from trader.strategy.ma_crossover import MACrossover
 from trader.strategy.momentum_rsi import MomentumRSI
 
-__all__ = ["Signal", "Strategy", "MACrossover", "MomentumRSI"]
+__all__ = ["MACrossover", "MomentumRSI", "Signal", "Strategy"]

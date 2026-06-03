@@ -30,7 +30,7 @@ class MACrossover(Strategy):
             return Signal(self.symbol, "hold", 0.0, "SMA not yet defined")
 
         # Conviction scales with the gap between the averages, capped at 1.
-        spread = (fast_val - slow_val) / slow_val
+        spread = 0.0 if slow_val == 0 else (fast_val - slow_val) / slow_val
         strength = float(min(abs(spread) * 10.0, 1.0))
         if fast_val > slow_val:
             return Signal(self.symbol, "buy", strength,

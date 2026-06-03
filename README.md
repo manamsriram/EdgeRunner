@@ -107,7 +107,7 @@ disciplined, **paper-first Alpaca trading agent**. This first iteration ships th
 foundation only (Phase 0–2); risk gate, execution, portfolio DB, decision pipeline,
 LLM overlay, and the autonomy toggle are documented as a roadmap, not yet built.
 
-```
+```text
 trader/
   config.py       # env + paper/live URL swap + autonomy flag + risk-limit placeholders
   data/           # historical daily bars from Alpaca (the strategy data source)
