@@ -120,9 +120,12 @@ class SQLiteRepository(PortfolioRepository):
             # Idempotent at the DB layer too: a repeated client_order_id is ignored,
             # then we return the existing row's id.
             conn.execute(
-                "INSERT OR IGNORE INTO orders "
+                "INSERT INTO orders "
                 "(client_order_id, ts, symbol, side, notional, status, broker_order_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(client_order_id) DO UPDATE SET "
+                "status=excluded.status, "
+                "broker_order_id=COALESCE(excluded.broker_order_id, orders.broker_order_id)",
                 (order.client_order_id, _now(), order.symbol, order.side,
                  order.notional, order.status, order.broker_order_id),
             )
