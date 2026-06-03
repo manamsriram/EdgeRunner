@@ -7,8 +7,10 @@ import warnings
 import json
 from langchain.agents import load_tools, AgentType, Tool, initialize_agent
 
-from langchain.agents import Tool
-os.environ["OPENAI_API_KEY"] = "ENter your API key here"
+from dotenv import load_dotenv
+
+# Load secrets from .env (gitignored). Never hardcode keys — see SECURITY.md.
+load_dotenv()
 
 warnings.filterwarnings("ignore")
 
@@ -232,10 +234,11 @@ Thought:{agent_scratchpad}"""
 from langchain.chat_models import ChatOpenAI
 from openai import OpenAI
 
-OPENAI_API_KEY="ENTER YOUR API KEY HERE"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env (see .env.example) or export it in the environment.")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 def create_stock_analyzer():
     # Initialize the LLM
     llm = ChatOpenAI(
