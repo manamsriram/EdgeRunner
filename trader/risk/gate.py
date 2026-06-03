@@ -154,9 +154,10 @@ class RiskGate:
             if held <= 0.0:
                 return RiskDecision.reject(f"no {intent.symbol} position to sell")
             held_value = held * intent.ref_price
-            return RiskDecision.approve(
-                min(intent.notional, held_value), "sell approved"
-            )
+            approved = min(intent.notional, held_value)
+            if approved <= _NO_OP_EPSILON:
+                return RiskDecision.reject("approved notional below minimum")
+            return RiskDecision.approve(approved, "sell approved")
 
         # 6. Max position size (buys only) — size down to the cap, or reject as a no-op.
         cap = limits.max_position_pct * state.equity
