@@ -64,7 +64,7 @@ def start_scheduler(
     config: Config,
     strategies: "list[Strategy]",
     broker: AlpacaBroker,
-    repo: SQLiteRepository,
+    repo: PortfolioRepository,
     poll_minutes: int = 1,
 ) -> None:
     """Blocking scheduler loop. Checks the Alpaca clock before each tick.
