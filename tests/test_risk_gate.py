@@ -169,3 +169,49 @@ def test_allowlist_env_blank_falls_back_to_basket(monkeypatch):
 def test_allowlist_env_parsed_upper_stripped(monkeypatch):
     monkeypatch.setenv("RISK_ALLOWLIST", " aapl, msft ,nvda")
     assert _env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST) == ("AAPL", "MSFT", "NVDA")
+
+
+# ---- PDT guard ----
+
+PDT_LIMITS = RiskLimits(
+    max_position_pct=0.10,
+    max_trades_per_day=10,
+    daily_loss_limit_pct=0.03,
+    allowlist=("AAPL", "MSFT"),
+    pdt_equity_threshold=25_000.0,
+    pdt_day_trade_limit=3,
+)
+
+
+def _pdt_gate() -> RiskGate:
+    return RiskGate(PDT_LIMITS)
+
+
+def test_pdt_blocks_buy_when_round_trips_reached():
+    # 6 fills = 3 round-trips on a $20k account → buy rejected
+    state = _state(equity=20_000.0, trades_today=6)
+    decision = _pdt_gate().evaluate(_buy(), state)
+    assert not decision.approved
+    assert "PDT guard" in decision.reason
+
+
+def test_pdt_allows_buy_when_round_trips_below_limit():
+    # 4 fills = 2 round-trips → still below limit
+    state = _state(equity=20_000.0, trades_today=4)
+    decision = _pdt_gate().evaluate(_buy(), state)
+    assert decision.approved
+
+
+def test_pdt_does_not_apply_above_equity_threshold():
+    # $30k account: PDT guard inactive regardless of trade count
+    state = _state(equity=30_000.0, trades_today=6)
+    decision = _pdt_gate().evaluate(_buy(), state)
+    assert decision.approved
+
+
+def test_pdt_never_blocks_sells():
+    # Sells must always be allowed — closing a position cannot be blocked by PDT
+    state = _state(equity=20_000.0, trades_today=6, positions={"AAPL": 10.0})
+    sell = OrderIntent(symbol="AAPL", side="sell", notional=1_000.0, ref_price=100.0)
+    decision = _pdt_gate().evaluate(sell, state)
+    assert decision.approved
