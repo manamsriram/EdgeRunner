@@ -137,8 +137,8 @@ def _run_symbol(
         import pandas as pd
         signal = strategy.generate(bars, pd.Timestamp(asof))
 
-        # 3. Overlay (Phase 4 stub — pass-through).
-        signal = apply_overlay(signal, bars)
+        # 3. Overlay (Phase 5 — Claude LLM review, non-load-bearing).
+        signal = apply_overlay(signal, bars, config)
 
         # Record the post-overlay signal so the stored row matches what is used downstream.
         repo.record_signal(SignalRow(
