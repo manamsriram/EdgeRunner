@@ -135,13 +135,22 @@ def _render_approvals(cfg, repo, broker):
                             qty = row["notional"] / row["ref_price"]
                         else:
                             notional = row["notional"]
-                        broker.submit(
+                        order = broker.submit(
                             symbol=row["symbol"],
                             side=row["side"],
                             client_order_id=coid,
                             notional=notional,
                             qty=qty,
                         )
+                        from trader.portfolio.repository import OrderRow
+                        repo.record_order(OrderRow(
+                            client_order_id=coid,
+                            symbol=row["symbol"],
+                            side=row["side"],
+                            notional=row["notional"],
+                            status="submitted",
+                            broker_order_id=str(getattr(order, "id", "") or "") or None,
+                        ))
                         repo.set_proposal_status(pid, PROPOSAL_EXECUTED)
                         st.success(f"Order submitted for {row['symbol']}.")
                     except Exception as exc:
