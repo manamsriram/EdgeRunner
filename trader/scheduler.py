@@ -44,7 +44,7 @@ def run_once(
     config: Config,
     strategies: "list[Strategy]",
     broker: AlpacaBroker,
-    repo: SQLiteRepository,
+    repo: PortfolioRepository,
 ) -> list[PipelineRun]:
     """Single pipeline tick. Called by the scheduler loop and directly in smoke tests.
 
