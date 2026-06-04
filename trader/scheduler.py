@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from trader.config import Config, load_config
 from trader.execution.broker import AlpacaBroker
 from trader.pipeline import PipelineRun, run_pipeline
+from trader.portfolio.repository import PortfolioRepository
 from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import KillSwitch
 
