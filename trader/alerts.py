@@ -21,6 +21,7 @@ def send_alert(message: str, webhook_url: str | None) -> None:
     if not webhook_url:
         return
     try:
-        requests.post(webhook_url, json={"text": message}, timeout=5)
+        resp = requests.post(webhook_url, json={"text": message}, timeout=5)
+        resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         logger.warning("alert delivery failed: %s", exc)
