@@ -80,6 +80,20 @@ class AlpacaBroker:
             )
         return self._client
 
+    def get_positions(self) -> list[dict]:
+        """Return current positions as plain dicts (decouples callers from SDK objects)."""
+        client = self._ensure_client()
+        return [
+            {
+                "symbol": p.symbol,
+                "qty": float(p.qty),
+                "avg_entry_price": float(getattr(p, "avg_entry_price", 0) or 0),
+                "market_value": float(getattr(p, "market_value", 0) or 0),
+                "unrealized_pl": float(getattr(p, "unrealized_pl", 0) or 0),
+            }
+            for p in client.get_all_positions()
+        ]
+
     # ---- reconciliation (source of truth) ----
 
     def reconcile(self, *, trades_today_override: int | None = None) -> AccountState:
