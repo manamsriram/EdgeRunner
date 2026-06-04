@@ -71,10 +71,10 @@ def _bars_context(symbol: str, bars: pd.DataFrame) -> str:
         return f"Insufficient bar data for {symbol}."
     close = bars["close"]
     last_close = float(close.iloc[-1])
-    lookback_20 = min(20, len(close) - 1)
-    pct_20d = (close.iloc[-1] / close.iloc[-lookback_20] - 1) * 100
-    lookback_10 = min(10, len(close) - 1)
-    returns_10 = close.pct_change().dropna().iloc[-lookback_10:]
+lookback_20 = min(20, len(close) - 1)
+pct_20d = (close.iloc[-1] / close.iloc[-(lookback_20 + 1)] - 1) * 100
+lookback_10 = min(10, len(close) - 1)
+returns_10 = close.pct_change().dropna().iloc[-lookback_10:]
     vol_10d = float(returns_10.std() * (252 ** 0.5) * 100) if len(returns_10) > 1 else 0.0
     n_days = len(close)
     return (
