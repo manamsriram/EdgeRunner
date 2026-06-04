@@ -126,9 +126,9 @@ def _render_approvals(cfg, repo, broker):
                         return
                     repo.set_proposal_status(pid, PROPOSAL_APPROVED)
                     try:
-                        coid = client_order_id_for(
-                            date.today(), row["symbol"], row["side"], "manual-approval"
-                        )
+                        created_at = datetime.fromisoformat(str(row["created_at"]))
+                        trade_date = created_at.date()
+                        coid = client_order_id_for(trade_date, row["symbol"], row["side"], f"proposal-{pid}")
                         qty = None
                         notional = None
                         if row["side"] == "sell":
