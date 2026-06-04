@@ -104,6 +104,14 @@ class AlpacaBroker:
         try:
             client = self._ensure_client()
             history = client.get_portfolio_history()
+
+            def _ts_to_iso(t: Any) -> str:
+                if hasattr(t, "isoformat"):
+                    return t.isoformat()
+                if isinstance(t, (int, float)):
+                    return datetime.fromtimestamp(t, tz=timezone.utc).isoformat()
+                return str(t)
+
             # Filter out None equity entries (weekends / non-trading periods).
             pairs = [
                 (t, e)
@@ -114,7 +122,7 @@ class AlpacaBroker:
                 return None
             timestamps, equities = zip(*pairs)
             return {
-                "timestamp": [t.isoformat() for t in timestamps],
+                "timestamp": [_ts_to_iso(t) for t in timestamps],
                 "equity": list(equities),
             }
         except Exception as exc:
