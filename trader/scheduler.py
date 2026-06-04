@@ -57,8 +57,11 @@ def run_once(
     ks = KillSwitch(config.kill_switch_path)
     if ks.engaged():
         logger.warning("kill switch engaged — skipping pipeline tick")
-        send_alert("Kill switch engaged — trading halted", config.slack_webhook_url)
+        if not getattr(run_once, "_kill_switch_alerted", False):
+            send_alert("Kill switch engaged — trading halted", config.slack_webhook_url)
+            run_once._kill_switch_alerted = True  # type: ignore[attr-defined]
         return []
+    run_once._kill_switch_alerted = False  # type: ignore[attr-defined]
     return run_pipeline(config, strategies, broker, repo)
 
 
