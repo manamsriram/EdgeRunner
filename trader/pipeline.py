@@ -75,18 +75,19 @@ def run_pipeline(
         state.equity, state.trades_today, config.autonomy,
     )
 
-    # Alert once per process if the daily-loss breaker is live.
+    # Alert at most once per calendar day if the daily-loss breaker is live.
+    _today = asof.date()
     if (
         state.daily_pnl_pct is not None
         and state.daily_pnl_pct <= -config.risk.daily_loss_limit_pct
-        and not getattr(run_pipeline, "_loss_alerted_today", False)
+        and getattr(run_pipeline, "_loss_alert_date", None) != _today
     ):
         send_alert(
             f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
             f"(limit {-config.risk.daily_loss_limit_pct:.2%})",
             config.slack_webhook_url,
         )
-        run_pipeline._loss_alerted_today = True  # type: ignore[attr-defined]
+        run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
 
     results: list[PipelineRun] = []
     for strategy in strategies:
@@ -255,8 +256,9 @@ def _run_symbol(
             status="submitted",
             broker_order_id=broker_order_id or None,
         ))
+        _env = "paper" if config.alpaca_paper else "LIVE"
         send_alert(
-            f"FILL {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} paper",
+            f"FILL {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",
             config.slack_webhook_url,
         )
         return PipelineRun(
