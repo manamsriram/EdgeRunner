@@ -135,6 +135,9 @@ class FakeClient:
     def get_order_by_client_id(self, client_id: str) -> Any:
         return self._by_coid[client_id]
 
+    def get_portfolio_history(self) -> Any:
+        return None
+
 
 def _fake_request_builder(*, symbol, side, client_order_id, notional=None, qty=None):
     return {"symbol": symbol, "side": side, "client_order_id": client_order_id,

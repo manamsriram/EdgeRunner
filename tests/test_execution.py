@@ -239,7 +239,7 @@ def test_real_trading_client_has_assumed_methods():
 
     for method in (
         "get_account", "get_all_positions", "get_orders",
-        "submit_order", "get_order_by_client_id",
+        "submit_order", "get_order_by_client_id", "get_portfolio_history",
     ):
         assert hasattr(TradingClient, method), f"TradingClient missing {method}"
 
