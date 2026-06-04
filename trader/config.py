@@ -66,6 +66,9 @@ class Config:
     portfolio_db_path: str                   # SQLite store for orders/trades/proposals
     kill_switch_path: str                    # file flag that halts the order path
     risk: RiskLimits = field(default_factory=RiskLimits)
+    log_level: str = "INFO"                    # passed to logging.basicConfig
+    slack_webhook_url: str | None = None       # Slack-compatible webhook for alerts
+    alert_email: str | None = None             # placeholder; SMTP wired in Phase 7
 
     @property
     def alpaca_base_url(self) -> str:
@@ -101,4 +104,7 @@ def load_config() -> Config:
         portfolio_db_path=_db,
         kill_switch_path=_ks,
         risk=RiskLimits(allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST)),
+        log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
+        slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
+        alert_email=os.getenv("ALERT_EMAIL") or None,
     )

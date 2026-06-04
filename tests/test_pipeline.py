@@ -273,6 +273,26 @@ def test_pipeline_stale_reconciliation_blocks_all(tmp_path):
     assert len(b._client.submitted) == 0
 
 
+def test_auto_mode_fires_fill_alert(tmp_path, monkeypatch):
+    """Auto-mode execute path must call send_alert with symbol and 'FILL'."""
+    alerts_fired: list[str] = []
+
+    def _fake_alert(message: str, webhook_url) -> None:
+        alerts_fired.append(message)
+
+    monkeypatch.setattr("trader.pipeline.send_alert", _fake_alert)
+
+    cfg = _config(tmp_path, autonomy="auto")
+    # Give the config a fake webhook so alerts are not no-op'd.
+    from dataclasses import replace as _replace
+    cfg = _replace(cfg, slack_webhook_url="https://hooks.example.com/test")
+
+    _run([_FixedStrategy(_SYMBOL, "buy")], cfg)
+
+    fill_alerts = [m for m in alerts_fired if "FILL" in m and _SYMBOL in m]
+    assert fill_alerts, f"Expected a FILL alert for {_SYMBOL}; got: {alerts_fired}"
+
+
 def test_pipeline_working_state_updated_between_symbols(tmp_path):
     """Regression: two buy signals in one tick with max_trades_per_day=1.
 

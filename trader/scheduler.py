@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from trader.alerts import send_alert
 from trader.config import Config, load_config
 from trader.execution.broker import AlpacaBroker
 from trader.pipeline import PipelineRun, run_pipeline
@@ -56,6 +57,7 @@ def run_once(
     ks = KillSwitch(config.kill_switch_path)
     if ks.engaged():
         logger.warning("kill switch engaged — skipping pipeline tick")
+        send_alert("Kill switch engaged — trading halted", config.slack_webhook_url)
         return []
     return run_pipeline(config, strategies, broker, repo)
 
@@ -94,8 +96,11 @@ def _build_default_strategies(config: Config) -> "list[Strategy]":
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
+    logging.basicConfig(
+        level=getattr(logging, cfg.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     cfg.require_alpaca()
     _broker = AlpacaBroker(cfg)
     _repo = SQLiteRepository(cfg.portfolio_db_path)

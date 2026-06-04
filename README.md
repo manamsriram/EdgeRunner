@@ -28,17 +28,21 @@ The project began as a LangChain/LLM stock-research chatbot (still runs — see 
 
 ---
 
-## Where it is now (Phases 0–3 shipped, 45 tests green)
+## Where it is now (Phases 0–6 shipped, 81 tests green)
 
 ```text
 trader/
   config.py       # env + paper/live URL swap + autonomy flag + risk limits     [0]
+  alerts.py       # fire-and-forget Slack webhook alerts                         [6]
   data/           # historical daily bars from Alpaca (the strategy data source) [1]
   strategy/       # Strategy interface + MA-crossover & momentum/RSI             [1]
   backtest/       # bar-replay harness: decide on bar t, fill on t+1 open        [2]
   risk/           # fail-closed risk gate every order passes + kill switch       [3]
   execution/      # Alpaca broker adapter: reconcile + idempotent orders         [3]
   portfolio/      # PortfolioRepository interface + SQLite audit/approval store  [3]
+  overlay/        # Claude LLM overlay: veto / confidence adjust (non-load-bearing) [5]
+  pipeline.py     # the spine: tick → data → strategy → overlay → risk → execute [4]
+  scheduler.py    # Alpaca-clock-aware market-hours loop                         [4]
 ```
 
 | Phase | What it earned |
@@ -47,16 +51,16 @@ trader/
 | **1 — Data + strategy** | A `Strategy` contract that *enforces* no-lookahead (truncates bars to `asof` before any subclass runs), with MA-crossover and momentum/RSI strategies fed by Alpaca daily bars. |
 | **2 — Backtest harness (keystone)** | Replays bars through the **same `Strategy` interface** the live loop uses, decides on bar *t* and **fills on bar *t+1* open**, and charges fees + slippage — an honest edge estimate before real money. |
 | **3 — Risk gate + execution + portfolio** | The single fail-closed checkpoint every order passes; the Alpaca adapter where the **broker is the source of truth** and orders are **idempotent**; and a `PortfolioRepository` (SQLite now, Supabase/Postgres later) sharing `users.db` with no destructive migration. |
+| **4 — Decision pipeline + approval + scheduler** | `pipeline.py` spine wires all components end-to-end. Decision gate is the *only* difference between `manual` (proposals queued for approval) and `auto`. Scheduler runs on Alpaca market hours. Streamlit dashboard adds Approvals, Portfolio, and Controls tabs. |
+| **5 — Claude overlay (non-load-bearing)** | Anthropic SDK with prompt caching (Sonnet default). Specialized financial analyst prompt with explicit veto triggers. Fetches breaking news as context. Never originates a trade or sets size — veto/confidence only. |
+| **6 — Observability + autonomy toggle** | Structured logging with config-driven level, gate decision reasons logged per tick. Slack webhook alerts on fills, kill-switch engagement, and daily-loss breaker trips (deduped to once per session). Equity curve in dashboard from Alpaca portfolio history. `AUTONOMY=auto` exercisable on paper. |
 
 ---
 
-## Where it is going (Phases 4–7 roadmap)
+## Where it is going (Phase 7 + storage swap)
 
 | Phase | Plan |
 |-------|------|
-| **4 — Decision pipeline + approval + scheduler** | `pipeline.py` spine: `tick → data → strategy → overlay → risk → decision → execute → record`. The decision gate is the *only* difference between `manual` (proposals queued for dashboard approval) and `auto`. Scheduler on Alpaca market hours; Streamlit dashboard with pending approvals, P&L, equity curve, and a kill-switch button. |
-| **5 — Claude overlay (non-load-bearing)** | Anthropic SDK + prompt caching (Sonnet default) adjusts confidence / vetoes with a written rationale. It never originates a trade or sets size. |
-| **6 — Observability + autonomy toggle (still paper)** | Structured logging, metrics, alerts on fills/breaker trips/errors; then `AUTONOMY=auto` **on paper only**, exercising kill switch + circuit breakers in real market hours. |
 | **7 — Go-live gate (checklist, not code)** | Real money only after out-of-sample backtest edge with costs, paper reproduction over a meaningful window, and PDT-rule + paper-fill-optimism validation. |
 | **Storage swap** | Replace the SQLite repo with a Supabase/Postgres `PortfolioRepository` adapter (interface already in place) for multi-device dashboards. |
 
@@ -99,7 +103,11 @@ rm kill_switch.flag
 | `RISK_ALLOWLIST` | Comma-separated tradeable symbols | 8-ticker mega-cap basket |
 | `PORTFOLIO_DB_PATH` | SQLite store for orders/trades/proposals | `users.db` |
 | `KILL_SWITCH_PATH` | File whose presence halts trading | `kill_switch.flag` |
-| `AUTONOMY` | `manual` (approval-gated) or `auto` (Phase 6) | `manual` |
+| `AUTONOMY` | `manual` (approval-gated) or `auto` (paper only) | `manual` |
+| `LOG_LEVEL` | Scheduler logging verbosity: `DEBUG` / `INFO` / `WARNING` | `INFO` |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook for fill / kill-switch / loss alerts | — |
+| `ALERT_EMAIL` | Reserved for Phase 7 SMTP alerts (not yet wired) | — |
+| `ANTHROPIC_API_KEY` | Claude overlay — leave blank to disable (pass-through) | — |
 | `OPENAI_API_KEY` | Legacy research chatbot only | — |
 
 ---
