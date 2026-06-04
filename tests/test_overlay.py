@@ -98,7 +98,7 @@ def test_empty_api_key_passthrough():
 def test_approved_strength_adjusted(monkeypatch):
     from trader.overlay import claude_overlay
     payload = json.dumps({"action": "approve", "strength": 0.5, "rationale": "looks good"})
-    monkeypatch.setattr(claude_overlay, "anthropic", _fake_anthropic_module(payload), raising=False)
+    monkeypatch.setattr(claude_overlay, "anthropic", _fake_anthropic_module(payload))
 
     sig = _buy_signal()
     result = claude_overlay.apply_claude_overlay(sig, _make_bars(), "fake-key", "claude-sonnet-4-6")
@@ -112,7 +112,7 @@ def test_vetoed_becomes_hold_strength_zero(monkeypatch):
     from trader.overlay import claude_overlay
     # Claude returns a non-zero strength on veto — must be forced to 0.0
     payload = json.dumps({"action": "veto", "strength": 0.9, "rationale": "bad news incoming"})
-    monkeypatch.setattr(claude_overlay, "anthropic", _fake_anthropic_module(payload), raising=False)
+    monkeypatch.setattr(claude_overlay, "anthropic", _fake_anthropic_module(payload))
 
     sig = _buy_signal()
     result = claude_overlay.apply_claude_overlay(sig, _make_bars(), "fake-key", "claude-sonnet-4-6")
@@ -127,7 +127,6 @@ def test_api_exception_passthrough(monkeypatch):
     monkeypatch.setattr(
         claude_overlay, "anthropic",
         _fake_anthropic_raises(RuntimeError("network error")),
-        raising=False,
     )
 
     sig = _buy_signal()
@@ -147,7 +146,16 @@ def test_malformed_json_passthrough(monkeypatch):
 def test_strength_out_of_range_passthrough(monkeypatch):
     from trader.overlay import claude_overlay
     payload = json.dumps({"action": "approve", "strength": 1.5, "rationale": "overconfident"})
-    monkeypatch.setattr(claude_overlay, "anthropic", _fake_anthropic_module(payload), raising=False)
+    monkeypatch.setattr(claude_overlay, "anthropic", _fake_anthropic_module(payload))
+
+    sig = _buy_signal()
+    result = claude_overlay.apply_claude_overlay(sig, _make_bars(), "fake-key", "claude-sonnet-4-6")
+    assert result is sig
+
+
+def test_missing_anthropic_passthrough(monkeypatch):
+    from trader.overlay import claude_overlay
+    monkeypatch.setattr(claude_overlay, "anthropic", None)
 
     sig = _buy_signal()
     result = claude_overlay.apply_claude_overlay(sig, _make_bars(), "fake-key", "claude-sonnet-4-6")
