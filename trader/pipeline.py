@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
+from trader.alerts import send_alert
 from trader.config import Config
 from trader.data.alpaca_bars import get_daily_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
@@ -68,6 +69,24 @@ def run_pipeline(
     kill_switch = KillSwitch(config.kill_switch_path)
 
     state = broker.reconcile()
+
+    logger.info(
+        "tick equity=%.2f trades_today=%d autonomy=%s",
+        state.equity, state.trades_today, config.autonomy,
+    )
+
+    # Alert once per process if the daily-loss breaker is live.
+    if (
+        state.daily_pnl_pct is not None
+        and state.daily_pnl_pct <= -config.risk.daily_loss_limit_pct
+        and not getattr(run_pipeline, "_loss_alerted_today", False)
+    ):
+        send_alert(
+            f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
+            f"(limit {-config.risk.daily_loss_limit_pct:.2%})",
+            config.slack_webhook_url,
+        )
+        run_pipeline._loss_alerted_today = True  # type: ignore[attr-defined]
 
     results: list[PipelineRun] = []
     for strategy in strategies:
@@ -182,6 +201,11 @@ def _run_symbol(
 
         # 7. Risk gate.
         risk_decision = gate.evaluate(intent, state, kill_switch)
+        logger.info(
+            "gate symbol=%s approved=%s reason=%s approved_notional=%.2f",
+            symbol, risk_decision.approved, risk_decision.reason,
+            risk_decision.approved_notional,
+        )
         if not risk_decision.approved:
             return PipelineRun(
                 run_id=run_id,
@@ -231,6 +255,10 @@ def _run_symbol(
             status="submitted",
             broker_order_id=broker_order_id or None,
         ))
+        send_alert(
+            f"FILL {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} paper",
+            config.slack_webhook_url,
+        )
         return PipelineRun(
             run_id=run_id,
             symbol=symbol,

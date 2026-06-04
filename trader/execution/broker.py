@@ -47,6 +47,7 @@ class _TradingClient(Protocol):
     def get_orders(self, filter: Any) -> list[Any]: ...  # noqa: A002 - alpaca's kw name
     def submit_order(self, order_data: Any) -> Any: ...
     def get_order_by_client_id(self, client_id: str) -> Any: ...
+    def get_portfolio_history(self) -> Any: ...
 
 
 class AlpacaBroker:
@@ -93,6 +94,32 @@ class AlpacaBroker:
             }
             for p in client.get_all_positions()
         ]
+
+    def get_portfolio_history(self) -> dict | None:
+        """Return {"timestamp": [...ISO strings...], "equity": [...floats...]} or None.
+
+        Fetches from Alpaca; any error (missing keys, network, SDK) returns None so the
+        dashboard can show a graceful fallback instead of crashing.
+        """
+        try:
+            client = self._ensure_client()
+            history = client.get_portfolio_history()
+            # Filter out None equity entries (weekends / non-trading periods).
+            pairs = [
+                (t, e)
+                for t, e in zip(history.timestamp, history.equity)
+                if e is not None
+            ]
+            if not pairs:
+                return None
+            timestamps, equities = zip(*pairs)
+            return {
+                "timestamp": [t.isoformat() for t in timestamps],
+                "equity": list(equities),
+            }
+        except Exception as exc:
+            logger.warning("get_portfolio_history failed: %s", exc)
+            return None
 
     # ---- reconciliation (source of truth) ----
 

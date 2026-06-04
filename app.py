@@ -202,7 +202,16 @@ def _render_portfolio(cfg, repo, broker):
         st.info("No orders recorded yet.")
 
     st.subheader("Equity Curve")
-    st.info("Equity curve available in Phase 6 (observability).")
+    history = broker.get_portfolio_history()
+    if history and history["equity"]:
+        import pandas as _pd
+        df = _pd.DataFrame(
+            {"Equity ($)": history["equity"]},
+            index=_pd.to_datetime(history["timestamp"]),
+        )
+        st.line_chart(df)
+    else:
+        st.info("No portfolio history yet — run the scheduler to populate.")
 
 
 def _render_controls(cfg, repo, broker):

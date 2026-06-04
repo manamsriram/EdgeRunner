@@ -242,3 +242,42 @@ def test_real_trading_client_has_assumed_methods():
         "submit_order", "get_order_by_client_id",
     ):
         assert hasattr(TradingClient, method), f"TradingClient missing {method}"
+
+
+# ---- portfolio history ----
+
+class _PortfolioHistoryClient(FakeClient):
+    """FakeClient extended with get_portfolio_history."""
+
+    def __init__(self, *, history=None, raise_exc=None) -> None:
+        super().__init__()
+        self._history = history
+        self._raise_exc = raise_exc
+
+    def get_portfolio_history(self):
+        if self._raise_exc:
+            raise self._raise_exc
+        return self._history
+
+
+def test_get_portfolio_history_returns_dict():
+    from datetime import datetime as _dt, timezone as _tz
+    from types import SimpleNamespace
+
+    ts = [_dt(2026, 6, 1, tzinfo=_tz.utc), _dt(2026, 6, 2, tzinfo=_tz.utc)]
+    eq = [100_000.0, 101_500.0]
+    fake_history = SimpleNamespace(timestamp=ts, equity=eq)
+
+    client = _PortfolioHistoryClient(history=fake_history)
+    result = _broker(client).get_portfolio_history()
+
+    assert result is not None
+    assert result["equity"] == eq
+    assert len(result["timestamp"]) == 2
+    assert "2026-06-01" in result["timestamp"][0]
+
+
+def test_get_portfolio_history_returns_none_on_error():
+    client = _PortfolioHistoryClient(raise_exc=RuntimeError("API down"))
+    result = _broker(client).get_portfolio_history()
+    assert result is None
