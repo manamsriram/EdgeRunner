@@ -53,6 +53,8 @@ class RiskLimits:
     max_trades_per_day: int = 5             # circuit breaker on churn
     daily_loss_limit_pct: float = 0.03      # halt trading after this daily drawdown
     allowlist: tuple[str, ...] = DEFAULT_ALLOWLIST
+    pdt_equity_threshold: float = 25_000.0  # PDT rule applies below this equity level
+    pdt_day_trade_limit: int = 3            # max round-trips per session on small accounts
 
 
 @dataclass(frozen=True)

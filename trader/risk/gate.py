@@ -147,6 +147,20 @@ class RiskGate:
                 f"max trades/day reached ({state.trades_today}/{limits.max_trades_per_day})"
             )
 
+        # 4b. PDT guard — US accounts under $25k are capped at 3 day-trades per session.
+        #     trades_today counts individual fills; // 2 approximates round-trips (buy+sell=1).
+        #     Only blocks buys — sells to close existing positions must always pass through.
+        if (
+            intent.side == "buy"
+            and state.equity < limits.pdt_equity_threshold
+            and state.trades_today // 2 >= limits.pdt_day_trade_limit
+        ):
+            return RiskDecision.reject(
+                f"PDT guard: {state.trades_today // 2} day-trades today "
+                f"(limit {limits.pdt_day_trade_limit}) on equity "
+                f"${state.equity:,.0f} < ${limits.pdt_equity_threshold:,.0f}"
+            )
+
         # 5. Side sanity — long/flat only, no shorting. A sell may never exceed the held
         #    value, so even a notional misuse downstream cannot open a short.
         held = state.positions.get(intent.symbol, 0.0)
