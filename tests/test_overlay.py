@@ -6,9 +6,8 @@ function is tested by injecting a fake anthropic module via monkeypatching.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import ModuleType
-from typing import Any
 from unittest.mock import MagicMock
 
 import pandas as pd
