@@ -126,9 +126,9 @@ def _render_approvals(cfg, repo, broker):
                         return
                     repo.set_proposal_status(pid, PROPOSAL_APPROVED)
                     try:
-                        coid = client_order_id_for(
-                            date.today(), row["symbol"], row["side"], "manual-approval"
-                        )
+                        created_at = datetime.fromisoformat(str(row["created_at"]))
+                        trade_date = created_at.date()
+                        coid = client_order_id_for(trade_date, row["symbol"], row["side"], f"proposal-{pid}")
                         qty = None
                         notional = None
                         if row["side"] == "sell":
@@ -141,13 +141,22 @@ def _render_approvals(cfg, repo, broker):
                             qty = row["notional"] / ref_price
                         else:
                             notional = row["notional"]
-                        broker.submit(
+                        order = broker.submit(
                             symbol=row["symbol"],
                             side=row["side"],
                             client_order_id=coid,
                             notional=notional,
                             qty=qty,
                         )
+                        from trader.portfolio.repository import OrderRow
+                        repo.record_order(OrderRow(
+                            client_order_id=coid,
+                            symbol=row["symbol"],
+                            side=row["side"],
+                            notional=row["notional"],
+                            status="submitted",
+                            broker_order_id=str(getattr(order, "id", "") or "") or None,
+                        ))
                         repo.set_proposal_status(pid, PROPOSAL_EXECUTED)
                         st.success(f"Order submitted for {row['symbol']}.")
                     except Exception as exc:

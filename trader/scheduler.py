@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from trader.config import Config, load_config
 from trader.execution.broker import AlpacaBroker
 from trader.pipeline import PipelineRun, run_pipeline
+from trader.portfolio.repository import PortfolioRepository
 from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import KillSwitch
 
@@ -43,7 +44,7 @@ def run_once(
     config: Config,
     strategies: "list[Strategy]",
     broker: AlpacaBroker,
-    repo: SQLiteRepository,
+    repo: PortfolioRepository,
 ) -> list[PipelineRun]:
     """Single pipeline tick. Called by the scheduler loop and directly in smoke tests.
 
@@ -63,7 +64,7 @@ def start_scheduler(
     config: Config,
     strategies: "list[Strategy]",
     broker: AlpacaBroker,
-    repo: SQLiteRepository,
+    repo: PortfolioRepository,
     poll_minutes: int = 1,
 ) -> None:
     """Blocking scheduler loop. Checks the Alpaca clock before each tick.
