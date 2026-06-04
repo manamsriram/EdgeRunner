@@ -1,23 +1,29 @@
-"""LLM overlay — Phase 5 extension point.
+"""LLM overlay — Phase 5.
 
-Phase 4: pass-through stub. Phase 5 replaces apply_overlay with a Claude call
-that may veto or adjust signal strength (Signal.strength, a float in [0.0, 1.0]).
-The pipeline never changes.
+Non-load-bearing: any failure (missing key, API error, bad output) returns the
+original signal unchanged. Claude may veto or adjust strength; never originates
+a trade or flips buy↔sell.
 """
 from __future__ import annotations
+
+import os
 
 import pandas as pd
 
 from trader.strategy.base import Signal
 
 
-def apply_overlay(signal: Signal, bars: pd.DataFrame) -> Signal:
-    """Return signal unchanged (Phase 4 pass-through).
+def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
+    """Apply Claude overlay when an API key is configured; otherwise pass through.
 
-    Phase 5 invariants that the LLM-based replacement MUST preserve:
-      - Signal.side must remain one of {"buy", "sell", "hold"}.
-      - Signal.strength must remain within [0.0, 1.0].
-
-    Validate post-LLM and raise ValueError if either invariant is violated.
+    Invariants preserved by the overlay implementation:
+      - Signal.side remains one of {"buy", "sell", "hold"}.
+      - Signal.strength remains within [0.0, 1.0].
     """
-    return signal
+    if config is None or not getattr(config, "anthropic_api_key", None):
+        return signal
+
+    from trader.overlay.claude_overlay import apply_claude_overlay
+
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    return apply_claude_overlay(signal, bars, config.anthropic_api_key, model)
