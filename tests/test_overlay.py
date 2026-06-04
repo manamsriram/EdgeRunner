@@ -164,3 +164,70 @@ def test_markdown_fences_stripped(monkeypatch):
     sig = _buy_signal()
     result = claude_overlay.apply_claude_overlay(sig, _make_bars(), "fake-key", "claude-sonnet-4-6")
     assert result.strength == pytest.approx(0.6)
+
+
+# ---------------------------------------------------------------------------
+# news_context tests
+# ---------------------------------------------------------------------------
+
+_FAKE_NEWS_HTML = """
+<html><body>
+<div class="SoaBEf">
+  <div class="MBeuO">Apple reports record quarterly earnings</div>
+</div>
+<div class="SoaBEf">
+  <div class="MBeuO">AAPL stock hits all-time high amid AI boom</div>
+</div>
+</body></html>
+"""
+
+
+def test_fetch_news_returns_headlines(monkeypatch):
+    from unittest.mock import MagicMock
+    from trader.overlay import news_context
+
+    mock_response = MagicMock()
+    mock_response.content = _FAKE_NEWS_HTML.encode()
+    monkeypatch.setattr(news_context.requests, "get", lambda *a, **kw: mock_response)
+
+    result = news_context.fetch_news("AAPL")
+    assert "AAPL" in result
+    assert "Apple" in result or "AAPL" in result
+
+
+def test_fetch_news_request_error_returns_empty(monkeypatch):
+    from trader.overlay import news_context
+
+    monkeypatch.setattr(
+        news_context.requests, "get", lambda *a, **kw: (_ for _ in ()).throw(OSError("network"))
+    )
+
+    result = news_context.fetch_news("AAPL")
+    assert result == ""
+
+
+def test_fetch_financials_returns_string(monkeypatch):
+    import pandas as pd
+    from unittest.mock import MagicMock
+    from trader.overlay import news_context
+
+    mock_ticker = MagicMock()
+    mock_ticker.balance_sheet = pd.DataFrame(
+        {"2024": [1e9, 2e9], "2023": [0.9e9, 1.8e9]},
+        index=["TotalAssets", "TotalLiabilities"],
+    )
+    mock_ticker.income_stmt = pd.DataFrame()
+    monkeypatch.setattr(news_context.yf, "Ticker", lambda s: mock_ticker)
+
+    result = news_context.fetch_financials("AAPL")
+    assert "AAPL" in result
+    assert "TotalAssets" in result
+
+
+def test_fetch_financials_error_returns_empty(monkeypatch):
+    from trader.overlay import news_context
+
+    monkeypatch.setattr(news_context.yf, "Ticker", lambda s: (_ for _ in ()).throw(RuntimeError("fail")))
+
+    result = news_context.fetch_financials("AAPL")
+    assert result == ""
