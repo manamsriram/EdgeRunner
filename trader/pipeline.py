@@ -88,6 +88,22 @@ def run_pipeline(
             result.outcome,
             result.risk_decision.reason,
         )
+        # Update working state so subsequent symbols see an accurate picture within
+        # this tick (avoids the shared-snapshot bug where two strategies evaluate
+        # against the same pre-trade account state).
+        if result.outcome in ("executed", "queued") and result.risk_decision.approved:
+            from dataclasses import replace as _replace
+            from trader.risk.gate import AccountState as _AS
+            new_trades = state.trades_today + 1
+            new_open = state.open_order_symbols | {result.symbol}
+            approved_notional = result.risk_decision.approved_notional or 0.0
+            new_headroom = max(state.equity * config.risk.max_position_pct - approved_notional, 0.0)
+            # Reflect the trade in a new AccountState for the next iteration.
+            state = _replace(
+                state,
+                trades_today=new_trades,
+                open_order_symbols=new_open,
+            )
 
     return results
 
@@ -120,6 +136,11 @@ def _run_symbol(
         # 2. Generate signal.
         import pandas as pd
         signal = strategy.generate(bars, pd.Timestamp(asof))
+
+        # 3. Overlay (Phase 4 stub — pass-through).
+        signal = apply_overlay(signal, bars)
+
+        # Record the post-overlay signal so the stored row matches what is used downstream.
         repo.record_signal(SignalRow(
             run_id=run_id,
             symbol=symbol,
@@ -127,9 +148,6 @@ def _run_symbol(
             strength=signal.strength,
             reason=signal.reason,
         ))
-
-        # 3. Overlay (Phase 4 stub — pass-through).
-        signal = apply_overlay(signal, bars)
 
         # 4. Hold signals skip the gate.
         if signal.side == "hold":

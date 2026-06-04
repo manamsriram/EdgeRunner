@@ -271,3 +271,40 @@ def test_pipeline_stale_reconciliation_blocks_all(tmp_path):
     assert result.outcome == "blocked"
     assert "stale" in result.risk_decision.reason
     assert len(b._client.submitted) == 0
+
+
+def test_pipeline_working_state_updated_between_symbols(tmp_path):
+    """Regression: two buy signals in one tick with max_trades_per_day=1.
+
+    The second symbol must be blocked after the first is executed, proving the
+    pipeline updates working state (trades_today) between symbols rather than
+    sharing the same pre-trade snapshot for both.
+    """
+    cfg = Config(
+        alpaca_api_key="k",
+        alpaca_secret_key="s",
+        alpaca_paper=True,
+        autonomy="auto",
+        openai_api_key=None,
+        anthropic_api_key=None,
+        portfolio_db_path=str(tmp_path / "portfolio.db"),
+        kill_switch_path=str(tmp_path / "ks.flag"),
+        risk=RiskLimits(
+            max_position_pct=0.10,
+            max_trades_per_day=1,
+            daily_loss_limit_pct=0.03,
+            allowlist=("AAPL", "MSFT"),
+        ),
+    )
+    results, repo, broker = _run(
+        [_FixedStrategy("AAPL", "buy"), _FixedStrategy("MSFT", "buy")],
+        cfg,
+    )
+
+    assert len(results) == 2
+    outcomes = {r.symbol: r.outcome for r in results}
+    # Exactly one executed, the other blocked by the updated trades_today counter.
+    assert outcomes["AAPL"] == "executed"
+    assert outcomes["MSFT"] == "blocked"
+    assert len(broker._client.submitted) == 1
+    assert len(repo.get_orders()) == 1

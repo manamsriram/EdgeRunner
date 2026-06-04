@@ -79,18 +79,18 @@ def get_user_history(username):
 
 @st.cache_resource
 def _trading_resources():
-    """Load config, repo, and broker once per Streamlit session (cached across reruns)."""
-    try:
-        from trader.config import load_config
-        from trader.execution.broker import AlpacaBroker
-        from trader.portfolio.sqlite_repo import SQLiteRepository
+    """Load config, repo, and broker once per Streamlit session (cached across reruns).
 
-        cfg = load_config()
-        repo = SQLiteRepository(cfg.portfolio_db_path)
-        broker = AlpacaBroker(cfg)
-        return cfg, repo, broker
-    except Exception as exc:
-        return None, None, str(exc)
+    Re-raises on failure so @st.cache_resource does not cache the broken state.
+    """
+    from trader.config import load_config
+    from trader.execution.broker import AlpacaBroker
+    from trader.portfolio.sqlite_repo import SQLiteRepository
+
+    cfg = load_config()
+    repo = SQLiteRepository(cfg.portfolio_db_path)
+    broker = AlpacaBroker(cfg)
+    return cfg, repo, broker
 
 
 def _render_approvals(cfg, repo, broker):
@@ -132,7 +132,13 @@ def _render_approvals(cfg, repo, broker):
                         qty = None
                         notional = None
                         if row["side"] == "sell":
-                            qty = row["notional"] / row["ref_price"]
+                            ref_price = row["ref_price"]
+                            if not ref_price:
+                                repo.set_proposal_status(pid, PROPOSAL_PENDING)
+                                st.error("Cannot submit sell: ref_price is zero.")
+                                st.rerun()
+                                return
+                            qty = row["notional"] / ref_price
                         else:
                             notional = row["notional"]
                         broker.submit(
@@ -158,18 +164,18 @@ def _render_approvals(cfg, repo, broker):
 def _render_portfolio(cfg, repo, broker):
     st.subheader("Live Positions")
     try:
-        client = broker._ensure_client()
-        positions = client.get_all_positions()
+        positions = broker.get_positions()
         if positions:
-            rows = []
-            for p in positions:
-                rows.append({
-                    "Symbol": p.symbol,
-                    "Qty": float(p.qty),
-                    "Avg Entry": float(getattr(p, "avg_entry_price", 0)),
-                    "Market Value": float(getattr(p, "market_value", 0)),
-                    "Unrealized P&L": float(getattr(p, "unrealized_pl", 0)),
-                })
+            rows = [
+                {
+                    "Symbol": p["symbol"],
+                    "Qty": p["qty"],
+                    "Avg Entry": p["avg_entry_price"],
+                    "Market Value": p["market_value"],
+                    "Unrealized P&L": p["unrealized_pl"],
+                }
+                for p in positions
+            ]
             st.dataframe(rows, use_container_width=True)
         else:
             st.info("No open positions.")
@@ -223,10 +229,12 @@ def _render_controls(cfg, repo, broker):
         import sqlite3 as _sqlite3
         conn = _sqlite3.connect(cfg.portfolio_db_path)
         conn.row_factory = _sqlite3.Row
-        rows = conn.execute(
-            "SELECT id, started_at, strategy, mode, note FROM runs ORDER BY id DESC LIMIT 20"
-        ).fetchall()
-        conn.close()
+        try:
+            rows = conn.execute(
+                "SELECT id, started_at, strategy, mode, note FROM runs ORDER BY id DESC LIMIT 20"
+            ).fetchall()
+        finally:
+            conn.close()
         if rows:
             st.dataframe([dict(r) for r in rows], use_container_width=True)
         else:
@@ -302,8 +310,15 @@ with st.sidebar:
 if st.session_state.logged_in:
     st.title("Trading Agent Dashboard")
 
-    cfg, repo, broker_or_err = _trading_resources()
-    trading_available = cfg is not None
+    try:
+        cfg, repo, broker_or_err = _trading_resources()
+        trading_available = True
+    except Exception as _trading_exc:
+        cfg = repo = broker_or_err = None
+        trading_available = False
+        _trading_err_msg = str(_trading_exc)
+    else:
+        _trading_err_msg = ""
 
     tab_analysis, tab_approvals, tab_portfolio, tab_controls = st.tabs(
         ["Analysis", "Approvals", "Portfolio", "Controls"]
@@ -341,19 +356,19 @@ if st.session_state.logged_in:
         if trading_available:
             _render_approvals(cfg, repo, broker_or_err)
         else:
-            st.error(f"Trading unavailable — check .env: {broker_or_err}")
+            st.error(f"Trading unavailable — check .env: {_trading_err_msg}")
 
     with tab_portfolio:
         if trading_available:
             _render_portfolio(cfg, repo, broker_or_err)
         else:
-            st.error(f"Trading unavailable — check .env: {broker_or_err}")
+            st.error(f"Trading unavailable — check .env: {_trading_err_msg}")
 
     with tab_controls:
         if trading_available:
             _render_controls(cfg, repo, broker_or_err)
         else:
-            st.error(f"Trading unavailable — check .env: {broker_or_err}")
+            st.error(f"Trading unavailable — check .env: {_trading_err_msg}")
 
 else:
     st.title("Welcome to Trading Agent Dashboard")
