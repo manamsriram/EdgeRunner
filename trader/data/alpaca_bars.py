@@ -32,6 +32,7 @@ def get_daily_bars(
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed
 
     config = config or load_config()
     config.require_alpaca()
@@ -45,6 +46,7 @@ def get_daily_bars(
         timeframe=TimeFrame.Day,
         start=start,
         end=end,
+        feed=DataFeed.IEX,
     )
     bars = client.get_stock_bars(request)
     return _to_frame(bars.df, symbol)

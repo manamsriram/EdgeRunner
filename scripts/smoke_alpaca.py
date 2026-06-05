@@ -8,7 +8,7 @@ AAPL. Requires ALPACA_API_KEY / ALPACA_SECRET_KEY in .env (see .env.example).
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Allow running as `python scripts/smoke_alpaca.py` from the repo root.
@@ -34,7 +34,7 @@ def main() -> None:
     print(f"  account number: {account.account_number}")
     print(f"  buying power:   ${float(account.buying_power):,.2f}")
 
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(days=10)
     bars = get_daily_bars("AAPL", start=start, end=end, config=config)
     if bars.empty:
