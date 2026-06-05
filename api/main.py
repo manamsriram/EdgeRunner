@@ -83,3 +83,11 @@ else:
     logger.info(
         "frontend/dist not found — run `cd frontend && npm run build` to enable SPA serving"
     )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "api.main:app",
+        reload=True,
+        reload_excludes=["venv", ".git", "frontend/node_modules"],
+    )

@@ -17,6 +17,7 @@ anthropic>=0.40.0
 # pandas-ta is intentionally NOT used: its current release requires Python >=3.12
 # and pulls in the removed numpy.NaN symbol, which breaks on this stack.
 # --- Phase 8: FastAPI backend (replaces Streamlit) ---
+pydantic>=2.0
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 PyJWT>=2.8.0

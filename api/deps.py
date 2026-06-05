@@ -9,7 +9,10 @@ from functools import lru_cache
 
 import bcrypt
 import jwt
+from dotenv import load_dotenv
 from fastapi import HTTPException, Request
+
+load_dotenv()
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 if not SECRET_KEY or SECRET_KEY == "change-me-in-production-please":
