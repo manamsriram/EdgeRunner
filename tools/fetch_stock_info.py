@@ -5,7 +5,8 @@ import re
 import requests
 import warnings
 import json
-from langchain.agents import load_tools, AgentType, Tool, initialize_agent
+from langchain_community.agent_toolkits.load_tools import load_tools
+from langchain.agents import AgentType, Tool, initialize_agent
 
 from dotenv import load_dotenv
 
@@ -235,16 +236,17 @@ from langchain.chat_models import ChatOpenAI
 from openai import OpenAI
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env (see .env.example) or export it in the environment.")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-client = OpenAI(api_key=OPENAI_API_KEY)
 def create_stock_analyzer():
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env (see .env.example) or export it in the environment.")
     # Initialize the LLM
     llm = ChatOpenAI(
-        temperature=0, 
+        temperature=0,
         model_name="gpt-4-turbo",
-        openai_api_key=OPENAI_API_KEY
+        openai_api_key=key
     )
     
     # Initialize the agent

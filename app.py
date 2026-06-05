@@ -4,7 +4,6 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from tools.fetch_stock_info import Analyze_stock
 
 # ---- auth helpers (unchanged from original) ----
 
@@ -77,7 +76,7 @@ def get_user_history(username):
 
 # ---- trading helpers ----
 
-@st.cache_resource
+@st.cache_resource(hash_funcs={"builtins.module": lambda _: None})
 def _trading_resources():
     """Load config, repo, and broker once per Streamlit session (cached across reruns).
 
@@ -95,8 +94,7 @@ def _trading_resources():
 
 def _render_approvals(cfg, repo, broker):
     st.subheader("Pending Trade Approvals")
-    if st.button("Refresh", key="approvals_refresh"):
-        st.rerun()
+    st.button("Refresh", key="approvals_refresh")  # click triggers rerun naturally
 
     from trader.execution.broker import client_order_id_for
     from trader.portfolio.repository import PROPOSAL_APPROVED, PROPOSAL_EXECUTED, PROPOSAL_PENDING, PROPOSAL_REJECTED
@@ -122,7 +120,6 @@ def _render_approvals(cfg, repo, broker):
                     ids = {r["id"] for r in current}
                     if pid not in ids:
                         st.warning("Already actioned.")
-                        st.rerun()
                         return
                     repo.set_proposal_status(pid, PROPOSAL_APPROVED)
                     try:
@@ -136,7 +133,6 @@ def _render_approvals(cfg, repo, broker):
                             if not ref_price:
                                 repo.set_proposal_status(pid, PROPOSAL_PENDING)
                                 st.error("Cannot submit sell: ref_price is zero.")
-                                st.rerun()
                                 return
                             qty = row["notional"] / ref_price
                         else:
@@ -357,6 +353,7 @@ if st.session_state.logged_in:
             st.markdown(" ")
         if enter and query:
             with st.spinner("Gathering information and analyzing…"):
+                from tools.fetch_stock_info import Analyze_stock
                 out = Analyze_stock(query)
                 save_query(st.session_state.username, query, out)
             st.success("Done!")
