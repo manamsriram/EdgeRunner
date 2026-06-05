@@ -6,7 +6,6 @@ A personal autonomous trading agent on Alpaca: backtested quant strategies, hard
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Alpaca](https://img.shields.io/badge/Alpaca-Paper%20Trading-FFD700?style=for-the-badge&logo=alpaca&logoColor=black)](https://alpaca.markets/)
 [![Claude](https://img.shields.io/badge/Claude-Sonnet%20Overlay-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://www.anthropic.com/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.28.0-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![pandas](https://img.shields.io/badge/pandas-Backtest-150458?style=for-the-badge&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
 [![pytest](https://img.shields.io/badge/pytest-9.0.3-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
@@ -21,8 +20,6 @@ A personal autonomous trading agent on Alpaca: backtested quant strategies, hard
 
 A paper-first autonomous trading agent that executes backtested quantitative strategies on liquid US large-caps via the Alpaca API. Every order passes through a single fail-closed risk gate. Human approval is required in `manual` mode; a single config flag switches to `auto`. The Claude Sonnet overlay can veto or adjust signal confidence but never originates a trade. Edge is proven on historical + paper data before any real money is risked.
 
-The repo also includes the original read-only research tool: a Streamlit app with a LangChain/GPT-4 ReAct agent that pulls prices, financials, and news.
-
 ---
 
 ## Features
@@ -30,7 +27,7 @@ The repo also includes the original read-only research tool: a Streamlit app wit
 - **Honest backtest harness** — bar-replay engine decides on bar *t* and fills on bar *t+1* open, charging fees + slippage, through the same `Strategy` interface the live loop uses. No lookahead enforced by contract.
 - **Fail-closed risk gate** — every order checks allowlist, position cap, daily-loss breaker, max-trades-per-day, no-short rule, PDT guard (blocks buys at < $25k with ≥ 3 day-trades), and a file-backed kill switch.
 - **Idempotent Alpaca execution** — reconciles broker state before each order; crash-safe and retry-safe with the broker as the single source of truth.
-- **Human-in-the-loop / autonomy toggle** — `AUTONOMY=manual` queues proposals for Streamlit dashboard approval; `auto` skips the queue but still passes the full risk gate.
+- **Human-in-the-loop / autonomy toggle** — `AUTONOMY=manual` queues proposals for dashboard approval; `auto` skips the queue but still passes the full risk gate.
 - **Claude overlay (non-load-bearing)** — Sonnet with prompt caching can veto or nudge confidence with a written rationale. Breaking-news context fetched per tick. Disabled if `ANTHROPIC_API_KEY` is unset.
 - **Observability** — structured logging at configurable level; Slack webhook alerts on fills, kill-switch trips, and daily-loss breaker events (deduped per session); equity curve rendered in the dashboard from Alpaca portfolio history.
 - **Go-live gate** — `scripts/go_live_gate.py` runs an out-of-sample backtest for every (symbol, strategy) combo and checks Sharpe, max drawdown, trade count, and vs-buy-and-hold thresholds; exits 0 (PASS) / 1 (FAIL). `scripts/paper_trading_report.py` summarises paper auto-mode history and produces a verdict.
@@ -47,7 +44,7 @@ The repo also includes the original read-only research tool: a Streamlit app wit
 | Strategy signals | pandas, numpy (native indicators — no pandas-ta) |
 | LLM overlay | anthropic ≥ 0.40.0 (Claude Sonnet, prompt caching) |
 | Legacy research agent | LangChain, OpenAI GPT-4, yfinance 0.2.31 |
-| Dashboard | Streamlit 1.28.0 |
+| Dashboard | FastAPI + React (Vite, TypeScript, Tailwind) |
 | Storage | SQLite (`users.db`) via `PortfolioRepository` interface |
 | Alerts | Slack incoming webhook |
 | Testing | pytest 9.0.3 |
@@ -75,7 +72,8 @@ scripts/
   paper_trading_report.py # summarises paper auto-mode SQLite history
   smoke_alpaca.py         # verify paper connectivity
   smoke_order.py          # drive one real paper order end-to-end
-app.py            # legacy Streamlit research tool (LangChain + GPT-4)
+api/              # FastAPI backend (auth, proposals, portfolio, controls, analysis, ws)
+frontend/         # React dashboard (Vite + TypeScript + Tailwind)
 tools/
   fetch_stock_info.py     # price, news, financials tools (also used as overlay context)
 ```
@@ -97,6 +95,7 @@ git clone https://github.com/manamsriram/Stock-Analyzer-Bot.git
 cd Stock-Analyzer-Bot
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 ```
 
 ### Configuration
@@ -133,8 +132,11 @@ python scripts/smoke_order.py AAPL 50
 # 4. Start the trading scheduler:
 python -m trader.scheduler
 
-# 5. Launch the Streamlit dashboard:
-streamlit run app.py
+# 5. Start the API backend (terminal 1):
+uvicorn api.main:app --reload
+
+# 6. Start the React dashboard (terminal 2):
+cd frontend && npm run dev
 ```
 
 Kill switch:
@@ -184,16 +186,6 @@ tick (Alpaca clock)
 The backtest harness replays history through the same `Strategy` + risk path as live, so simulation and live cannot diverge.
 
 ---
-
-## Legacy Research App
-
-The original read-only research tool: a Streamlit app with SQLite login and a LangChain/GPT-4 ReAct agent that pulls prices, financials, and news.
-
-```bash
-streamlit run app.py
-```
-
-Register/login, then ask questions like *"What's the outlook for Apple?"* or *"Show me financials and latest news for Tesla."* Its news/financials tools are reused as Claude overlay context in the trading agent — never as a signal source.
 
 ---
 
