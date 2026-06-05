@@ -1,0 +1,47 @@
+databases:
+  - name: stock-analyzer-db
+    databaseName: stockanalyzer
+    plan: free
+
+services:
+  - type: web
+    name: stock-analyzer-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt && cd frontend && npm ci && npm run build
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stock-analyzer-db
+          property: connectionString
+      - key: AUTONOMY
+        value: auto
+      - key: ALPACA_PAPER
+        value: "true"
+      - key: SECURE_COOKIES
+        value: "true"
+      # Set these as secrets in the Render dashboard — never commit them:
+      #   JWT_SECRET_KEY   → python -c "import secrets; print(secrets.token_hex(32))"
+      #   ALPACA_API_KEY
+      #   ALPACA_SECRET_KEY
+      #   ANTHROPIC_API_KEY   (optional — Claude overlay disabled if absent)
+      #   SLACK_WEBHOOK_URL   (optional — alerts disabled if absent)
+      #   FRONTEND_ORIGIN     → set to your actual Render web service URL after first deploy
+
+  - type: worker
+    name: stock-analyzer-scheduler
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m trader.scheduler
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stock-analyzer-db
+          property: connectionString
+      - key: AUTONOMY
+        value: auto
+      - key: ALPACA_PAPER
+        value: "true"
+      # Same secrets as web service:
+      #   JWT_SECRET_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
+      #   ANTHROPIC_API_KEY, SLACK_WEBHOOK_URL
