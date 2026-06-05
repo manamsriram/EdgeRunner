@@ -116,8 +116,7 @@ def main() -> int:
         print(f"unavailable ({exc})")
 
     # ---- PDT informational check ----
-    from datetime import date, timezone
-    import datetime as _dt
+    from datetime import date
     today_str = date.today().isoformat()
     today_fills = [
         o for o in filled
