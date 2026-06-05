@@ -1,13 +1,9 @@
 pandas
 numpy
-duckduckgo-search
 yfinance==0.2.31
 beautifulsoup4==4.12.2
 requests==2.31.0
-openai
 python-dotenv==1.0.0
-langchain
-langchain-community
 # --- trading-agent foundation (Phase 0-2) ---
 alpaca-py==0.43.4
 pytest==9.0.3
