@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
@@ -22,7 +23,14 @@ from api.ws import proposal_poller, ws_handler
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Stock Analyzer Bot API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(proposal_poller())
+    logger.info("proposal poller started")
+    yield
+
+
+app = FastAPI(title="Stock Analyzer Bot API", version="1.0.0", lifespan=lifespan)
 
 
 class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -58,13 +66,6 @@ app.include_router(analysis_router, prefix="/api")
 @app.websocket("/ws/updates")
 async def websocket_endpoint(websocket: WebSocket):
     await ws_handler(websocket)
-
-
-# ---- Startup: launch DB poller background task ----
-@app.on_event("startup")
-async def startup():
-    asyncio.create_task(proposal_poller())
-    logger.info("proposal poller started")
 
 
 # ---- SPA static files (production) ----
