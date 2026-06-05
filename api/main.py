@@ -105,6 +105,12 @@ async def websocket_endpoint(websocket: WebSocket):
     await ws_handler(websocket)
 
 
+# ---- Health check (Render pings GET /) ----
+@app.get("/", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
+
+
 # ---- SPA static files (production) ----
 _DIST = Path(__file__).parent.parent / "frontend" / "dist"
 if _DIST.exists():
