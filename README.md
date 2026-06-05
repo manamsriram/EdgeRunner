@@ -1,7 +1,6 @@
 <div align="center">
 
-# Stock Analyzer Bot → Autonomous Trading Agent
-
+# EdgeRunner: A Paper-First Autonomous Trading Agent on Alpaca
 A personal autonomous trading agent on Alpaca: backtested quant strategies, hard risk guardrails, human-in-the-loop approval, and a non-load-bearing Claude overlay.
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
