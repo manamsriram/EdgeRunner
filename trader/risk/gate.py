@@ -148,8 +148,9 @@ class RiskGate:
             )
 
         # 4b. PDT guard — US accounts under $25k are capped at 3 day-trades per session.
-        #     trades_today counts individual fills; // 2 approximates round-trips (buy+sell=1).
-        #     Only blocks buys — sells to close existing positions must always pass through.
+        #     trades_today counts individual fills; a day-trade is a buy+sell pair, so
+        #     trades_today // 2 gives completed round-trips. Blocking at >= limit prevents
+        #     the 4th round-trip entry. Sells always pass — closing positions is never blocked.
         if (
             intent.side == "buy"
             and state.equity < limits.pdt_equity_threshold
