@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 # Ensure project root is on sys.path so `trader` is importable when the script is
 # invoked from any working directory (e.g. `python scripts/go_live_gate.py`).
@@ -89,7 +89,7 @@ def main() -> int:
         print(f"ERROR: --in-sample-end must be YYYY-MM-DD, got {args.in_sample_end!r}")
         return 2
 
-    today = datetime.combine(date.today(), datetime.min.time())
+    today = datetime.combine(date.today(), time())
     oos_start = in_sample_end + timedelta(days=1)
     oos_end = today
 
