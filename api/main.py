@@ -23,10 +23,47 @@ from api.ws import proposal_poller, ws_handler
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
+
+async def _scheduler_loop() -> None:
+    """Run the trading scheduler in a thread pool every 60 s.
+
+    Blocking broker/data calls run via run_in_executor so they don't stall
+    the FastAPI event loop. Skips silently if ALPACA_API_KEY is not configured.
+    """
+    from trader.config import load_config
+    from trader.execution.broker import AlpacaBroker
+    from trader.portfolio.sqlite_repo import SQLiteRepository
+    from trader.scheduler import _build_default_strategies, run_once
+
+    cfg = load_config()
+    if not cfg.alpaca_api_key:
+        logger.warning("ALPACA_API_KEY not set — scheduler disabled")
+        return
+
+    if cfg.database_url:
+        from trader.portfolio.postgres_repo import PostgresRepository
+        repo = PostgresRepository(cfg.database_url)
+    else:
+        repo = SQLiteRepository(cfg.portfolio_db_path)
+
+    broker = AlpacaBroker(cfg)
+    strategies = _build_default_strategies(cfg)
+    loop = asyncio.get_event_loop()
+
+    logger.info("scheduler loop started — autonomy=%s poll=60s", cfg.autonomy)
+    while True:
+        try:
+            await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
+        except Exception:
+            logger.exception("scheduler tick error")
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(proposal_poller())
-    logger.info("proposal poller started")
+    asyncio.create_task(_scheduler_loop())
+    logger.info("proposal poller and scheduler started")
     yield
 
 

@@ -23,10 +23,13 @@ from api.deps import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").strip().lower() in {"1", "true", "yes"}
+# Cross-origin (Vercel frontend + Render API): SameSite=None;Secure required.
+# Local dev (same origin): SameSite=Strict is fine and doesn't need HTTPS.
+_SAMESITE = "none" if _SECURE_COOKIES else "strict"
 
 
 def _set_auth_cookies(response: Response, username: str) -> None:
-    kw = dict(httponly=True, samesite="strict", secure=_SECURE_COOKIES)
+    kw = dict(httponly=True, samesite=_SAMESITE, secure=_SECURE_COOKIES)
     response.set_cookie("access_token", make_access_token(username), max_age=15 * 60, **kw)
     response.set_cookie("refresh_token", make_refresh_token(username), max_age=8 * 3600, **kw)
 
