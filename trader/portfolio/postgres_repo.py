@@ -182,3 +182,11 @@ class PostgresRepository(PortfolioRepository):
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM orders ORDER BY id")
                 return [dict(r) for r in cur.fetchall()]
+
+    def get_runs(self) -> list[dict]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, started_at, strategy, mode, note FROM runs ORDER BY id DESC LIMIT 20"
+                )
+                return [dict(r) for r in cur.fetchall()]

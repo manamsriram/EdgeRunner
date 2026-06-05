@@ -182,3 +182,10 @@ class SQLiteRepository(PortfolioRepository):
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM orders ORDER BY id").fetchall()
             return [dict(r) for r in rows]
+
+    def get_runs(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, started_at, strategy, mode, note FROM runs ORDER BY id DESC LIMIT 20"
+            ).fetchall()
+            return [dict(r) for r in rows]

@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException
 
 logger = logging.getLogger(__name__)
 
-from api.deps import get_config, get_current_user
+from api.deps import get_config, get_current_user, get_repo
 
 router = APIRouter(prefix="/controls", tags=["controls"])
 
@@ -43,19 +42,8 @@ def autonomy_mode(username: str = Depends(get_current_user)):
 
 @router.get("/runs")
 def run_log(username: str = Depends(get_current_user)):
-    cfg = get_config()
     try:
-        conn = sqlite3.connect(cfg.portfolio_db_path, check_same_thread=False, timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        try:
-            rows = conn.execute(
-                "SELECT id, started_at, strategy, mode, note FROM runs "
-                "ORDER BY id DESC LIMIT 20"
-            ).fetchall()
-        finally:
-            conn.close()
-        return [dict(r) for r in rows]
+        return get_repo().get_runs()
     except Exception:
         logger.exception("failed to fetch run log")
         raise HTTPException(status_code=500, detail="run log unavailable; see server logs")

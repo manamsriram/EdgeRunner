@@ -81,3 +81,6 @@ class PortfolioRepository(ABC):
 
     @abstractmethod
     def get_orders(self) -> list[dict]: ...
+
+    @abstractmethod
+    def get_runs(self) -> list[dict]: ...
