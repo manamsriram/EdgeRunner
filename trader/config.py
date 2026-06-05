@@ -105,7 +105,11 @@ def load_config() -> Config:
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
         portfolio_db_path=_db,
         kill_switch_path=_ks,
-        risk=RiskLimits(allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST)),
+        risk=RiskLimits(
+            allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST),
+            pdt_equity_threshold=float(os.getenv("PDT_EQUITY_THRESHOLD", "25000")),
+            pdt_day_trade_limit=int(os.getenv("PDT_DAY_TRADE_LIMIT", "3")),
+        ),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
         alert_email=os.getenv("ALERT_EMAIL") or None,
