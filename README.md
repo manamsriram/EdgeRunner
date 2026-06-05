@@ -28,7 +28,7 @@ The project began as a LangChain/LLM stock-research chatbot (still runs — see 
 
 ---
 
-## Where it is now (Phases 0–7 shipped, 89 tests green)
+## Where it is now (Phases 0–7 shipped, 93 tests green)
 
 ```text
 trader/
