@@ -106,7 +106,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # ---- Health check (Render pings GET /) ----
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def health():
     return {"status": "ok"}
 
