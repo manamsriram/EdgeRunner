@@ -71,6 +71,8 @@ export const getKillSwitch = () => api.get<{ engaged: boolean }>('/api/controls/
 export const engageKillSwitch = () => api.post('/api/controls/kill-switch/engage')
 export const disengageKillSwitch = () => api.post('/api/controls/kill-switch/disengage')
 export const getAutonomy = () => api.get<{ mode: string }>('/api/controls/autonomy')
+export const setAutonomy = (mode: 'manual' | 'auto') =>
+  api.post<{ mode: string }>('/api/controls/autonomy', { mode })
 export const getRuns = () => api.get<RunEntry[]>('/api/controls/runs')
 
 // ---- types ----

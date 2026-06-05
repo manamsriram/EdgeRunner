@@ -6,6 +6,7 @@ import {
   getAutonomy,
   getKillSwitch,
   getRuns,
+  setAutonomy,
 } from '../lib/api'
 
 export default function Controls() {
@@ -29,6 +30,17 @@ export default function Controls() {
   })
 
   const engaged = ks?.engaged ?? false
+  const currentMode = autonomy?.mode ?? 'manual'
+
+  const handleSetAutonomy = async (mode: 'manual' | 'auto') => {
+    try {
+      await setAutonomy(mode)
+      qc.invalidateQueries({ queryKey: ['autonomy'] })
+      toast.success(`Autonomy set to ${mode}`)
+    } catch {
+      toast.error('Failed to update autonomy mode')
+    }
+  }
 
   const handleEngage = async () => {
     try {
@@ -83,22 +95,34 @@ export default function Controls() {
 
       {/* Autonomy */}
       <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-        <h2 className="text-xl font-bold text-white mb-2">Autonomy Mode</h2>
-        <div className="flex items-center gap-3">
-          <span
-            className={`px-3 py-1 rounded-full text-sm font-semibold uppercase ${
-              autonomy?.mode === 'auto'
-                ? 'bg-yellow-900 text-yellow-300'
-                : 'bg-blue-900 text-blue-300'
-            }`}
-          >
-            {autonomy?.mode ?? '…'}
-          </span>
-          <span className="text-slate-400 text-sm">
-            To change, set <code className="text-slate-300">AUTONOMY=auto</code> or{' '}
-            <code className="text-slate-300">AUTONOMY=manual</code> in <code className="text-slate-300">.env</code> and restart.
+        <h2 className="text-xl font-bold text-white mb-4">Autonomy Mode</h2>
+        <div className="flex items-center gap-4 mb-4">
+          <div
+            className={`w-3 h-3 rounded-full ${currentMode === 'auto' ? 'bg-yellow-400' : 'bg-blue-400'}`}
+          />
+          <span className={`font-bold text-lg ${currentMode === 'auto' ? 'text-yellow-300' : 'text-blue-300'}`}>
+            {currentMode === 'auto' ? 'AUTO — Trades execute automatically' : 'MANUAL — Proposals require approval'}
           </span>
         </div>
+        <div className="flex gap-3 mb-3">
+          <button
+            onClick={() => handleSetAutonomy('manual')}
+            disabled={currentMode === 'manual'}
+            className="bg-blue-700 hover:bg-blue-800 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
+          >
+            Manual
+          </button>
+          <button
+            onClick={() => handleSetAutonomy('auto')}
+            disabled={currentMode === 'auto'}
+            className="bg-yellow-700 hover:bg-yellow-800 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
+          >
+            Auto
+          </button>
+        </div>
+        <p className="text-slate-500 text-xs">
+          Runtime only — resets to <code className="text-slate-400">AUTONOMY</code> env var on restart.
+        </p>
       </section>
 
       {/* Run Log */}

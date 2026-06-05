@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 from api.deps import get_config, get_current_user, get_repo
 
 router = APIRouter(prefix="/controls", tags=["controls"])
+
+_autonomy_override: str | None = None
 
 
 def _kill_switch():
@@ -37,7 +41,20 @@ def disengage_kill_switch(username: str = Depends(get_current_user)):
 
 @router.get("/autonomy")
 def autonomy_mode(username: str = Depends(get_current_user)):
-    return {"mode": get_config().autonomy}
+    mode = _autonomy_override if _autonomy_override is not None else get_config().autonomy
+    return {"mode": mode}
+
+
+class AutonomyRequest(BaseModel):
+    mode: Literal["manual", "auto"]
+
+
+@router.post("/autonomy")
+def set_autonomy_mode(body: AutonomyRequest, username: str = Depends(get_current_user)):
+    global _autonomy_override
+    _autonomy_override = body.mode
+    logger.info("autonomy mode set to %s by %s", body.mode, username)
+    return {"mode": _autonomy_override}
 
 
 @router.get("/runs")
