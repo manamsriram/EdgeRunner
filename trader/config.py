@@ -23,7 +23,7 @@ LIVE_BASE_URL = "https://api.alpaca.markets"
 # gate refuses any symbol outside the allowlist, so this is the default tradeable set
 # when RISK_ALLOWLIST is unset. Tuned/expanded later, not hand-picked per trade.
 DEFAULT_ALLOWLIST: tuple[str, ...] = (
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "JPM",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "JPM", "VOO", "SPY", "QQQ",
 )
 
 
