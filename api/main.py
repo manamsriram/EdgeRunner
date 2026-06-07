@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.auth import router as auth_router
 from api.routes.analysis import router as analysis_router
+from api.routes.performance import router as performance_router
 from api.routes.controls import router as controls_router
 from api.routes.portfolio import router as portfolio_router
 from api.routes.proposals import router as proposals_router
@@ -134,6 +135,7 @@ app.include_router(proposals_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")
 app.include_router(controls_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
+app.include_router(performance_router, prefix="/api")
 
 
 # ---- WebSocket ----
