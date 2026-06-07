@@ -154,9 +154,14 @@ def _build_default_strategies(config: Config) -> "list[Strategy]":
 
 
 def _build_crypto_strategies(config: Config) -> "list[Strategy]":
-    """Build one CryptoEMACrossover per crypto_allowlist symbol."""
+    """Build EMA crossover + Bollinger reversion strategies per crypto symbol."""
     from trader.strategy.crypto_trend import CryptoEMACrossover
-    return [CryptoEMACrossover(symbol=sym) for sym in config.risk.crypto_allowlist]
+    from trader.strategy.crypto_mean_reversion import CryptoBollingerReversion
+    strategies = []
+    for sym in config.risk.crypto_allowlist:
+        strategies.append(CryptoEMACrossover(symbol=sym))
+        strategies.append(CryptoBollingerReversion(symbol=sym))
+    return strategies
 
 
 if __name__ == "__main__":
