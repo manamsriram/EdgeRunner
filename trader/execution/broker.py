@@ -47,7 +47,8 @@ class _TradingClient(Protocol):
     def get_orders(self, filter: Any) -> list[Any]: ...  # noqa: A002 - alpaca's kw name
     def submit_order(self, order_data: Any) -> Any: ...
     def get_order_by_client_id(self, client_id: str) -> Any: ...
-    def get_portfolio_history(self) -> Any: ...
+    def get_portfolio_history(self, history_filter: Any = None) -> Any: ...
+    def get_account_activities(self, filter: Any = None) -> Any: ...
 
 
 class AlpacaBroker:
@@ -95,15 +96,18 @@ class AlpacaBroker:
             for p in client.get_all_positions()
         ]
 
-    def get_portfolio_history(self) -> dict | None:
+    def get_portfolio_history(self, period: str = "1A") -> dict | None:
         """Return {"timestamp": [...ISO strings...], "equity": [...floats...]} or None.
 
-        Fetches from Alpaca; any error (missing keys, network, SDK) returns None so the
-        dashboard can show a graceful fallback instead of crashing.
+        `period` follows Alpaca's convention: "1D", "1W", "1M", "3M", "6M", "1A".
+        Defaults to "1A" so callers get a full year of daily equity data for Sharpe
+        and drawdown computation. The /api/portfolio/history endpoint uses the default.
         """
         try:
             client = self._ensure_client()
-            history = client.get_portfolio_history()
+            from alpaca.trading.requests import GetPortfolioHistoryRequest
+            request = GetPortfolioHistoryRequest(period=period, timeframe="1D")
+            history = client.get_portfolio_history(history_filter=request)
 
             def _ts_to_iso(t: Any) -> str:
                 if hasattr(t, "isoformat"):
@@ -128,6 +132,51 @@ class AlpacaBroker:
         except Exception as exc:
             logger.warning("get_portfolio_history failed: %s", exc)
             return None
+
+    def get_account_activities(self, activity_type: str = "FILL") -> list[dict]:
+        """Fetch account activities as plain dicts. Uses urllib (stdlib) because
+        alpaca-py's TradingClient does not consistently expose this endpoint across
+        SDK versions. Returns [] on any error — callers must handle empty list.
+
+        Each returned dict: {"symbol", "side", "qty", "price", "ts"}.
+        """
+        import json
+        import urllib.request
+
+        try:
+            self._config.require_alpaca()
+            url = (
+                f"{self._config.alpaca_base_url}"
+                f"/v2/account/activities/{activity_type}"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "APCA-API-KEY-ID": self._config.alpaca_api_key or "",
+                    "APCA-API-SECRET-KEY": self._config.alpaca_secret_key or "",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                activities = json.loads(resp.read())
+
+            result = []
+            for a in activities:
+                try:
+                    if a.get("activity_type") != activity_type:
+                        continue
+                    result.append({
+                        "symbol": a["symbol"],
+                        "side": a["side"].lower(),
+                        "qty": float(a["qty"]),
+                        "price": float(a["price"]),
+                        "ts": a.get("transaction_time", ""),
+                    })
+                except (KeyError, ValueError, TypeError):
+                    continue
+            return result
+        except Exception as exc:
+            logger.warning("get_account_activities failed: %s", exc)
+            return []
 
     # ---- reconciliation (source of truth) ----
 

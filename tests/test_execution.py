@@ -254,7 +254,7 @@ class _PortfolioHistoryClient(FakeClient):
         self._history = history
         self._raise_exc = raise_exc
 
-    def get_portfolio_history(self):
+    def get_portfolio_history(self, history_filter=None):
         if self._raise_exc:
             raise self._raise_exc
         return self._history
