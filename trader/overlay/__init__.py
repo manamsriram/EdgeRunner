@@ -25,5 +25,5 @@ def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
 
     from trader.overlay.claude_overlay import apply_claude_overlay
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
     return apply_claude_overlay(signal, bars, config.anthropic_api_key, model)

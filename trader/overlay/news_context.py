@@ -21,9 +21,30 @@ _HEADERS = {
     )
 }
 
+_CRYPTO_NAMES: dict[str, str] = {
+    "BTC/USD": "Bitcoin",
+    "ETH/USD": "Ethereum",
+    "SOL/USD": "Solana",
+    "XRP/USD": "XRP Ripple",
+    "DOGE/USD": "Dogecoin",
+    "ADA/USD": "Cardano",
+    "AVAX/USD": "Avalanche crypto",
+    "LINK/USD": "Chainlink crypto",
+    "DOT/USD": "Polkadot crypto",
+    "MATIC/USD": "Polygon crypto",
+}
+
+
+def _news_query(symbol: str) -> str:
+    """Return a search query appropriate for equities or crypto symbols."""
+    if "/" in symbol:
+        name = _CRYPTO_NAMES.get(symbol.upper(), symbol.split("/")[0])
+        return f"{name} crypto news"
+    return f"{symbol} stock news"
+
 
 def _google_news_url(symbol: str) -> str:
-    query = f"{symbol} stock news"
+    query = _news_query(symbol)
     url = f"https://www.google.com/search?q={query}&gl=us&tbm=nws&num=5"
     return re.sub(r"\s", "+", url)
 
