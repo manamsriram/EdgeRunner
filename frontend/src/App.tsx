@@ -6,6 +6,7 @@ import Analysis from './pages/Analysis'
 import Approvals from './pages/Approvals'
 import Portfolio from './pages/Portfolio'
 import Controls from './pages/Controls'
+import Performance from './pages/Performance'
 import ProtectedLayout from './components/ProtectedLayout'
 
 const queryClient = new QueryClient({
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedLayout />}>
             <Route path="/portfolio" element={<Portfolio />} />
+            <Route path="/performance" element={<Performance />} />
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/analysis" element={<Analysis />} />
             <Route path="/controls" element={<Controls />} />

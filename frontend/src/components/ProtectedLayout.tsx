@@ -5,6 +5,7 @@ import { logout } from '../lib/api'
 
 const NAV = [
   { to: '/portfolio', label: 'Portfolio' },
+  { to: '/performance', label: 'Performance' },
   { to: '/approvals', label: 'Approvals' },
   { to: '/analysis', label: 'Analysis' },
   { to: '/controls', label: 'Controls' },

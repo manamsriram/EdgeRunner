@@ -58,6 +58,9 @@ export const getOrders = () => api.get<Order[]>('/api/portfolio/orders')
 export const getPortfolioHistory = () =>
   api.get<{ timestamp: string[]; equity: number[] }>('/api/portfolio/history')
 
+// ---- performance ----
+export const getPerformance = () => api.get<PerformanceMetrics>('/api/performance')
+
 // ---- controls ----
 export const getKillSwitch = () => api.get<{ engaged: boolean }>('/api/controls/kill-switch')
 export const engageKillSwitch = () => api.post('/api/controls/kill-switch/engage')
@@ -96,6 +99,21 @@ export interface Order {
   notional: number
   status: string
   broker_order_id: string | null
+}
+
+export interface PerformanceMetrics {
+  days_active: number
+  trade_count: number
+  sharpe: number
+  max_drawdown: number
+  win_rate: number
+  profit_factor: number | null   // null when infinity or no closed trades
+  total_return: number
+  benchmark_spy_return: number | null
+  benchmark_btc_return: number | null
+  verdict: 'PASS' | 'FAIL' | 'INSUFFICIENT_DATA'
+  failing_checks: string[]
+  strategy_signals: Record<string, number>
 }
 
 export interface RunEntry {
