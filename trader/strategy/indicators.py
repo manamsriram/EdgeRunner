@@ -61,6 +61,16 @@ def zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - mean) / std.replace(0.0, float("nan"))
 
 
+def rolling_high(series: pd.Series, window: int) -> pd.Series:
+    """Rolling maximum over `window` bars."""
+    return series.rolling(window=window, min_periods=window).max()
+
+
+def rolling_low(series: pd.Series, window: int) -> pd.Series:
+    """Rolling minimum over `window` bars."""
+    return series.rolling(window=window, min_periods=window).min()
+
+
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
     """Average True Range using Wilder's smoothing (EMA alpha=1/window).
 

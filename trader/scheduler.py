@@ -150,28 +150,39 @@ def start_crypto_scheduler(
 def _build_default_strategies(config: Config) -> "list[Strategy]":
     """Build strategy instances per allowlist symbol.
 
-    Each symbol gets two signals: MACrossover (trend baseline) + SmashDayB
-    (pattern entry). The risk gate ensures only one order fires per symbol per tick.
+    Three complementary signals per symbol:
+      MACrossover   — sustained trend (slow signal, low churn)
+      SmashDayB     — momentum breakout on strong closes
+      GapPatternA   — breakaway gap continuation (fires on different market conditions)
+    Risk gate ensures only one order fires per symbol per tick.
     """
+    from trader.strategy.gap_pattern import GapPatternA
     from trader.strategy.ma_crossover import MACrossover
     from trader.strategy.smash_day import SmashDayB
     strategies = []
     for sym in config.risk.allowlist:
         strategies.append(MACrossover(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
+        strategies.append(GapPatternA(symbol=sym, long_only=True))
     return strategies
 
 
 def _build_crypto_strategies(config: Config) -> "list[Strategy]":
-    """Build EMA crossover + Bollinger reversion + SmashDayB strategies per crypto symbol."""
-    from trader.strategy.crypto_trend import CryptoEMACrossover
+    """Build strategy stack per crypto symbol.
+
+    Four signals: EMA crossover + Bollinger reversion + SmashDayB + GapPatternA.
+    Crypto gaps are common at market open equivalents (e.g. after weekend closes).
+    """
     from trader.strategy.crypto_mean_reversion import CryptoBollingerReversion
+    from trader.strategy.crypto_trend import CryptoEMACrossover
+    from trader.strategy.gap_pattern import GapPatternA
     from trader.strategy.smash_day import SmashDayB
     strategies = []
     for sym in config.risk.crypto_allowlist:
         strategies.append(CryptoEMACrossover(symbol=sym))
         strategies.append(CryptoBollingerReversion(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
+        strategies.append(GapPatternA(symbol=sym, long_only=True))
     return strategies
 
 
