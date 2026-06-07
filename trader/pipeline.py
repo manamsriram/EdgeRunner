@@ -175,7 +175,24 @@ def _run_symbol(
                 outcome="hold",
             )
 
-        # 4. Overlay (Phase 5 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
+        # 4. Sell with no open position will always be blocked by the gate — skip overlay.
+        if signal.side == "sell" and not state.stale and symbol not in state.positions:
+            repo.record_signal(SignalRow(
+                run_id=run_id,
+                symbol=symbol,
+                side=signal.side,
+                strength=signal.strength,
+                reason=signal.reason,
+            ))
+            return PipelineRun(
+                run_id=run_id,
+                symbol=symbol,
+                signal=signal,
+                risk_decision=RiskDecision.reject("no position to sell"),
+                outcome="blocked",
+            )
+
+        # 5. Overlay (Phase 5 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
         signal = apply_overlay(signal, bars, config)
 
         # Record the post-overlay signal so the stored row matches what is used downstream.
@@ -187,7 +204,7 @@ def _run_symbol(
             reason=signal.reason,
         ))
 
-        # 5. Fail closed on stale state before building intent (equity may be zero).
+        # 6. Fail closed on stale state before building intent (equity may be zero).
         if state.stale:
             return PipelineRun(
                 run_id=run_id,
@@ -197,7 +214,7 @@ def _run_symbol(
                 outcome="blocked",
             )
 
-        # 6. Build order intent.
+        # 7. Build order intent.
         ref_price = float(bars["close"].iloc[-1])
         notional = _notional_for(signal, state, config, ref_price)
         intent = OrderIntent(
@@ -208,7 +225,7 @@ def _run_symbol(
             reason=signal.reason,
         )
 
-        # 7. Risk gate.
+        # 8. Risk gate.
         risk_decision = gate.evaluate(intent, state, kill_switch)
         logger.info(
             "gate symbol=%s approved=%s reason=%s approved_notional=%.2f",
@@ -224,7 +241,7 @@ def _run_symbol(
                 outcome="blocked",
             )
 
-        # 8. Decision gate.
+        # 9. Decision gate.
         if config.autonomy == "manual":
             proposal_id = repo.create_proposal(ProposalRow(
                 symbol=symbol,
