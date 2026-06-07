@@ -514,5 +514,10 @@ def _notional_for(signal, state, config, ref_price: float) -> float:
     if signal.side == "sell":
         held = state.positions.get(signal.symbol, 0.0)
         return max(held * ref_price, 1.0)
-    # buy: target the max position size so the gate can size down to headroom
-    return config.risk.max_position_pct * state.equity
+    # buy: target the correct per-asset-class position cap
+    cap_pct = (
+        config.risk.max_crypto_position_pct
+        if is_crypto_symbol(signal.symbol)
+        else config.risk.max_position_pct
+    )
+    return cap_pct * state.equity
