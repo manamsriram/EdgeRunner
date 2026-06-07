@@ -86,13 +86,13 @@ async def _crypto_scheduler_loop() -> None:
     strategies = _build_crypto_strategies(cfg)
     loop = asyncio.get_event_loop()
 
-    logger.info("crypto scheduler loop started — autonomy=%s poll=300s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
+    logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
     while True:
         try:
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
         except Exception:
             logger.exception("crypto scheduler tick error")
-        await asyncio.sleep(300)
+        await asyncio.sleep(240)
 
 
 @asynccontextmanager

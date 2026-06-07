@@ -158,7 +158,24 @@ def _run_symbol(
         import pandas as pd
         signal = strategy.generate(bars, pd.Timestamp(asof))
 
-        # 3. Overlay (Phase 5 — Claude LLM review, non-load-bearing).
+        # 3. Hold signals skip the overlay and gate entirely.
+        if signal.side == "hold":
+            repo.record_signal(SignalRow(
+                run_id=run_id,
+                symbol=symbol,
+                side=signal.side,
+                strength=signal.strength,
+                reason=signal.reason,
+            ))
+            return PipelineRun(
+                run_id=run_id,
+                symbol=symbol,
+                signal=signal,
+                risk_decision=RiskDecision.reject("hold signal — no order"),
+                outcome="hold",
+            )
+
+        # 4. Overlay (Phase 5 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
         signal = apply_overlay(signal, bars, config)
 
         # Record the post-overlay signal so the stored row matches what is used downstream.
@@ -169,16 +186,6 @@ def _run_symbol(
             strength=signal.strength,
             reason=signal.reason,
         ))
-
-        # 4. Hold signals skip the gate.
-        if signal.side == "hold":
-            return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
-                risk_decision=RiskDecision.reject("hold signal — no order"),
-                outcome="hold",
-            )
 
         # 5. Fail closed on stale state before building intent (equity may be zero).
         if state.stale:
