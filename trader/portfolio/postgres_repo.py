@@ -190,3 +190,13 @@ class PostgresRepository(PortfolioRepository):
                     "SELECT id, started_at, strategy, mode, note FROM runs ORDER BY id DESC LIMIT 20"
                 )
                 return [dict(r) for r in cur.fetchall()]
+
+    def get_strategy_signal_counts(self) -> dict[str, int]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT r.strategy, COUNT(*) AS cnt "
+                    "FROM signals s JOIN runs r ON s.run_id = r.id "
+                    "WHERE r.mode = 'auto' GROUP BY r.strategy"
+                )
+                return {row["strategy"]: row["cnt"] for row in cur.fetchall()}

@@ -84,3 +84,9 @@ class PortfolioRepository(ABC):
 
     @abstractmethod
     def get_runs(self) -> list[dict]: ...
+
+    @abstractmethod
+    def get_strategy_signal_counts(self) -> dict[str, int]:
+        """Return signal count per strategy for all auto-mode runs.
+        Keys are strategy class names (e.g. "MomentumRSI"); values are signal counts.
+        Returns {} if no data."""
