@@ -162,7 +162,9 @@ def _run_symbol(
             entry_price > 0
             and symbol in state.positions
             and state.positions[symbol] > 0
-            and (current_price - entry_price) / entry_price <= -config.risk.stop_loss_pct
+            and (current_price - entry_price) / entry_price <= -(
+                config.risk.crypto_stop_loss_pct if is_crypto_symbol(symbol) else config.risk.stop_loss_pct
+            )
         ):
             signal = Signal(
                 symbol,
