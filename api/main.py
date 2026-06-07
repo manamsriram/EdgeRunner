@@ -59,11 +59,48 @@ async def _scheduler_loop() -> None:
         await asyncio.sleep(60)
 
 
+async def _crypto_scheduler_loop() -> None:
+    """Run the crypto trading scheduler every 5 minutes, 24/7.
+
+    Skips silently if ALPACA_API_KEY or CRYPTO_ALLOWLIST is not configured.
+    """
+    from trader.config import load_config
+    from trader.execution.broker import AlpacaBroker
+    from trader.portfolio.sqlite_repo import SQLiteRepository
+    from trader.scheduler import _build_crypto_strategies, run_once_crypto
+
+    cfg = load_config()
+    if not cfg.alpaca_api_key:
+        return
+    if not cfg.risk.crypto_allowlist:
+        logger.info("CRYPTO_ALLOWLIST not set — crypto scheduler disabled")
+        return
+
+    if cfg.database_url:
+        from trader.portfolio.postgres_repo import PostgresRepository
+        repo = PostgresRepository(cfg.database_url)
+    else:
+        repo = SQLiteRepository(cfg.portfolio_db_path)
+
+    broker = AlpacaBroker(cfg)
+    strategies = _build_crypto_strategies(cfg)
+    loop = asyncio.get_event_loop()
+
+    logger.info("crypto scheduler loop started — autonomy=%s poll=300s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
+    while True:
+        try:
+            await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
+        except Exception:
+            logger.exception("crypto scheduler tick error")
+        await asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(proposal_poller())
     asyncio.create_task(_scheduler_loop())
-    logger.info("proposal poller and scheduler started")
+    asyncio.create_task(_crypto_scheduler_loop())
+    logger.info("proposal poller, equity scheduler, and crypto scheduler started")
     yield
 
 
