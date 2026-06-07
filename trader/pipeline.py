@@ -19,7 +19,7 @@ from trader.config import Config
 from trader.data.alpaca_bars import get_daily_bars
 from trader.data.crypto_bars import get_crypto_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
-from trader.overlay import apply_overlay
+from trader.overlay import apply_fundamental_gate, apply_overlay
 from trader.portfolio.repository import (
     PROPOSAL_PENDING,
     OrderRow,
@@ -215,6 +215,36 @@ def _run_symbol(
                 risk_decision=RiskDecision.reject("no position to sell"),
                 outcome="blocked",
             )
+
+        # 5.5. First-entry fundamental + price-trend gate — equity buys with no position.
+        # Skipped for: crypto (no yfinance balance sheets), re-entries, non-buy signals.
+        is_first_entry = (
+            symbol not in state.positions
+            or state.positions.get(symbol, 0.0) == 0.0
+        )
+        if signal.side == "buy" and is_first_entry and not is_crypto_symbol(symbol):
+            date_str = asof.strftime("%Y-%m-%d")
+            if not apply_fundamental_gate(symbol, bars, config, date_str):
+                veto_signal = Signal(
+                    symbol,
+                    "hold",
+                    0.0,
+                    "[fundamental gate veto] financials/trend failed quality check",
+                )
+                repo.record_signal(SignalRow(
+                    run_id=run_id,
+                    symbol=symbol,
+                    side=veto_signal.side,
+                    strength=veto_signal.strength,
+                    reason=veto_signal.reason,
+                ))
+                return PipelineRun(
+                    run_id=run_id,
+                    symbol=symbol,
+                    signal=veto_signal,
+                    risk_decision=RiskDecision.reject("fundamental gate veto"),
+                    outcome="hold",
+                )
 
         # 6. Overlay (Phase 6 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
         # Stop-loss exits bypass the overlay — forced exit, no LLM deliberation needed.
