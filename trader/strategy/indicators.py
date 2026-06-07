@@ -59,3 +59,16 @@ def zscore(series: pd.Series, window: int) -> pd.Series:
     mean = series.rolling(window=window, min_periods=window).mean()
     std = series.rolling(window=window, min_periods=window).std()
     return (series - mean) / std.replace(0.0, float("nan"))
+
+
+def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
+    """Average True Range using Wilder's smoothing (EMA alpha=1/window).
+
+    TR = max(H-L, |H-PrevC|, |L-PrevC|). First bar has no prev close so TR=H-L.
+    """
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    return tr.ewm(alpha=1.0 / window, min_periods=window, adjust=False).mean()

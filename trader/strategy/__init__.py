@@ -6,5 +6,6 @@ and the live pipeline later, so simulated and live decisions cannot drift apart.
 from trader.strategy.base import Signal, Strategy
 from trader.strategy.ma_crossover import MACrossover
 from trader.strategy.momentum_rsi import MomentumRSI
+from trader.strategy.smash_day import SmashDayB
 
-__all__ = ["MACrossover", "MomentumRSI", "Signal", "Strategy"]
+__all__ = ["MACrossover", "MomentumRSI", "Signal", "SmashDayB", "Strategy"]

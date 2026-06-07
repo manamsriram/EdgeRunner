@@ -148,19 +148,30 @@ def start_crypto_scheduler(
 
 
 def _build_default_strategies(config: Config) -> "list[Strategy]":
-    """Build one strategy instance per allowlist symbol using the default strategy."""
+    """Build strategy instances per allowlist symbol.
+
+    Each symbol gets two signals: MACrossover (trend baseline) + SmashDayB
+    (pattern entry). The risk gate ensures only one order fires per symbol per tick.
+    """
     from trader.strategy.ma_crossover import MACrossover
-    return [MACrossover(symbol=sym) for sym in config.risk.allowlist]
+    from trader.strategy.smash_day import SmashDayB
+    strategies = []
+    for sym in config.risk.allowlist:
+        strategies.append(MACrossover(symbol=sym))
+        strategies.append(SmashDayB(symbol=sym, long_only=True))
+    return strategies
 
 
 def _build_crypto_strategies(config: Config) -> "list[Strategy]":
-    """Build EMA crossover + Bollinger reversion strategies per crypto symbol."""
+    """Build EMA crossover + Bollinger reversion + SmashDayB strategies per crypto symbol."""
     from trader.strategy.crypto_trend import CryptoEMACrossover
     from trader.strategy.crypto_mean_reversion import CryptoBollingerReversion
+    from trader.strategy.smash_day import SmashDayB
     strategies = []
     for sym in config.risk.crypto_allowlist:
         strategies.append(CryptoEMACrossover(symbol=sym))
         strategies.append(CryptoBollingerReversion(symbol=sym))
+        strategies.append(SmashDayB(symbol=sym, long_only=True))
     return strategies
 
 
