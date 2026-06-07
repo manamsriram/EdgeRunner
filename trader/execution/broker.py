@@ -139,8 +139,11 @@ class AlpacaBroker:
             equity = float(account.equity)
             last_equity = float(getattr(account, "last_equity", 0.0) or 0.0)
 
-            positions = {
-                p.symbol: float(p.qty) for p in client.get_all_positions()
+            all_positions = client.get_all_positions()
+            positions = {p.symbol: float(p.qty) for p in all_positions}
+            avg_entry_prices = {
+                p.symbol: float(getattr(p, "avg_entry_price", 0) or 0)
+                for p in all_positions
             }
 
             today = datetime.now(timezone.utc).date()
@@ -166,6 +169,7 @@ class AlpacaBroker:
                 trades_today=trades_today,
                 daily_pnl_pct=daily_pnl_pct,
                 stale=False,
+                avg_entry_prices=avg_entry_prices,
             )
         except Exception:  # noqa: BLE001 - any failure must fail closed, not crash trading
             logger.exception("reconcile failed; returning stale account state")

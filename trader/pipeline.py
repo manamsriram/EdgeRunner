@@ -154,11 +154,33 @@ def _run_symbol(
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
         bars = _fetch_bars(symbol, start, end, config)
 
-        # 2. Generate signal.
+        # 2. Stop-loss override — exit position immediately if down beyond threshold.
         import pandas as pd
-        signal = strategy.generate(bars, pd.Timestamp(asof))
+        current_price = float(bars["close"].iloc[-1])
+        entry_price = state.avg_entry_prices.get(symbol, 0.0)
+        if (
+            entry_price > 0
+            and symbol in state.positions
+            and state.positions[symbol] > 0
+            and (current_price - entry_price) / entry_price <= -config.risk.stop_loss_pct
+        ):
+            signal = Signal(
+                symbol,
+                "sell",
+                1.0,
+                f"stop-loss: price {current_price:.4f} down "
+                f"{(current_price - entry_price) / entry_price:.1%} from entry {entry_price:.4f}",
+            )
+            logger.warning(
+                "stop-loss triggered symbol=%s entry=%.4f current=%.4f drawdown=%.1f%%",
+                symbol, entry_price, current_price,
+                (current_price - entry_price) / entry_price * 100,
+            )
+        else:
+            # 3. Generate signal from strategy.
+            signal = strategy.generate(bars, pd.Timestamp(asof))
 
-        # 3. Hold signals skip the overlay and gate entirely.
+        # 4. Hold signals skip the overlay and gate entirely.
         if signal.side == "hold":
             repo.record_signal(SignalRow(
                 run_id=run_id,
@@ -175,7 +197,7 @@ def _run_symbol(
                 outcome="hold",
             )
 
-        # 4. Sell with no open position will always be blocked by the gate — skip overlay.
+        # 5. Sell with no open position will always be blocked by the gate — skip overlay.
         if signal.side == "sell" and not state.stale and symbol not in state.positions:
             repo.record_signal(SignalRow(
                 run_id=run_id,
@@ -192,8 +214,11 @@ def _run_symbol(
                 outcome="blocked",
             )
 
-        # 5. Overlay (Phase 5 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
-        signal = apply_overlay(signal, bars, config)
+        # 6. Overlay (Phase 6 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
+        # Stop-loss exits bypass the overlay — forced exit, no LLM deliberation needed.
+        is_stop_loss = signal.reason.startswith("stop-loss:")
+        if not is_stop_loss:
+            signal = apply_overlay(signal, bars, config)
 
         # Record the post-overlay signal so the stored row matches what is used downstream.
         repo.record_signal(SignalRow(
@@ -204,7 +229,7 @@ def _run_symbol(
             reason=signal.reason,
         ))
 
-        # 6. Fail closed on stale state before building intent (equity may be zero).
+        # 7. Fail closed on stale state before building intent (equity may be zero).
         if state.stale:
             return PipelineRun(
                 run_id=run_id,
@@ -214,7 +239,7 @@ def _run_symbol(
                 outcome="blocked",
             )
 
-        # 7. Build order intent.
+        # 8. Build order intent.
         ref_price = float(bars["close"].iloc[-1])
         notional = _notional_for(signal, state, config, ref_price)
         intent = OrderIntent(
@@ -225,7 +250,7 @@ def _run_symbol(
             reason=signal.reason,
         )
 
-        # 8. Risk gate.
+        # 9. Risk gate.
         risk_decision = gate.evaluate(intent, state, kill_switch)
         logger.info(
             "gate symbol=%s approved=%s reason=%s approved_notional=%.2f",
@@ -241,7 +266,7 @@ def _run_symbol(
                 outcome="blocked",
             )
 
-        # 9. Decision gate.
+        # 10. Decision gate.
         if config.autonomy == "manual":
             proposal_id = repo.create_proposal(ProposalRow(
                 symbol=symbol,

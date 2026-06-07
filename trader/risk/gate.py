@@ -14,7 +14,7 @@ the single most important thing wrong.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from trader.config import RiskLimits
@@ -46,6 +46,7 @@ class AccountState:
     trades_today: int
     daily_pnl_pct: float | None
     stale: bool = False
+    avg_entry_prices: dict[str, float] = field(default_factory=dict)  # symbol -> avg cost basis
 
 
 @dataclass(frozen=True)

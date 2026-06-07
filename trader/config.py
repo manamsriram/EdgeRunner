@@ -59,6 +59,7 @@ class RiskLimits:
     crypto_allowlist: tuple[str, ...] = ()  # e.g. ("BTC/USD", "ETH/USD")
     max_crypto_position_pct: float = 0.05   # tighter cap — crypto is more volatile
     require_daily_pnl_check: bool = True    # False for CCXT (no last_equity available)
+    stop_loss_pct: float = 0.05             # exit position if down this fraction from avg entry
 
 
 @dataclass(frozen=True)

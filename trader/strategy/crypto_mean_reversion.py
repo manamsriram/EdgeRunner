@@ -12,7 +12,11 @@ from __future__ import annotations
 import pandas as pd
 
 from trader.strategy.base import Signal, Strategy
-from trader.strategy.indicators import bollinger_bands
+from trader.strategy.indicators import bollinger_bands, ema
+
+
+_EMA_FAST = 12
+_EMA_SLOW = 26
 
 
 class CryptoBollingerReversion(Strategy):
@@ -49,6 +53,14 @@ class CryptoBollingerReversion(Strategy):
         strength = float(min(abs(price - mid_val) / band_width, 1.0))
 
         if price <= lower_val:
+            # EMA trend filter: don't buy into a confirmed downtrend.
+            ema_fast = ema(close, _EMA_FAST).iloc[-1]
+            ema_slow = ema(close, _EMA_SLOW).iloc[-1]
+            if not pd.isna(ema_fast) and not pd.isna(ema_slow) and ema_fast < ema_slow:
+                return Signal(
+                    self.symbol, "hold", 0.0,
+                    f"oversold but EMA{_EMA_FAST} {ema_fast:.2f} < EMA{_EMA_SLOW} {ema_slow:.2f} — downtrend filter",
+                )
             return Signal(
                 self.symbol, "buy", strength,
                 f"price {price:.2f} <= lower band {lower_val:.2f} (oversold)",
