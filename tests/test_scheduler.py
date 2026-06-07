@@ -136,12 +136,15 @@ def test_run_once_calls_pipeline_when_open(tmp_path):
         def _decide(self, bars, asof) -> Signal:
             return Signal(self.symbol, "hold", 0.0, "test-hold")
 
-    original = _pipeline_mod.get_daily_bars
+    original_single = _pipeline_mod.get_daily_bars
+    original_batch = _pipeline_mod.get_daily_bars_batch
     _pipeline_mod.get_daily_bars = lambda symbol, start, end, config=None: fake_bars
+    _pipeline_mod.get_daily_bars_batch = lambda symbols, start, end, config=None: {s: fake_bars for s in symbols}
     try:
         results = run_once(cfg, [_HoldStrategy("AAPL")], broker, repo)
     finally:
-        _pipeline_mod.get_daily_bars = original
+        _pipeline_mod.get_daily_bars = original_single
+        _pipeline_mod.get_daily_bars_batch = original_batch
 
     assert len(results) == 1
     assert results[0].outcome == "hold"

@@ -50,9 +50,10 @@ class RiskLimits:
     them. Defaults are conservative placeholders; real tuning is walk-forward, later."""
 
     max_position_pct: float = 0.10          # max fraction of equity in one symbol
-    max_trades_per_day: int = 5             # circuit breaker on churn
+    max_trades_per_day: int = 5             # circuit breaker on churn (env: RISK_MAX_TRADES_PER_DAY)
     daily_loss_limit_pct: float = 0.03      # halt trading after this daily drawdown
-    allowlist: tuple[str, ...] = DEFAULT_ALLOWLIST
+    # None = open universe (dynamic mode); tuple = hard restriction (static mode)
+    allowlist: tuple[str, ...] | None = DEFAULT_ALLOWLIST
     pdt_equity_threshold: float = 25_000.0  # PDT rule applies below this equity level
     pdt_day_trade_limit: int = 3            # max round-trips per session on small accounts
     # Crypto-specific limits (routed by is_crypto_symbol in gate.py)
@@ -61,6 +62,9 @@ class RiskLimits:
     require_daily_pnl_check: bool = True    # False for CCXT (no last_equity available)
     stop_loss_pct: float = 0.08             # exit equity/ETF position if down this fraction from avg entry
     crypto_stop_loss_pct: float = 0.05      # tighter stop for crypto — more volatile
+    # Dynamic universe — replaces static allowlist with Alpaca daily screener
+    dynamic_universe: bool = False          # True → use screener (env: DYNAMIC_UNIVERSE)
+    universe_size: int = 100               # max symbols per day (env: UNIVERSE_SIZE)
 
 
 @dataclass(frozen=True)
@@ -125,12 +129,18 @@ def load_config() -> Config:
         portfolio_db_path=_db,
         kill_switch_path=_ks,
         risk=RiskLimits(
-            allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST),
+            # Dynamic universe: allowlist=None opens the gate to any screened symbol.
+            # Static mode: allowlist populated from RISK_ALLOWLIST or the DEFAULT_ALLOWLIST.
+            allowlist=None if _env_bool("DYNAMIC_UNIVERSE", False)
+                      else _env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST),
+            max_trades_per_day=int(os.getenv("RISK_MAX_TRADES_PER_DAY", "5")),
             pdt_equity_threshold=float(os.getenv("PDT_EQUITY_THRESHOLD", "25000")),
             pdt_day_trade_limit=int(os.getenv("PDT_DAY_TRADE_LIMIT", "3")),
             crypto_allowlist=_env_allowlist("CRYPTO_ALLOWLIST", ()),
             max_crypto_position_pct=float(os.getenv("MAX_CRYPTO_POSITION_PCT", "0.05")),
             require_daily_pnl_check=_env_bool("REQUIRE_DAILY_PNL_CHECK", default=True),
+            dynamic_universe=_env_bool("DYNAMIC_UNIVERSE", False),
+            universe_size=int(os.getenv("UNIVERSE_SIZE", "100")),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),

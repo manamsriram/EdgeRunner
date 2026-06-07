@@ -131,9 +131,10 @@ class RiskGate:
             return RiskDecision.reject("account state stale (reconciliation failed)")
 
         # 1. Allowlist — route by asset type.
+        # None means dynamic/open universe; skip the check entirely.
         _is_crypto = is_crypto_symbol(intent.symbol)
         _active_allowlist = limits.crypto_allowlist if _is_crypto else limits.allowlist
-        if intent.symbol not in _active_allowlist:
+        if _active_allowlist is not None and intent.symbol not in _active_allowlist:
             return RiskDecision.reject(f"{intent.symbol} not in allowlist")
 
         # 2. Pending order — positions don't reflect an in-flight order; refuse to stack.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
 from trader.alerts import send_alert
@@ -77,17 +77,34 @@ def start_scheduler(
 ) -> None:
     """Blocking scheduler loop. Checks the Alpaca clock before each tick.
 
+    In dynamic-universe mode (DYNAMIC_UNIVERSE=true), rebuilds the strategy list
+    once per calendar day at the first market-open tick. Always includes symbols
+    with open positions so stop-loss logic never goes dark on a held stock.
+
     Runs until interrupted (KeyboardInterrupt) or killed.
     """
     logger.info(
-        "scheduler starting — autonomy=%s poll=%dm symbols=%s",
+        "scheduler starting — autonomy=%s poll=%dm dynamic_universe=%s symbols=%s",
         config.autonomy,
         poll_minutes,
+        config.risk.dynamic_universe,
         [s.symbol for s in strategies],
     )
+    current_strategies = strategies
+    universe_date: date | None = None
+
     while True:
         try:
-            results = run_once(config, strategies, broker, repo)
+            # Daily universe refresh — runs once per calendar day on the first open tick.
+            if config.risk.dynamic_universe and is_market_open(broker):
+                today = date.today()
+                if universe_date != today:
+                    current_strategies = _refresh_dynamic_universe(
+                        config, broker, current_strategies
+                    )
+                    universe_date = today
+
+            results = run_once(config, current_strategies, broker, repo)
             for r in results:
                 logger.info("tick result: symbol=%s outcome=%s", r.symbol, r.outcome)
         except Exception:
@@ -147,8 +164,8 @@ def start_crypto_scheduler(
         time.sleep(poll_minutes * 60)
 
 
-def _build_default_strategies(config: Config) -> "list[Strategy]":
-    """Build strategy instances per allowlist symbol.
+def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
+    """Build the 3-strategy stack (MACrossover + SmashDayB + GapPatternA) per symbol.
 
     Three complementary signals per symbol:
       MACrossover   — sustained trend (slow signal, low churn)
@@ -159,12 +176,54 @@ def _build_default_strategies(config: Config) -> "list[Strategy]":
     from trader.strategy.gap_pattern import GapPatternA
     from trader.strategy.ma_crossover import MACrossover
     from trader.strategy.smash_day import SmashDayB
-    strategies = []
-    for sym in config.risk.allowlist:
+    strategies: list[Strategy] = []
+    for sym in symbols:
         strategies.append(MACrossover(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
         strategies.append(GapPatternA(symbol=sym, long_only=True))
     return strategies
+
+
+def _refresh_dynamic_universe(
+    config: Config,
+    broker: AlpacaBroker,
+    current_strategies: "list[Strategy]",
+) -> "list[Strategy]":
+    """Screen for today's universe and rebuild strategies with position-safety guarantee.
+
+    Always includes symbols from open positions so stop-loss logic never goes dark
+    on a held stock that falls out of today's screened universe.
+    Falls back to the existing strategy list if the screener fails.
+    """
+    from trader.universe.screener import fetch_dynamic_universe
+
+    # Snapshot current positions before rebuilding — guarantees stop-loss coverage.
+    try:
+        state = broker.reconcile()
+        held_symbols = set(state.positions.keys()) if not state.stale else set()
+    except Exception:
+        logger.exception("reconcile failed during universe refresh — using held_symbols=empty")
+        held_symbols = set()
+
+    try:
+        screened = fetch_dynamic_universe(config, config.risk.universe_size)
+    except Exception:
+        logger.exception(
+            "screener failed — keeping existing %d strategies", len(current_strategies)
+        )
+        return current_strategies
+
+    # Union: today's screen + all held positions (held always wins for stop-loss safety).
+    all_symbols: list[str] = list(dict.fromkeys(screened + list(held_symbols)))
+    new_strategies = _build_strategies_for(config, all_symbols)
+    logger.info(
+        "universe refreshed: %d screened + %d held = %d symbols → %d strategies",
+        len(screened),
+        len(held_symbols),
+        len(all_symbols),
+        len(new_strategies),
+    )
+    return new_strategies
 
 
 def _build_crypto_strategies(config: Config) -> "list[Strategy]":
@@ -210,5 +269,11 @@ if __name__ == "__main__":
         _crypto_thread.start()
         logger.info("crypto scheduler thread started for %s", list(cfg.risk.crypto_allowlist))
 
-    _strategies = _build_default_strategies(cfg)
+    # Dynamic mode: start with empty list — rebuilt on first market-open tick.
+    # Static mode: build from allowlist (or DEFAULT_ALLOWLIST if unset).
+    if cfg.risk.dynamic_universe:
+        _strategies = []
+        logger.info("dynamic universe mode — strategies built at market open each day")
+    else:
+        _strategies = _build_strategies_for(cfg, list(cfg.risk.allowlist or []))
     start_scheduler(cfg, _strategies, _broker, _repo)  # blocks main thread

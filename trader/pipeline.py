@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from trader.alerts import send_alert
 from trader.config import Config
-from trader.data.alpaca_bars import get_daily_bars
+from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch
 from trader.data.crypto_bars import get_crypto_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
 from trader.overlay import apply_fundamental_gate, apply_overlay
@@ -90,6 +90,18 @@ def run_pipeline(
         )
         run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
 
+    # Pre-fetch bars for all equity symbols in one batch call.
+    # Crypto symbols are excluded — they use a separate data path.
+    equity_symbols = list({
+        s.symbol for s in strategies if not is_crypto_symbol(s.symbol)
+    })
+    if equity_symbols:
+        end = asof
+        start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
+        bars_cache: dict[str, object] = get_daily_bars_batch(equity_symbols, start, end, config)
+    else:
+        bars_cache = {}
+
     results: list[PipelineRun] = []
     for strategy in strategies:
         result = _run_symbol(
@@ -101,6 +113,7 @@ def run_pipeline(
             kill_switch=kill_switch,
             state=state,
             asof=asof,
+            bars_cache=bars_cache,
         )
         results.append(result)
         logger.info(
@@ -139,6 +152,7 @@ def _run_symbol(
     kill_switch,
     state,
     asof,
+    bars_cache: dict | None = None,
 ):
     from trader.risk.gate import AccountState
 
@@ -149,10 +163,10 @@ def _run_symbol(
     risk_decision = RiskDecision.reject("not evaluated")
 
     try:
-        # 1. Fetch bars (rolling window ending at asof).
+        # 1. Fetch bars (rolling window ending at asof). Cache hit avoids a per-symbol call.
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
-        bars = _fetch_bars(symbol, start, end, config)
+        bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
 
         # 2. Stop-loss override — exit position immediately if down beyond threshold.
         import pandas as pd
@@ -364,8 +378,18 @@ def _run_symbol(
         )
 
 
-def _fetch_bars(symbol: str, start: datetime, end: datetime, config: Config):
-    """Route bar fetching by asset type."""
+def _fetch_bars(
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    config: Config,
+    cache: dict | None = None,
+):
+    """Route bar fetching by asset type. Uses pre-fetched cache when available."""
+    if cache and symbol in cache:
+        cached = cache[symbol]
+        if cached is not None and not cached.empty:
+            return cached
     if is_crypto_symbol(symbol):
         return get_crypto_bars(symbol, start=start, end=end, config=config)
     return get_daily_bars(symbol, start=start, end=end, config=config)
