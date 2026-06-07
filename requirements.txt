@@ -12,6 +12,8 @@ anthropic>=0.40.0
 # NOTE: indicators are implemented natively in trader/strategy/indicators.py.
 # pandas-ta is intentionally NOT used: its current release requires Python >=3.12
 # and pulls in the removed numpy.NaN symbol, which breaks on this stack.
+# --- Crypto trading via CCXT (multi-exchange) ---
+ccxt>=4.3.0
 # --- Phase 9: Postgres support for Render two-service deployment ---
 psycopg2-binary>=2.9
 # --- Phase 8: FastAPI backend (replaces Streamlit) ---

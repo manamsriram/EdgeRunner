@@ -55,6 +55,10 @@ class RiskLimits:
     allowlist: tuple[str, ...] = DEFAULT_ALLOWLIST
     pdt_equity_threshold: float = 25_000.0  # PDT rule applies below this equity level
     pdt_day_trade_limit: int = 3            # max round-trips per session on small accounts
+    # Crypto-specific limits (routed by is_crypto_symbol in gate.py)
+    crypto_allowlist: tuple[str, ...] = ()  # e.g. ("BTC/USD", "ETH/USD")
+    max_crypto_position_pct: float = 0.05   # tighter cap — crypto is more volatile
+    require_daily_pnl_check: bool = True    # False for CCXT (no last_equity available)
 
 
 @dataclass(frozen=True)
@@ -72,10 +76,22 @@ class Config:
     log_level: str = "INFO"                    # passed to logging.basicConfig
     slack_webhook_url: str | None = None       # Slack-compatible webhook for alerts
     alert_email: str | None = None             # placeholder; SMTP wired in Phase 7
+    # Crypto execution config
+    crypto_exchange: str = "alpaca"            # "alpaca" | "binance" | "coinbase" | "kraken"
+    ccxt_api_key: str | None = None
+    ccxt_secret_key: str | None = None
 
     @property
     def alpaca_base_url(self) -> str:
         return PAPER_BASE_URL if self.alpaca_paper else LIVE_BASE_URL
+
+    def require_alpaca_credentials(self) -> None:
+        """Check only that Alpaca keys are present — no paper/live guard.
+        Use for data clients (bars fetching) that do not submit orders."""
+        if not self.alpaca_api_key or not self.alpaca_secret_key:
+            raise RuntimeError(
+                "Alpaca credentials missing. Set ALPACA_API_KEY and ALPACA_SECRET_KEY."
+            )
 
     def require_alpaca(self) -> None:
         """Fail loudly if Alpaca credentials are missing. Especially important before
@@ -110,9 +126,15 @@ def load_config() -> Config:
             allowlist=_env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST),
             pdt_equity_threshold=float(os.getenv("PDT_EQUITY_THRESHOLD", "25000")),
             pdt_day_trade_limit=int(os.getenv("PDT_DAY_TRADE_LIMIT", "3")),
+            crypto_allowlist=_env_allowlist("CRYPTO_ALLOWLIST", ()),
+            max_crypto_position_pct=float(os.getenv("MAX_CRYPTO_POSITION_PCT", "0.05")),
+            require_daily_pnl_check=_env_bool("REQUIRE_DAILY_PNL_CHECK", default=True),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
         alert_email=os.getenv("ALERT_EMAIL") or None,
+        crypto_exchange=os.getenv("CRYPTO_EXCHANGE", "alpaca").strip().lower(),
+        ccxt_api_key=os.getenv("CCXT_API_KEY") or None,
+        ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,
     )

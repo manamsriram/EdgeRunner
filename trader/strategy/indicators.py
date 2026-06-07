@@ -38,3 +38,24 @@ def rsi(series: pd.Series, window: int = 14) -> pd.Series:
 def momentum(series: pd.Series, window: int) -> pd.Series:
     """Fractional return over `window` bars: price_t / price_{t-window} - 1."""
     return series.pct_change(periods=window)
+
+
+def ema(series: pd.Series, window: int) -> pd.Series:
+    """Exponential moving average (span=window)."""
+    return series.ewm(span=window, min_periods=window, adjust=False).mean()
+
+
+def bollinger_bands(
+    series: pd.Series, window: int = 20, num_std: float = 2.0
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Returns (upper, mid, lower) Bollinger Bands."""
+    mid = sma(series, window)
+    std = series.rolling(window=window, min_periods=window).std()
+    return mid + num_std * std, mid, mid - num_std * std
+
+
+def zscore(series: pd.Series, window: int) -> pd.Series:
+    """Rolling z-score: (x - mean) / std. NaN when std is zero."""
+    mean = series.rolling(window=window, min_periods=window).mean()
+    std = series.rolling(window=window, min_periods=window).std()
+    return (series - mean) / std.replace(0.0, float("nan"))

@@ -26,6 +26,11 @@ Side = str  # "buy" | "sell"
 _NO_OP_EPSILON = 1.0
 
 
+def is_crypto_symbol(symbol: str) -> bool:
+    """Return True for crypto pairs (contain '/': BTC/USD, ETH/USDT, etc.)."""
+    return "/" in symbol
+
+
 @dataclass(frozen=True)
 class AccountState:
     """Everything the gate needs about the account, sourced from broker reconciliation.
@@ -124,22 +129,26 @@ class RiskGate:
         if state.stale:
             return RiskDecision.reject("account state stale (reconciliation failed)")
 
-        # 1. Allowlist.
-        if intent.symbol not in limits.allowlist:
+        # 1. Allowlist — route by asset type.
+        _is_crypto = is_crypto_symbol(intent.symbol)
+        _active_allowlist = limits.crypto_allowlist if _is_crypto else limits.allowlist
+        if intent.symbol not in _active_allowlist:
             return RiskDecision.reject(f"{intent.symbol} not in allowlist")
 
         # 2. Pending order — positions don't reflect an in-flight order; refuse to stack.
         if intent.symbol in state.open_order_symbols:
             return RiskDecision.reject(f"{intent.symbol} has an unfilled order in flight")
 
-        # 3. Daily-loss circuit breaker (None = unprovable = reject).
-        if state.daily_pnl_pct is None:
-            return RiskDecision.reject("daily P&L unknown")
-        if state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
-            return RiskDecision.reject(
-                f"daily loss {state.daily_pnl_pct:.2%} hit limit "
-                f"-{limits.daily_loss_limit_pct:.2%}"
-            )
+        # 3. Daily-loss circuit breaker (None = unprovable = reject when check is required).
+        #    CCXT brokers set require_daily_pnl_check=False because they have no last_equity.
+        if limits.require_daily_pnl_check:
+            if state.daily_pnl_pct is None:
+                return RiskDecision.reject("daily P&L unknown")
+            if state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
+                return RiskDecision.reject(
+                    f"daily loss {state.daily_pnl_pct:.2%} hit limit "
+                    f"-{limits.daily_loss_limit_pct:.2%}"
+                )
 
         # 4. Churn circuit breaker.
         if state.trades_today >= limits.max_trades_per_day:
@@ -147,12 +156,13 @@ class RiskGate:
                 f"max trades/day reached ({state.trades_today}/{limits.max_trades_per_day})"
             )
 
-        # 4b. PDT guard — US accounts under $25k are capped at 3 day-trades per session.
+        # 4b. PDT guard — US equity FINRA rule only; does not apply to crypto.
         #     trades_today counts individual fills; a day-trade is a buy+sell pair, so
         #     trades_today // 2 gives completed round-trips. Blocking at >= limit prevents
         #     the 4th round-trip entry. Sells always pass — closing positions is never blocked.
         if (
-            intent.side == "buy"
+            not _is_crypto
+            and intent.side == "buy"
             and state.equity < limits.pdt_equity_threshold
             and state.trades_today // 2 >= limits.pdt_day_trade_limit
         ):
@@ -175,7 +185,9 @@ class RiskGate:
             return RiskDecision.approve(approved, "sell approved")
 
         # 6. Max position size (buys only) — size down to the cap, or reject as a no-op.
-        cap = limits.max_position_pct * state.equity
+        #    Crypto uses a tighter cap (more volatile; default 5% vs 10% for equities).
+        _cap_pct = limits.max_crypto_position_pct if _is_crypto else limits.max_position_pct
+        cap = _cap_pct * state.equity
         existing_value = held * intent.ref_price
         headroom = cap - existing_value
         if headroom <= _NO_OP_EPSILON:
