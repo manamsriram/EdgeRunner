@@ -40,14 +40,6 @@ api.interceptors.response.use(
 export const login = (username: string, password: string) =>
   api.post<{ username: string; full_name: string }>('/auth/login', { username, password })
 
-export const register = (data: {
-  username: string
-  email: string
-  full_name: string
-  password: string
-  confirm_password: string
-}) => api.post('/auth/register', data)
-
 export const logout = () => api.post('/auth/logout')
 
 export const getMe = () => api.get<{ username: string; email: string; full_name: string }>('/auth/me')

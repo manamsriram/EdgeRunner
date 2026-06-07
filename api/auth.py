@@ -1,22 +1,18 @@
-"""Auth router: login, register, refresh, logout, me."""
+"""Auth router: login, refresh, logout, me."""
 from __future__ import annotations
 
 import os
-import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel
 
 from api.deps import (
-    create_user,
     decode_token,
-    email_exists,
     get_current_user,
     get_user,
     get_user_history,
     make_access_token,
     make_refresh_token,
-    username_exists,
     verify_and_upgrade,
 )
 
@@ -42,28 +38,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class RegisterRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=50)
-    email: EmailStr
-    full_name: str = Field(max_length=100)
-    password: str = Field(min_length=8, max_length=128)
-    confirm_password: str
-
-    @field_validator("password")
-    @classmethod
-    def password_complexity(cls, v: str) -> str:
-        if not re.search(r"[A-Za-z]", v) or not re.search(r"[0-9]", v):
-            raise ValueError("password must contain at least one letter and one number")
-        return v
-
-    @field_validator("confirm_password")
-    @classmethod
-    def passwords_match(cls, v: str, info) -> str:
-        if "password" in info.data and v != info.data["password"]:
-            raise ValueError("passwords do not match")
-        return v
-
-
 # ---- endpoints ----
 
 
@@ -74,16 +48,6 @@ def login(body: LoginRequest, response: Response):
     _set_auth_cookies(response, body.username)
     user = get_user(body.username)
     return {"username": user["username"], "full_name": user["full_name"]}
-
-
-@router.post("/register", status_code=201)
-def register(body: RegisterRequest):
-    if username_exists(body.username):
-        raise HTTPException(status_code=409, detail="username already taken")
-    if email_exists(body.email):
-        raise HTTPException(status_code=409, detail="email already registered")
-    create_user(body.username, body.email, body.full_name, body.password)
-    return {"message": "registered successfully"}
 
 
 @router.post("/refresh")
