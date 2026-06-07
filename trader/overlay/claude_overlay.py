@@ -142,6 +142,13 @@ def apply_claude_overlay(
             f"{news_section}"
         )
 
+        logger.info(
+            "overlay request symbol=%s side=%s strength=%.2f news_lines=%d",
+            signal.symbol, signal.side, signal.strength,
+            news_section.count("\n") + 1 if news else 0,
+        )
+        logger.debug("overlay user_message:\n%s", user_message)
+
         response = client.messages.create(
             model=model,
             max_tokens=256,
@@ -157,6 +164,10 @@ def apply_claude_overlay(
 
         raw = response.content[0].text
         parsed = _parse_response(raw)
+        logger.info(
+            "overlay response symbol=%s action=%s strength=%s rationale=%r",
+            signal.symbol, parsed.get("action"), parsed.get("strength"), parsed.get("rationale", ""),
+        )
 
         action = parsed.get("action")
         strength = parsed.get("strength")
