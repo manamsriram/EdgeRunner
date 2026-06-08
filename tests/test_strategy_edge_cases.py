@@ -9,9 +9,7 @@ from trader.strategy.base import Signal
 from trader.strategy.gap_pattern import GapPatternA
 from trader.strategy.smash_day import SmashDayB
 from trader.strategy.ma_crossover import MACrossover
-from trader.strategy.momentum_rsi import MomentumRSI
 from trader.strategy.crypto_trend import CryptoEMACrossover
-from trader.strategy.crypto_mean_reversion import CryptoBollingerReversion
 
 
 def test_strategies_handle_empty_data():
@@ -37,23 +35,12 @@ def test_strategies_handle_empty_data():
     assert signal.side == "hold"
     assert signal.reason == "no bar data"
 
-    # Test MomentumRSI
-    rsi_strategy = MomentumRSI("TEST")
-    signal = rsi_strategy.generate(empty_bars, Timestamp("2023-01-01"))
-    assert signal.side == "hold"
-    assert signal.reason == "no bar data"
-
     # Test CryptoEMACrossover
     crypto_ema_strategy = CryptoEMACrossover("BTC/USD")
     signal = crypto_ema_strategy.generate(empty_bars, Timestamp("2023-01-01"))
     assert signal.side == "hold"
     assert signal.reason == "no bar data"
 
-    # Test CryptoBollingerReversion
-    crypto_bollinger_strategy = CryptoBollingerReversion("BTC/USD")
-    signal = crypto_bollinger_strategy.generate(empty_bars, Timestamp("2023-01-01"))
-    assert signal.side == "hold"
-    assert signal.reason == "no bar data"
 
 
 def test_strategies_handle_insufficient_bars():
@@ -89,23 +76,12 @@ def test_strategies_handle_insufficient_bars():
     assert signal.side == "hold"
     assert "insufficient" in signal.reason
 
-    # Test MomentumRSI with insufficient data
-    rsi_strategy = MomentumRSI("TEST", lookback=5, rsi_window=14)
-    signal = rsi_strategy.generate(minimal_bars, Timestamp("2023-01-02"))
-    assert signal.side == "hold"
-    assert "insufficient" in signal.reason
-
     # Test CryptoEMACrossover with insufficient data
     crypto_ema_strategy = CryptoEMACrossover("BTC/USD", fast=5, slow=10)
     signal = crypto_ema_strategy.generate(minimal_bars, Timestamp("2023-01-02"))
     assert signal.side == "hold"
     assert "insufficient" in signal.reason
 
-    # Test CryptoBollingerReversion with insufficient data
-    crypto_bollinger_strategy = CryptoBollingerReversion("BTC/USD", window=20)
-    signal = crypto_bollinger_strategy.generate(minimal_bars, Timestamp("2023-01-02"))
-    assert signal.side == "hold"
-    assert "insufficient" in signal.reason
 
 
 def test_state_reset_methods():

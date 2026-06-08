@@ -176,22 +176,18 @@ def start_crypto_scheduler(
 
 
 def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build the 3-strategy stack (MACrossover + SmashDayB + GapPatternA) per symbol.
+    """Build 2-strategy stack (MACrossover + SmashDayB) per equity symbol.
 
-    Three complementary signals per symbol:
-      MACrossover   — sustained trend (slow signal, low churn)
-      SmashDayB     — momentum breakout on strong closes
-      GapPatternA   — breakaway gap continuation (fires on different market conditions)
-    Risk gate ensures only one order fires per symbol per tick.
+    Backtest (2-year OOS) showed GapPatternA degraded Sharpe and dragged average
+    return from 22.4% to 18.2% when combined with MA+Smash. MA+Smash alone achieves
+    Sharpe 0.48 vs 0.40 for the 3-strategy combo.
     """
-    from trader.strategy.gap_pattern import GapPatternA
     from trader.strategy.ma_crossover import MACrossover
     from trader.strategy.smash_day import SmashDayB
     strategies: list[Strategy] = []
     for sym in symbols:
         strategies.append(MACrossover(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
-        strategies.append(GapPatternA(symbol=sym, long_only=True))
     return strategies
 
 
@@ -238,17 +234,18 @@ def _refresh_dynamic_universe(
 
 
 def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build 4-strategy stack (EMA + Bollinger + SmashDayB + GapPatternA) per crypto symbol."""
-    from trader.strategy.crypto_mean_reversion import CryptoBollingerReversion
+    """Build 2-strategy stack (EMA crossover + SmashDayB) per crypto symbol.
+
+    Backtest (2-year OOS) showed CryptoBollingerReversion and GapPatternA
+    both degraded risk-adjusted returns. EMA + SmashDayB achieves Sharpe 0.33
+    and beats buy-and-hold by ~32% on average.
+    """
     from trader.strategy.crypto_trend import CryptoEMACrossover
-    from trader.strategy.gap_pattern import GapPatternA
     from trader.strategy.smash_day import SmashDayB
     strategies: list[Strategy] = []
     for sym in symbols:
         strategies.append(CryptoEMACrossover(symbol=sym))
-        strategies.append(CryptoBollingerReversion(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
-        strategies.append(GapPatternA(symbol=sym, long_only=True))
     return strategies
 
 

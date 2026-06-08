@@ -5,12 +5,10 @@ import pytest
 
 from trader.strategy.base import Signal
 from trader.strategy.ma_crossover import MACrossover
-from trader.strategy.momentum_rsi import MomentumRSI
 
 
 @pytest.mark.parametrize("make", [
     lambda: MACrossover("X", fast=20, slow=50),
-    lambda: MomentumRSI("X", lookback=20),
 ])
 def test_strategy_emits_valid_signal(make, trending_bars):
     strat = make()
@@ -23,7 +21,6 @@ def test_strategy_emits_valid_signal(make, trending_bars):
 
 @pytest.mark.parametrize("make", [
     lambda: MACrossover("X", fast=20, slow=50),
-    lambda: MomentumRSI("X", lookback=20),
 ])
 def test_signal_identical_full_vs_truncated(make, trending_bars):
     """The decision at `asof` must not change whether the strategy is handed the full

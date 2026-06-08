@@ -61,7 +61,7 @@ A paper-first autonomous trading agent that executes backtested quantitative str
 | Database | SQLite (local) / PostgreSQL via Supabase (production) |
 | Alerts | Slack incoming webhook |
 | Hosting | Render (backend) · Vercel (frontend) |
-| CI | GitHub Actions (keep-alive ping) |
+| CI | UptimeRobot (keep-alive ping every 5 mins) |
 | Testing | pytest 9.0.3 |
 | Config | python-dotenv |
 
