@@ -283,6 +283,16 @@ def _run_symbol(
             reason=signal.reason,
         ))
 
+        # 6.5. Short-circuit if overlay vetoed to hold.
+        if signal.side == "hold":
+            return PipelineRun(
+                run_id=run_id,
+                symbol=symbol,
+                signal=signal,
+                risk_decision=RiskDecision.reject("overlay veto"),
+                outcome="hold",
+            )
+
         # 7. Fail closed on stale state before building intent (equity may be zero).
         if state.stale:
             return PipelineRun(
