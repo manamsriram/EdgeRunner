@@ -46,9 +46,12 @@ class LiveMetrics:
 # ---- internal helpers ----
 
 def _sharpe(equity: pd.Series) -> float:
+    equity = equity.replace(0, np.nan).dropna()
     if len(equity) < 2:
         return 0.0
     returns = equity.pct_change().dropna()
+    if returns.empty:
+        return 0.0
     std = returns.std()
     if std == 0 or np.isnan(std):
         return 0.0
@@ -164,7 +167,7 @@ def compute_live_metrics(config, broker, repo) -> LiveMetrics:
     if not history or len(history.get("equity", [])) < 2:
         return _insufficient
 
-    equity = pd.Series([float(e) for e in history["equity"]])
+    equity = pd.Series([float(e) if e is not None else np.nan for e in history["equity"]])
     timestamps = history["timestamp"]
     ts_start = _parse_ts(timestamps[0])
     ts_end = _parse_ts(timestamps[-1])
