@@ -28,6 +28,7 @@ def fetch_dynamic_universe(config: "Config", top_n: int = 100) -> list[str]:
     Crypto pairs (containing '/') are always excluded — they have a separate pipeline.
     Raises on API failure so the scheduler can fall back to the previous universe.
     """
+    from alpaca.data.enums import MostActivesBy
     from alpaca.data.historical.screener import ScreenerClient
     from alpaca.data.requests import MarketMoversRequest, MostActivesRequest
 
@@ -40,7 +41,7 @@ def fetch_dynamic_universe(config: "Config", top_n: int = 100) -> list[str]:
     n_actives = max(top_n // 2, 1)
     n_movers = max(top_n // 4, 1)
 
-    actives_resp = client.get_most_actives(MostActivesRequest(top=n_actives))
+    actives_resp = client.get_most_actives(MostActivesRequest(top=n_actives, by=MostActivesBy.VOLUME))
     movers_resp = client.get_market_movers(MarketMoversRequest(top=n_movers))
 
     active_symbols = [s.symbol for s in actives_resp.most_actives]
