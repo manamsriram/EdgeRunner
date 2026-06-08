@@ -48,10 +48,21 @@ async def _scheduler_loop() -> None:
         repo = SQLiteRepository(cfg.portfolio_db_path)
 
     broker = AlpacaBroker(cfg)
-    strategies = _build_strategies_for(cfg, list(cfg.risk.allowlist or []))
-    loop = asyncio.get_event_loop()
 
-    logger.info("scheduler loop started — autonomy=%s poll=60s", cfg.autonomy)
+    if cfg.risk.dynamic_universe:
+        from trader.universe.screener import fetch_dynamic_universe
+        try:
+            symbols = fetch_dynamic_universe(cfg, cfg.risk.universe_size)
+        except Exception:
+            logger.exception("initial equity screener failed — scheduler disabled")
+            return
+        logger.info("equity scheduler started — dynamic universe size=%d poll=60s", len(symbols))
+    else:
+        symbols = list(cfg.risk.allowlist or [])
+        logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
+
+    strategies = _build_strategies_for(cfg, symbols)
+    loop = asyncio.get_event_loop()
     while True:
         try:
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
@@ -63,18 +74,19 @@ async def _scheduler_loop() -> None:
 async def _crypto_scheduler_loop() -> None:
     """Run the crypto trading scheduler every 5 minutes, 24/7.
 
-    Skips silently if ALPACA_API_KEY or CRYPTO_ALLOWLIST is not configured.
+    Skips silently if ALPACA_API_KEY is not set and neither CRYPTO_ALLOWLIST
+    nor DYNAMIC_CRYPTO_UNIVERSE is configured.
     """
     from trader.config import load_config
     from trader.execution.broker import AlpacaBroker
     from trader.portfolio.sqlite_repo import SQLiteRepository
-    from trader.scheduler import _build_crypto_strategies, run_once_crypto
+    from trader.scheduler import _build_crypto_strategies, _build_crypto_strategies_for, run_once_crypto
 
     cfg = load_config()
     if not cfg.alpaca_api_key:
         return
-    if not cfg.risk.crypto_allowlist:
-        logger.info("CRYPTO_ALLOWLIST not set — crypto scheduler disabled")
+    if not cfg.risk.crypto_allowlist and not cfg.risk.dynamic_crypto_universe:
+        logger.info("CRYPTO_ALLOWLIST not set and DYNAMIC_CRYPTO_UNIVERSE disabled — crypto scheduler disabled")
         return
 
     if cfg.database_url:
@@ -84,10 +96,21 @@ async def _crypto_scheduler_loop() -> None:
         repo = SQLiteRepository(cfg.portfolio_db_path)
 
     broker = AlpacaBroker(cfg)
-    strategies = _build_crypto_strategies(cfg)
-    loop = asyncio.get_event_loop()
 
-    logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
+    if cfg.risk.dynamic_crypto_universe:
+        from trader.universe.crypto_screener import fetch_dynamic_crypto_universe
+        try:
+            symbols = fetch_dynamic_crypto_universe(cfg, cfg.risk.crypto_universe_size)
+        except Exception:
+            logger.exception("initial crypto screener failed — scheduler disabled")
+            return
+        strategies = _build_crypto_strategies_for(cfg, symbols)
+        logger.info("crypto scheduler started — dynamic universe size=%d poll=240s", len(symbols))
+    else:
+        strategies = _build_crypto_strategies(cfg)
+        logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
+
+    loop = asyncio.get_event_loop()
     while True:
         try:
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
