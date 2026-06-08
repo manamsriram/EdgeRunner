@@ -34,7 +34,7 @@ async def _scheduler_loop() -> None:
     from trader.config import load_config
     from trader.execution.broker import AlpacaBroker
     from trader.portfolio.sqlite_repo import SQLiteRepository
-    from trader.scheduler import _build_default_strategies, run_once
+    from trader.scheduler import _build_strategies_for, run_once
 
     cfg = load_config()
     if not cfg.alpaca_api_key:
@@ -48,7 +48,7 @@ async def _scheduler_loop() -> None:
         repo = SQLiteRepository(cfg.portfolio_db_path)
 
     broker = AlpacaBroker(cfg)
-    strategies = _build_default_strategies(cfg)
+    strategies = _build_strategies_for(cfg, list(cfg.risk.allowlist or []))
     loop = asyncio.get_event_loop()
 
     logger.info("scheduler loop started — autonomy=%s poll=60s", cfg.autonomy)
