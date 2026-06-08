@@ -45,6 +45,10 @@ APPROVE with original strength when:
 - News is neutral, positive, or irrelevant to the signal thesis
 - No news available or you are uncertain — default bias is APPROVE, not veto
 
+Before deciding, briefly weigh the strongest bull case (why this signal is valid now)
+against the strongest bear case (why this signal might be wrong) given the news context.
+Let that tension inform your strength value and whether to veto.
+
 Reserve veto for clear, material, signal-invalidating events only. A false veto costs
 edge; a missed veto costs at most one trade — the risk gate still protects.
 
@@ -76,6 +80,10 @@ REDUCE STRENGTH (approve with lower value) for:
 APPROVE with original strength when:
 - News is neutral, positive, or irrelevant to the signal thesis
 - No news available or you are uncertain — default bias is APPROVE, not veto
+
+Before deciding, briefly weigh the strongest bull case (why this signal is valid now)
+against the strongest bear case (why this signal might be wrong) given the news context.
+Let that tension inform your strength value and whether to veto.
 
 Reserve veto for clear, material, signal-invalidating events only. A false veto costs
 edge; a missed veto costs at most one trade — the risk gate still protects.

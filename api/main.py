@@ -63,8 +63,18 @@ async def _scheduler_loop() -> None:
 
     strategies = _build_strategies_for(cfg, symbols)
     loop = asyncio.get_event_loop()
+    universe_date = None
     while True:
         try:
+            if cfg.risk.dynamic_universe:
+                from datetime import date as _date
+                from trader.scheduler import _refresh_dynamic_universe
+                today = _date.today()
+                if universe_date != today:
+                    strategies = await loop.run_in_executor(
+                        None, _refresh_dynamic_universe, cfg, broker, strategies
+                    )
+                    universe_date = today
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
         except Exception:
             logger.exception("scheduler tick error")
@@ -111,8 +121,18 @@ async def _crypto_scheduler_loop() -> None:
         logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
 
     loop = asyncio.get_event_loop()
+    crypto_universe_date = None
     while True:
         try:
+            if cfg.risk.dynamic_crypto_universe:
+                from datetime import date as _date
+                from trader.scheduler import _refresh_dynamic_crypto_universe
+                today = _date.today()
+                if crypto_universe_date != today:
+                    strategies = await loop.run_in_executor(
+                        None, _refresh_dynamic_crypto_universe, cfg, broker, strategies
+                    )
+                    crypto_universe_date = today
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
         except Exception:
             logger.exception("crypto scheduler tick error")
