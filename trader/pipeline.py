@@ -87,6 +87,9 @@ def run_pipeline(
             f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
             f"(limit {-config.risk.daily_loss_limit_pct:.2%})",
             config.slack_webhook_url,
+            alert_email=config.alert_email,
+            smtp_user=config.smtp_user,
+            smtp_password=config.smtp_password,
         )
         run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
 
@@ -361,6 +364,9 @@ def _run_symbol(
         send_alert(
             f"FILL {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",
             config.slack_webhook_url,
+            alert_email=config.alert_email,
+            smtp_user=config.smtp_user,
+            smtp_password=config.smtp_password,
         )
         return PipelineRun(
             run_id=run_id,

@@ -286,7 +286,7 @@ def test_auto_mode_fires_fill_alert(tmp_path, monkeypatch):
     """Auto-mode execute path must call send_alert with symbol and 'FILL'."""
     alerts_fired: list[str] = []
 
-    def _fake_alert(message: str, webhook_url) -> None:
+    def _fake_alert(message: str, webhook_url, **kwargs) -> None:
         alerts_fired.append(message)
 
     monkeypatch.setattr("trader.pipeline.send_alert", _fake_alert)

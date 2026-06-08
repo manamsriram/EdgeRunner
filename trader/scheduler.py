@@ -62,7 +62,13 @@ def run_once(
         logger.warning("kill switch engaged — skipping pipeline tick")
         _today = datetime.now(timezone.utc).date()
         if getattr(run_once, "_kill_switch_alert_date", None) != _today:
-            send_alert("Kill switch engaged — trading halted", config.slack_webhook_url)
+            send_alert(
+                "Kill switch engaged — trading halted",
+                config.slack_webhook_url,
+                alert_email=config.alert_email,
+                smtp_user=config.smtp_user,
+                smtp_password=config.smtp_password,
+            )
             run_once._kill_switch_alert_date = _today  # type: ignore[attr-defined]
         return []
     return run_pipeline(config, strategies, broker, repo)
@@ -126,7 +132,13 @@ def run_once_crypto(
         logger.warning("kill switch engaged — skipping crypto pipeline tick")
         _today = datetime.now(timezone.utc).date()
         if getattr(run_once_crypto, "_kill_switch_alert_date", None) != _today:
-            send_alert("Kill switch engaged — crypto trading halted", config.slack_webhook_url)
+            send_alert(
+                "Kill switch engaged — crypto trading halted",
+                config.slack_webhook_url,
+                alert_email=config.alert_email,
+                smtp_user=config.smtp_user,
+                smtp_password=config.smtp_password,
+            )
             run_once_crypto._kill_switch_alert_date = _today  # type: ignore[attr-defined]
         return []
     return run_pipeline(config, strategies, broker, repo)

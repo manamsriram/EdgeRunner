@@ -79,11 +79,14 @@ class Strategy(ABC):
         self.symbol = symbol
 
     def generate(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        if bars.empty:
+            return Signal(self.symbol, "hold", 0.0, "no bar data")
         asof = pd.Timestamp(asof)
-        if bars.index.tz is None and asof.tzinfo is not None:
+        index_tz = getattr(bars.index, "tz", None)
+        if index_tz is None and asof.tzinfo is not None:
             asof = asof.tz_localize(None)
-        elif bars.index.tz is not None and asof.tzinfo is None:
-            asof = asof.tz_localize(bars.index.tz)
+        elif index_tz is not None and asof.tzinfo is None:
+            asof = asof.tz_localize(index_tz)
         visible = bars.loc[bars.index <= asof]
         if visible.empty:
             return Signal(self.symbol, "hold", 0.0, f"no data as of {asof}")

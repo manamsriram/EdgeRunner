@@ -84,7 +84,9 @@ class Config:
     database_url: str | None = None              # Postgres DSN; None → SQLite
     log_level: str = "INFO"                    # passed to logging.basicConfig
     slack_webhook_url: str | None = None       # Slack-compatible webhook for alerts
-    alert_email: str | None = None             # placeholder; SMTP wired in Phase 7
+    alert_email: str | None = None             # destination address for trade emails
+    smtp_user: str | None = None               # Gmail sender address
+    smtp_password: str | None = None           # Gmail app password
     # Crypto execution config
     crypto_exchange: str = "alpaca"            # "alpaca" | "binance" | "coinbase" | "kraken"
     ccxt_api_key: str | None = None
@@ -152,6 +154,8 @@ def load_config() -> Config:
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
         alert_email=os.getenv("ALERT_EMAIL") or None,
+        smtp_user=os.getenv("SMTP_USER") or None,
+        smtp_password=os.getenv("SMTP_PASSWORD") or None,
         crypto_exchange=os.getenv("CRYPTO_EXCHANGE", "alpaca").strip().lower(),
         ccxt_api_key=os.getenv("CCXT_API_KEY") or None,
         ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,
