@@ -64,7 +64,6 @@ class GapPatternA(Strategy):
         min_bars = self.filter_n + 2  # need filter_n prior bars + pre-gap bar + gap bar
         if len(bars) < min_bars:
             return Signal(self.symbol, "hold", 0.0, "insufficient history")
-</new_string>
 
         close = bars["close"]
         high = bars["high"]
