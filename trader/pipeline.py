@@ -115,6 +115,8 @@ def run_pipeline(
             asof=asof,
             bars_cache=bars_cache,
         )
+        if result is None:
+            continue
         results.append(result)
         logger.info(
             "pipeline symbol=%s outcome=%s reason=%s",
