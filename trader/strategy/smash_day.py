@@ -67,7 +67,6 @@ class SmashDayB(Strategy):
         min_bars = max(3, self.trend_n + 1, self.atr_n + 1)
         if len(bars) < min_bars:
             return Signal(self.symbol, "hold", 0.0, "insufficient history")
-</new_string>
 
         close = bars["close"]
         high = bars["high"]

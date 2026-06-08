@@ -27,7 +27,6 @@ class MACrossover(Strategy):
         close = bars["close"]
         if len(close) < self.slow:
             return Signal(self.symbol, "hold", 0.0, "insufficient history for SMA")
-</new_string>
 
         fast_val = sma(close, self.fast).iloc[-1]
         slow_val = sma(close, self.slow).iloc[-1]
