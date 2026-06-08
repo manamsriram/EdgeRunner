@@ -65,6 +65,9 @@ class RiskLimits:
     # Dynamic universe — replaces static allowlist with Alpaca daily screener
     dynamic_universe: bool = False          # True → use screener (env: DYNAMIC_UNIVERSE)
     universe_size: int = 100               # max symbols per day (env: UNIVERSE_SIZE)
+    # Dynamic crypto universe — ranks CRYPTO_CANDIDATE_UNIVERSE by 24h volume daily
+    dynamic_crypto_universe: bool = False   # True → use crypto screener (env: DYNAMIC_CRYPTO_UNIVERSE)
+    crypto_universe_size: int = 10          # max crypto pairs per day (env: CRYPTO_UNIVERSE_SIZE)
 
 
 @dataclass(frozen=True)
@@ -136,11 +139,14 @@ def load_config() -> Config:
             max_trades_per_day=int(os.getenv("RISK_MAX_TRADES_PER_DAY", "5")),
             pdt_equity_threshold=float(os.getenv("PDT_EQUITY_THRESHOLD", "25000")),
             pdt_day_trade_limit=int(os.getenv("PDT_DAY_TRADE_LIMIT", "3")),
-            crypto_allowlist=_env_allowlist("CRYPTO_ALLOWLIST", ()),
+            crypto_allowlist=None if _env_bool("DYNAMIC_CRYPTO_UNIVERSE", False)
+                      else _env_allowlist("CRYPTO_ALLOWLIST", ()),
             max_crypto_position_pct=float(os.getenv("MAX_CRYPTO_POSITION_PCT", "0.05")),
             require_daily_pnl_check=_env_bool("REQUIRE_DAILY_PNL_CHECK", default=True),
             dynamic_universe=_env_bool("DYNAMIC_UNIVERSE", False),
             universe_size=int(os.getenv("UNIVERSE_SIZE", "100")),
+            dynamic_crypto_universe=_env_bool("DYNAMIC_CRYPTO_UNIVERSE", False),
+            crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),

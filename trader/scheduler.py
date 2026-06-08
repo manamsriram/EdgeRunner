@@ -141,22 +141,33 @@ def start_crypto_scheduler(
 ) -> None:
     """Blocking scheduler loop for crypto strategies. Runs 24/7 (no market-hours check).
 
-    Uses a 5-minute default poll interval — daily-bar strategies don't benefit from
-    faster polling and 5m avoids unnecessary API calls.
+    In dynamic mode (DYNAMIC_CRYPTO_UNIVERSE=true), rebuilds strategy list once per
+    calendar day by ranking CRYPTO_CANDIDATE_UNIVERSE by 24h volume. Always retains
+    symbols with open positions for stop-loss coverage.
 
     IMPORTANT: crypto symbols MUST be in CRYPTO_ALLOWLIST, not RISK_ALLOWLIST.
-    If a crypto symbol (containing '/') appears in RISK_ALLOWLIST, the equities
-    scheduler will call StockHistoricalDataClient on it and fail.
     """
     logger.info(
-        "crypto scheduler starting — autonomy=%s poll=%dm symbols=%s",
+        "crypto scheduler starting — autonomy=%s poll=%dm dynamic_crypto=%s symbols=%s",
         config.autonomy,
         poll_minutes,
+        config.risk.dynamic_crypto_universe,
         [s.symbol for s in strategies],
     )
+    current_strategies = strategies
+    crypto_universe_date: date | None = None
+
     while True:
         try:
-            results = run_once_crypto(config, strategies, broker, repo)
+            if config.risk.dynamic_crypto_universe:
+                today = date.today()
+                if crypto_universe_date != today:
+                    current_strategies = _refresh_dynamic_crypto_universe(
+                        config, broker, current_strategies
+                    )
+                    crypto_universe_date = today
+
+            results = run_once_crypto(config, current_strategies, broker, repo)
             for r in results:
                 logger.info("crypto tick: symbol=%s outcome=%s", r.symbol, r.outcome)
         except Exception:
@@ -226,23 +237,63 @@ def _refresh_dynamic_universe(
     return new_strategies
 
 
-def _build_crypto_strategies(config: Config) -> "list[Strategy]":
-    """Build strategy stack per crypto symbol.
-
-    Four signals: EMA crossover + Bollinger reversion + SmashDayB + GapPatternA.
-    Crypto gaps are common at market open equivalents (e.g. after weekend closes).
-    """
+def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
+    """Build 4-strategy stack (EMA + Bollinger + SmashDayB + GapPatternA) per crypto symbol."""
     from trader.strategy.crypto_mean_reversion import CryptoBollingerReversion
     from trader.strategy.crypto_trend import CryptoEMACrossover
     from trader.strategy.gap_pattern import GapPatternA
     from trader.strategy.smash_day import SmashDayB
-    strategies = []
-    for sym in config.risk.crypto_allowlist:
+    strategies: list[Strategy] = []
+    for sym in symbols:
         strategies.append(CryptoEMACrossover(symbol=sym))
         strategies.append(CryptoBollingerReversion(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
         strategies.append(GapPatternA(symbol=sym, long_only=True))
     return strategies
+
+
+def _build_crypto_strategies(config: Config) -> "list[Strategy]":
+    """Build crypto strategy stack from config's crypto_allowlist (static mode)."""
+    return _build_crypto_strategies_for(config, list(config.risk.crypto_allowlist or []))
+
+
+def _refresh_dynamic_crypto_universe(
+    config: Config,
+    broker: AlpacaBroker,
+    current_strategies: "list[Strategy]",
+) -> "list[Strategy]":
+    """Rank candidate crypto pairs by 24h volume and rebuild strategies.
+
+    Always includes symbols from open crypto positions so stop-loss never goes dark.
+    Falls back to existing strategy list if screener fails.
+    """
+    from trader.universe.crypto_screener import fetch_dynamic_crypto_universe
+
+    try:
+        state = broker.reconcile()
+        held_symbols = {s for s in state.positions if is_crypto_symbol(s)} if not state.stale else set()
+    except Exception:
+        logger.exception("reconcile failed during crypto universe refresh — using held_symbols=empty")
+        held_symbols = set()
+
+    try:
+        screened = fetch_dynamic_crypto_universe(config, config.risk.crypto_universe_size)
+    except Exception:
+        logger.exception(
+            "crypto screener failed — keeping existing %d strategies", len(current_strategies)
+        )
+        return current_strategies
+
+    all_symbols: list[str] = list(dict.fromkeys(screened + list(held_symbols)))
+    new_strategies = _build_crypto_strategies_for(config, all_symbols)
+    logger.info(
+        "crypto universe refreshed: %d screened + %d held = %d symbols → %d strategies",
+        len(screened),
+        len(held_symbols),
+        len(all_symbols),
+        len(new_strategies),
+    )
+    return new_strategies
 
 
 if __name__ == "__main__":
@@ -257,9 +308,16 @@ if __name__ == "__main__":
     _broker = AlpacaBroker(cfg)
     _repo = SQLiteRepository(cfg.portfolio_db_path)
 
-    # Launch crypto scheduler in a background thread when CRYPTO_ALLOWLIST is set.
-    if cfg.risk.crypto_allowlist:
-        _crypto_strategies = _build_crypto_strategies(cfg)
+    # Launch crypto scheduler in a background thread when crypto trading is enabled.
+    # Dynamic mode: start empty — universe built on first tick.
+    # Static mode: build from CRYPTO_ALLOWLIST.
+    _run_crypto = cfg.risk.dynamic_crypto_universe or bool(cfg.risk.crypto_allowlist)
+    if _run_crypto:
+        if cfg.risk.dynamic_crypto_universe:
+            _crypto_strategies: list = []
+            logger.info("dynamic crypto universe mode — strategies built on first tick")
+        else:
+            _crypto_strategies = _build_crypto_strategies(cfg)
         _crypto_thread = threading.Thread(
             target=start_crypto_scheduler,
             args=(cfg, _crypto_strategies, _broker, _repo),
@@ -267,7 +325,7 @@ if __name__ == "__main__":
             name="crypto-scheduler",
         )
         _crypto_thread.start()
-        logger.info("crypto scheduler thread started for %s", list(cfg.risk.crypto_allowlist))
+        logger.info("crypto scheduler thread started")
 
     # Dynamic mode: start with empty list — rebuilt on first market-open tick.
     # Static mode: build from allowlist (or DEFAULT_ALLOWLIST if unset).
