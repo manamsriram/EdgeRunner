@@ -90,3 +90,15 @@ class PortfolioRepository(ABC):
         """Return signal count per strategy for all auto-mode runs.
         Keys are strategy class names (e.g. "MomentumRSI"); values are signal counts.
         Returns {} if no data."""
+
+    @abstractmethod
+    def get_position_owners(self) -> dict[str, str]:
+        """Return all persisted ownership entries: symbol -> strategy class name."""
+
+    @abstractmethod
+    def set_position_owner(self, symbol: str, strategy: str) -> None:
+        """Upsert ownership of symbol to strategy. Called when a buy executes."""
+
+    @abstractmethod
+    def clear_position_owner(self, symbol: str) -> None:
+        """Remove ownership for symbol. Called when a sell executes."""

@@ -71,6 +71,16 @@ def run_pipeline(
 
     state = broker.reconcile()
 
+    # Seed ownership from DB; prune entries for positions no longer held.
+    try:
+        loaded_owners = repo.get_position_owners()
+        loaded_owners = {s: o for s, o in loaded_owners.items() if s in state.positions}
+        if loaded_owners:
+            from dataclasses import replace as _replace_init
+            state = _replace_init(state, position_owners=loaded_owners)
+    except Exception:
+        logger.warning("failed to load position owners from DB — starting with empty ownership")
+
     logger.info(
         "tick equity=%.2f trades_today=%d autonomy=%s",
         state.equity, state.trades_today, config.autonomy,
@@ -137,11 +147,27 @@ def run_pipeline(
             new_open = state.open_order_symbols | {result.symbol}
             approved_notional = result.risk_decision.approved_notional or 0.0
             new_headroom = max(state.equity * config.risk.max_position_pct - approved_notional, 0.0)
+            # Track position ownership: first buyer claims the symbol; seller releases it.
+            new_owners = dict(state.position_owners)
+            if result.signal is not None:
+                if result.signal.side == "buy" and result.symbol not in new_owners:
+                    new_owners[result.symbol] = type(strategy).__name__
+                    try:
+                        repo.set_position_owner(result.symbol, type(strategy).__name__)
+                    except Exception:
+                        logger.warning("failed to persist owner for %s", result.symbol)
+                elif result.signal.side == "sell":
+                    new_owners.pop(result.symbol, None)
+                    try:
+                        repo.clear_position_owner(result.symbol)
+                    except Exception:
+                        logger.warning("failed to clear owner for %s", result.symbol)
             # Reflect the trade in a new AccountState for the next iteration.
             state = _replace(
                 state,
                 trades_today=new_trades,
                 open_order_symbols=new_open,
+                position_owners=new_owners,
             )
 
     return results
@@ -238,7 +264,30 @@ def _run_symbol(
                 outcome="blocked",
             )
 
-        # 5.5. First-entry fundamental + price-trend gate — equity buys with no position.
+        # 5.5. Ownership check — only the strategy that opened the position may sell it.
+        # Stop-loss exits bypass: forced exits must always execute regardless of ownership.
+        if signal.side == "sell" and not signal.reason.startswith("stop-loss:"):
+            owner = state.position_owners.get(symbol)
+            if owner is not None and owner != type(strategy).__name__:
+                repo.record_signal(SignalRow(
+                    run_id=run_id,
+                    symbol=symbol,
+                    side=signal.side,
+                    strength=signal.strength,
+                    reason=signal.reason,
+                ))
+                return PipelineRun(
+                    run_id=run_id,
+                    symbol=symbol,
+                    signal=signal,
+                    risk_decision=RiskDecision.reject(
+                        f"ownership conflict: {symbol} owned by {owner}, "
+                        f"not {type(strategy).__name__}"
+                    ),
+                    outcome="blocked",
+                )
+
+        # 5.6. First-entry fundamental + price-trend gate — equity buys with no position.
         # Skipped for: crypto (no yfinance balance sheets), re-entries, non-buy signals.
         is_first_entry = (
             symbol not in state.positions

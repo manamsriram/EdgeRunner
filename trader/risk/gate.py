@@ -47,6 +47,7 @@ class AccountState:
     daily_pnl_pct: float | None
     stale: bool = False
     avg_entry_prices: dict[str, float] = field(default_factory=dict)  # symbol -> avg cost basis
+    position_owners: dict[str, str] = field(default_factory=dict)     # symbol -> owning strategy class name
 
 
 @dataclass(frozen=True)

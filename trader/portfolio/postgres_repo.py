@@ -68,6 +68,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     status     TEXT NOT NULL,
     decided_at TEXT
 );
+CREATE TABLE IF NOT EXISTS position_owners (
+    symbol     TEXT PRIMARY KEY,
+    strategy   TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -200,3 +205,23 @@ class PostgresRepository(PortfolioRepository):
                     "WHERE r.mode = 'auto' GROUP BY r.strategy"
                 )
                 return {row["strategy"]: row["cnt"] for row in cur.fetchall()}
+
+    def get_position_owners(self) -> dict[str, str]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol, strategy FROM position_owners")
+                return {row["symbol"]: row["strategy"] for row in cur.fetchall()}
+
+    def set_position_owner(self, symbol: str, strategy: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO position_owners (symbol, strategy, updated_at) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (symbol) DO UPDATE SET strategy=EXCLUDED.strategy, updated_at=EXCLUDED.updated_at",
+                    (symbol, strategy, _now()),
+                )
+
+    def clear_position_owner(self, symbol: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM position_owners WHERE symbol=%s", (symbol,))

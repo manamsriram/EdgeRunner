@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     status     TEXT NOT NULL,
     decided_at TEXT
 );
+CREATE TABLE IF NOT EXISTS position_owners (
+    symbol     TEXT PRIMARY KEY,
+    strategy   TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -198,3 +203,20 @@ class SQLiteRepository(PortfolioRepository):
                 "WHERE r.mode = 'auto' GROUP BY r.strategy"
             ).fetchall()
             return {row["strategy"]: row["cnt"] for row in rows}
+
+    def get_position_owners(self) -> dict[str, str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT symbol, strategy FROM position_owners").fetchall()
+            return {row["symbol"]: row["strategy"] for row in rows}
+
+    def set_position_owner(self, symbol: str, strategy: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO position_owners (symbol, strategy, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(symbol) DO UPDATE SET strategy=excluded.strategy, updated_at=excluded.updated_at",
+                (symbol, strategy, _now()),
+            )
+
+    def clear_position_owner(self, symbol: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM position_owners WHERE symbol=?", (symbol,))
