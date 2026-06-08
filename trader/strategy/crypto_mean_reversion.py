@@ -33,6 +33,10 @@ class CryptoBollingerReversion(Strategy):
         self.num_std = num_std
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        # Handle empty data
+        if bars.empty:
+            return Signal(self.symbol, "hold", 0.0, "no bar data")
+
         close = bars["close"]
         if len(close) < self.window:
             return Signal(self.symbol, "hold", 0.0, "insufficient history for Bollinger Bands")

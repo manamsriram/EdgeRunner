@@ -28,6 +28,10 @@ class MomentumRSI(Strategy):
         self.rsi_oversold = rsi_oversold
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        # Handle empty data
+        if bars.empty:
+            return Signal(self.symbol, "hold", 0.0, "no bar data")
+
         close = bars["close"]
         if len(close) <= max(self.lookback, self.rsi_window):
             return Signal(self.symbol, "hold", 0.0, "insufficient history")

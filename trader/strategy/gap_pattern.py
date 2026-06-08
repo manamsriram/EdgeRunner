@@ -51,10 +51,20 @@ class GapPatternA(Strategy):
         # Long: high of the bar before the gap. Short: low of the bar before the gap.
         self._gap_ref_level: float | None = None
 
+    def reset_state(self) -> None:
+        """Reset internal state variables to initial values."""
+        self._entry_bar_ts = None
+        self._gap_ref_level = None
+
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        # Handle empty data
+        if bars.empty:
+            return Signal(self.symbol, "hold", 0.0, "no bar data")
+
         min_bars = self.filter_n + 2  # need filter_n prior bars + pre-gap bar + gap bar
         if len(bars) < min_bars:
             return Signal(self.symbol, "hold", 0.0, "insufficient history")
+</new_string>
 
         close = bars["close"]
         high = bars["high"]

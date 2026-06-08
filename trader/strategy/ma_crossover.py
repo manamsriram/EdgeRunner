@@ -20,9 +20,14 @@ class MACrossover(Strategy):
         self.slow = slow
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        # Handle empty data
+        if bars.empty:
+            return Signal(self.symbol, "hold", 0.0, "no bar data")
+
         close = bars["close"]
         if len(close) < self.slow:
             return Signal(self.symbol, "hold", 0.0, "insufficient history for SMA")
+</new_string>
 
         fast_val = sma(close, self.fast).iloc[-1]
         slow_val = sma(close, self.slow).iloc[-1]

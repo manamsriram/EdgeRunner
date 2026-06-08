@@ -54,10 +54,20 @@ class SmashDayB(Strategy):
         self._entry_bar_ts: pd.Timestamp | None = None
         self._entry_bar_low: float | None = None
 
+    def reset_state(self) -> None:
+        """Reset internal state variables to initial values."""
+        self._entry_bar_ts = None
+        self._entry_bar_low = None
+
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        # Handle empty data
+        if bars.empty:
+            return Signal(self.symbol, "hold", 0.0, "no bar data")
+
         min_bars = max(3, self.trend_n + 1, self.atr_n + 1)
         if len(bars) < min_bars:
             return Signal(self.symbol, "hold", 0.0, "insufficient history")
+</new_string>
 
         close = bars["close"]
         high = bars["high"]
