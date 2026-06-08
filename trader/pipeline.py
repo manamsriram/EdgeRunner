@@ -172,7 +172,6 @@ def _run_symbol(
         import pandas as pd
         if bars.empty:
             logger.warning("no bar data for %s — skipping stop-loss and signal", symbol)
-            repo.record_outcome(run_id, outcome="no_data")
             return None
         current_price = float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
