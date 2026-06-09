@@ -46,8 +46,10 @@ class AccountState:
     trades_today: int
     daily_pnl_pct: float | None
     stale: bool = False
+    cash: float = 0.0                      # uninvested cash available for new buys (defaults to 0 for compat)
     avg_entry_prices: dict[str, float] = field(default_factory=dict)  # symbol -> avg cost basis
     position_owners: dict[str, str] = field(default_factory=dict)     # symbol -> owning strategy class name
+    deployed_notional: float = 0.0         # cumulative buy notional approved this tick
 
 
 @dataclass(frozen=True)

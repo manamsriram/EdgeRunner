@@ -80,6 +80,7 @@ def _healthy_state(equity: float = 100_000.0) -> AccountState:
         trades_today=0,
         daily_pnl_pct=0.0,
         stale=False,
+        cash=equity,
     )
 
 
@@ -109,6 +110,7 @@ class FakeClient:
         return SimpleNamespace(
             equity=str(self._state.equity),
             last_equity=str(self._state.equity),
+            cash=str(self._state.cash),
         )
 
     def get_all_positions(self):

@@ -116,94 +116,125 @@ def run_pipeline(
         bars_cache = {}
 
     results: list[PipelineRun] = []
+    pending_buys: list[tuple] = []  # (strength, strategy, signal, bars, run_id)
+
+    # Phase 1: generate signals; execute sells immediately, stash buys for ranking.
     for strategy in strategies:
-        result = _run_symbol(
+        prep = _prepare_signal(
             config=config,
             strategy=strategy,
-            broker=broker,
             repo=repo,
-            gate=gate,
-            kill_switch=kill_switch,
             state=state,
             asof=asof,
             bars_cache=bars_cache,
         )
-        if result is None:
+        if prep is None:
             continue
+        if isinstance(prep, PipelineRun):
+            results.append(prep)
+            logger.info(
+                "pipeline symbol=%s outcome=%s reason=%s",
+                prep.symbol, prep.outcome, prep.risk_decision.reason,
+            )
+            continue
+        signal, bars, run_id = prep
+        if signal.side == "sell":
+            result = _execute_signal(
+                signal=signal, bars=bars, run_id=run_id, strategy=strategy,
+                config=config, broker=broker, repo=repo, gate=gate,
+                kill_switch=kill_switch, state=state, asof=asof,
+            )
+            results.append(result)
+            logger.info(
+                "pipeline symbol=%s outcome=%s reason=%s",
+                result.symbol, result.outcome, result.risk_decision.reason,
+            )
+            if result.outcome in ("executed", "queued") and result.risk_decision.approved:
+                state = _advance_state(state, result, strategy, repo)
+        else:
+            pending_buys.append((signal.strength, strategy, signal, bars, run_id))
+
+    # Phase 2: rank buys by signal strength (highest conviction first), execute in order.
+    # Each buy sizes off remaining free cash, so the best signal gets the most capital.
+    pending_buys.sort(key=lambda x: x[0], reverse=True)
+    for _, strategy, signal, bars, run_id in pending_buys:
+        result = _execute_signal(
+            signal=signal, bars=bars, run_id=run_id, strategy=strategy,
+            config=config, broker=broker, repo=repo, gate=gate,
+            kill_switch=kill_switch, state=state, asof=asof,
+        )
         results.append(result)
         logger.info(
             "pipeline symbol=%s outcome=%s reason=%s",
-            result.symbol,
-            result.outcome,
-            result.risk_decision.reason,
+            result.symbol, result.outcome, result.risk_decision.reason,
         )
-        # Update working state so subsequent symbols see an accurate picture within
-        # this tick (avoids the shared-snapshot bug where two strategies evaluate
-        # against the same pre-trade account state).
         if result.outcome in ("executed", "queued") and result.risk_decision.approved:
-            from dataclasses import replace as _replace
-            from trader.risk.gate import AccountState as _AS
-            new_trades = state.trades_today + 1
-            new_open = state.open_order_symbols | {result.symbol}
-            approved_notional = result.risk_decision.approved_notional or 0.0
-            new_headroom = max(state.equity * config.risk.max_position_pct - approved_notional, 0.0)
-            # Track position ownership: first buyer claims the symbol; seller releases it.
-            new_owners = dict(state.position_owners)
-            if result.signal is not None:
-                if result.signal.side == "buy" and result.symbol not in new_owners:
-                    new_owners[result.symbol] = type(strategy).__name__
-                    try:
-                        repo.set_position_owner(result.symbol, type(strategy).__name__)
-                    except Exception:
-                        logger.warning("failed to persist owner for %s", result.symbol)
-                elif result.signal.side == "sell":
-                    new_owners.pop(result.symbol, None)
-                    try:
-                        repo.clear_position_owner(result.symbol)
-                    except Exception:
-                        logger.warning("failed to clear owner for %s", result.symbol)
-            # Reflect the trade in a new AccountState for the next iteration.
-            state = _replace(
-                state,
-                trades_today=new_trades,
-                open_order_symbols=new_open,
-                position_owners=new_owners,
-            )
+            state = _advance_state(state, result, strategy, repo)
 
     return results
 
 
-def _run_symbol(
+def _advance_state(state, result, strategy, repo):
+    """Return updated AccountState after an approved trade within a tick."""
+    from dataclasses import replace as _replace
+    approved_notional = result.risk_decision.approved_notional or 0.0
+    new_owners = dict(state.position_owners)
+    if result.signal is not None:
+        if result.signal.side == "buy" and result.symbol not in new_owners:
+            new_owners[result.symbol] = type(strategy).__name__
+            try:
+                repo.set_position_owner(result.symbol, type(strategy).__name__)
+            except Exception:
+                logger.warning("failed to persist owner for %s", result.symbol)
+        elif result.signal.side == "sell":
+            new_owners.pop(result.symbol, None)
+            try:
+                repo.clear_position_owner(result.symbol)
+            except Exception:
+                logger.warning("failed to clear owner for %s", result.symbol)
+    new_deployed = state.deployed_notional + (
+        approved_notional if result.signal and result.signal.side == "buy" else 0.0
+    )
+    return _replace(
+        state,
+        trades_today=state.trades_today + 1,
+        open_order_symbols=state.open_order_symbols | {result.symbol},
+        position_owners=new_owners,
+        deployed_notional=new_deployed,
+    )
+
+
+def _prepare_signal(
     *,
     config,
     strategy,
-    broker,
     repo,
-    gate,
-    kill_switch,
     state,
     asof,
     bars_cache: dict | None = None,
 ):
-    from trader.risk.gate import AccountState
+    """Generate and pre-screen a signal for a strategy.
+
+    Returns None if bars are unavailable.
+    Returns PipelineRun for terminal cases (hold, blocked, vetoed).
+    Returns (signal, bars, run_id) when the signal is ready for gate evaluation.
+    """
+    from trader.strategy.base import Signal
 
     symbol = strategy.symbol
     run_id = repo.record_run(strategy=type(strategy).__name__, mode=config.autonomy)
-
     signal = None
-    risk_decision = RiskDecision.reject("not evaluated")
 
     try:
-        # 1. Fetch bars (rolling window ending at asof). Cache hit avoids a per-symbol call.
+        import pandas as pd
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
         bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
 
-        # 2. Stop-loss override — exit position immediately if down beyond threshold.
-        import pandas as pd
         if bars.empty:
             logger.warning("no bar data for %s — skipping stop-loss and signal", symbol)
             return None
+
         current_price = float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
         if (
@@ -227,59 +258,37 @@ def _run_symbol(
                 (current_price - entry_price) / entry_price * 100,
             )
         else:
-            # 3. Generate signal from strategy.
             signal = strategy.generate(bars, pd.Timestamp(asof))
 
-        # 4. Hold signals skip the overlay and gate entirely.
         if signal.side == "hold":
             repo.record_signal(SignalRow(
-                run_id=run_id,
-                symbol=symbol,
-                side=signal.side,
-                strength=signal.strength,
-                reason=signal.reason,
+                run_id=run_id, symbol=symbol,
+                side=signal.side, strength=signal.strength, reason=signal.reason,
             ))
             return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
-                risk_decision=RiskDecision.reject("hold signal — no order"),
-                outcome="hold",
+                run_id=run_id, symbol=symbol, signal=signal,
+                risk_decision=RiskDecision.reject("hold signal — no order"), outcome="hold",
             )
 
-        # 5. Sell with no open position will always be blocked by the gate — skip overlay.
         if signal.side == "sell" and not state.stale and symbol not in state.positions:
             repo.record_signal(SignalRow(
-                run_id=run_id,
-                symbol=symbol,
-                side=signal.side,
-                strength=signal.strength,
-                reason=signal.reason,
+                run_id=run_id, symbol=symbol,
+                side=signal.side, strength=signal.strength, reason=signal.reason,
             ))
             return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
-                risk_decision=RiskDecision.reject("no position to sell"),
-                outcome="blocked",
+                run_id=run_id, symbol=symbol, signal=signal,
+                risk_decision=RiskDecision.reject("no position to sell"), outcome="blocked",
             )
 
-        # 5.5. Ownership check — only the strategy that opened the position may sell it.
-        # Stop-loss exits bypass: forced exits must always execute regardless of ownership.
         if signal.side == "sell" and not signal.reason.startswith("stop-loss:"):
             owner = state.position_owners.get(symbol)
             if owner is not None and owner != type(strategy).__name__:
                 repo.record_signal(SignalRow(
-                    run_id=run_id,
-                    symbol=symbol,
-                    side=signal.side,
-                    strength=signal.strength,
-                    reason=signal.reason,
+                    run_id=run_id, symbol=symbol,
+                    side=signal.side, strength=signal.strength, reason=signal.reason,
                 ))
                 return PipelineRun(
-                    run_id=run_id,
-                    symbol=symbol,
-                    signal=signal,
+                    run_id=run_id, symbol=symbol, signal=signal,
                     risk_decision=RiskDecision.reject(
                         f"ownership conflict: {symbol} owned by {owner}, "
                         f"not {type(strategy).__name__}"
@@ -287,83 +296,80 @@ def _run_symbol(
                     outcome="blocked",
                 )
 
-        # 5.6. First-entry fundamental + price-trend gate — equity buys with no position.
-        # Skipped for: crypto (no yfinance balance sheets), re-entries, non-buy signals.
-        is_first_entry = (
-            symbol not in state.positions
-            or state.positions.get(symbol, 0.0) == 0.0
-        )
+        is_first_entry = symbol not in state.positions or state.positions.get(symbol, 0.0) == 0.0
         if signal.side == "buy" and is_first_entry and not is_crypto_symbol(symbol):
             date_str = asof.strftime("%Y-%m-%d")
             if not apply_fundamental_gate(symbol, bars, config, date_str):
                 veto_signal = Signal(
-                    symbol,
-                    "hold",
-                    0.0,
+                    symbol, "hold", 0.0,
                     "[fundamental gate veto] financials/trend failed quality check",
                 )
                 repo.record_signal(SignalRow(
-                    run_id=run_id,
-                    symbol=symbol,
-                    side=veto_signal.side,
-                    strength=veto_signal.strength,
-                    reason=veto_signal.reason,
+                    run_id=run_id, symbol=symbol,
+                    side=veto_signal.side, strength=veto_signal.strength, reason=veto_signal.reason,
                 ))
                 return PipelineRun(
-                    run_id=run_id,
-                    symbol=symbol,
-                    signal=veto_signal,
-                    risk_decision=RiskDecision.reject("fundamental gate veto"),
-                    outcome="hold",
+                    run_id=run_id, symbol=symbol, signal=veto_signal,
+                    risk_decision=RiskDecision.reject("fundamental gate veto"), outcome="hold",
                 )
 
-        # 6. Overlay (Phase 6 — Claude LLM review, non-load-bearing). Only runs on buy/sell.
-        # Stop-loss exits bypass the overlay — forced exit, no LLM deliberation needed.
-        is_stop_loss = signal.reason.startswith("stop-loss:")
-        if not is_stop_loss:
+        if not signal.reason.startswith("stop-loss:"):
             signal = apply_overlay(signal, bars, config)
 
-        # Record the post-overlay signal so the stored row matches what is used downstream.
         repo.record_signal(SignalRow(
-            run_id=run_id,
-            symbol=symbol,
-            side=signal.side,
-            strength=signal.strength,
-            reason=signal.reason,
+            run_id=run_id, symbol=symbol,
+            side=signal.side, strength=signal.strength, reason=signal.reason,
         ))
 
-        # 6.5. Short-circuit if overlay vetoed to hold.
         if signal.side == "hold":
             return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
-                risk_decision=RiskDecision.reject("overlay veto"),
-                outcome="hold",
+                run_id=run_id, symbol=symbol, signal=signal,
+                risk_decision=RiskDecision.reject("overlay veto"), outcome="hold",
             )
 
-        # 7. Fail closed on stale state before building intent (equity may be zero).
+        return signal, bars, run_id
+
+    except Exception:
+        logger.exception("pipeline error for %s", symbol)
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=RiskDecision.reject("pipeline exception"),
+            outcome="blocked", error="exception — see logs",
+        )
+
+
+def _execute_signal(
+    *,
+    signal,
+    bars,
+    run_id: int,
+    strategy,
+    config,
+    broker,
+    repo,
+    gate,
+    kill_switch,
+    state,
+    asof,
+):
+    """Gate evaluation and order submission for a pre-generated signal."""
+    symbol = signal.symbol
+
+    try:
         if state.stale:
             return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
+                run_id=run_id, symbol=symbol, signal=signal,
                 risk_decision=RiskDecision.reject("account state stale (reconciliation failed)"),
                 outcome="blocked",
             )
 
-        # 8. Build order intent.
         ref_price = float(bars["close"].iloc[-1])
         notional = _notional_for(signal, state, config, ref_price)
         intent = OrderIntent(
-            symbol=symbol,
-            side=signal.side,
-            notional=notional,
-            ref_price=ref_price,
-            reason=signal.reason,
+            symbol=symbol, side=signal.side,
+            notional=notional, ref_price=ref_price, reason=signal.reason,
         )
 
-        # 9. Risk gate.
         risk_decision = gate.evaluate(intent, state, kill_switch)
         logger.info(
             "gate symbol=%s approved=%s reason=%s approved_notional=%.2f",
@@ -372,52 +378,37 @@ def _run_symbol(
         )
         if not risk_decision.approved:
             return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
-                risk_decision=risk_decision,
-                outcome="blocked",
+                run_id=run_id, symbol=symbol, signal=signal,
+                risk_decision=risk_decision, outcome="blocked",
             )
 
-        # 10. Decision gate.
         if config.autonomy == "manual":
             proposal_id = repo.create_proposal(ProposalRow(
-                symbol=symbol,
-                side=signal.side,
+                symbol=symbol, side=signal.side,
                 notional=risk_decision.approved_notional,
-                ref_price=ref_price,
-                reason=signal.reason,
+                ref_price=ref_price, reason=signal.reason,
             ))
             return PipelineRun(
-                run_id=run_id,
-                symbol=symbol,
-                signal=signal,
-                risk_decision=risk_decision,
-                outcome="queued",
-                proposal_id=proposal_id,
+                run_id=run_id, symbol=symbol, signal=signal,
+                risk_decision=risk_decision, outcome="queued", proposal_id=proposal_id,
             )
 
-        # autonomy == "auto"
         today = asof.date() if isinstance(asof, datetime) else asof
         client_order_id = client_order_id_for(
             today, symbol, signal.side, type(strategy).__name__
         )
         qty = state.positions.get(symbol, 0.0) if signal.side == "sell" else None
         order = broker.submit(
-            symbol=symbol,
-            side=signal.side,
+            symbol=symbol, side=signal.side,
             client_order_id=client_order_id,
             notional=risk_decision.approved_notional if signal.side == "buy" else None,
             qty=qty if signal.side == "sell" else None,
         )
         broker_order_id = str(getattr(order, "id", "") or "")
         repo.record_order(OrderRow(
-            client_order_id=client_order_id,
-            symbol=symbol,
-            side=signal.side,
-            notional=risk_decision.approved_notional,
-            status="submitted",
-            broker_order_id=broker_order_id or None,
+            client_order_id=client_order_id, symbol=symbol,
+            side=signal.side, notional=risk_decision.approved_notional,
+            status="submitted", broker_order_id=broker_order_id or None,
         ))
         _env = "paper" if config.alpaca_paper else "LIVE"
         send_alert(
@@ -428,9 +419,7 @@ def _run_symbol(
             smtp_password=config.smtp_password,
         )
         return PipelineRun(
-            run_id=run_id,
-            symbol=symbol,
-            signal=signal,
+            run_id=run_id, symbol=symbol, signal=signal,
             risk_decision=risk_decision,
             outcome="executed",
             order_id=client_order_id,
@@ -659,16 +648,17 @@ def _notional_for_side(side: str, symbol: str, state, config, ref_price: float) 
 def _notional_for(signal, state, config, ref_price: float) -> float:
     """Compute the intended notional for an order.
 
-    Buys: target full position cap (gate will size down if needed).
+    Buys: take cap_pct of remaining investable cash (cash already committed this
+    tick is subtracted so each successive buy gets a smaller slice — geometric decay).
     Sells: use held value (gate enforces long/flat constraint).
     """
     if signal.side == "sell":
         held = state.positions.get(signal.symbol, 0.0)
         return max(held * ref_price, 1.0)
-    # buy: target the correct per-asset-class position cap
     cap_pct = (
         config.risk.max_crypto_position_pct
         if is_crypto_symbol(signal.symbol)
         else config.risk.max_position_pct
     )
-    return cap_pct * state.equity
+    free_cash = max(state.cash - state.deployed_notional, 0.0)
+    return cap_pct * free_cash

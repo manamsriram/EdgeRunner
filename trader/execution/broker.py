@@ -186,6 +186,7 @@ class AlpacaBroker:
             client = self._ensure_client()
             account = client.get_account()
             equity = float(account.equity)
+            cash = float(getattr(account, "cash", 0.0) or 0.0)
             last_equity = float(getattr(account, "last_equity", 0.0) or 0.0)
 
             all_positions = client.get_all_positions()
@@ -218,6 +219,7 @@ class AlpacaBroker:
                 trades_today=trades_today,
                 daily_pnl_pct=daily_pnl_pct,
                 stale=False,
+                cash=cash,
                 avg_entry_prices=avg_entry_prices,
             )
         except Exception:  # noqa: BLE001 - any failure must fail closed, not crash trading
