@@ -82,3 +82,112 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> 
         axis=1,
     ).max(axis=1)
     return tr.ewm(alpha=1.0 / window, min_periods=window, adjust=False).mean()
+
+
+def adx(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
+    """Average Directional Index — trend strength in [0, 100].
+
+    Values > 20 indicate a trending market. Uses Wilder's smoothing (alpha = 1/window).
+    """
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+
+    dm_plus_raw = high - prev_high
+    dm_minus_raw = prev_low - low
+
+    # Each directional move only counts when it's larger than the opposite move.
+    dm_plus = dm_plus_raw.where(
+        (dm_plus_raw > dm_minus_raw) & (dm_plus_raw > 0.0), 0.0
+    )
+    dm_minus = dm_minus_raw.where(
+        (dm_minus_raw > dm_plus_raw) & (dm_minus_raw > 0.0), 0.0
+    )
+
+    atr_val = atr(high, low, close, window)
+
+    alpha = 1.0 / window
+    smooth_dm_plus = dm_plus.ewm(alpha=alpha, min_periods=window, adjust=False).mean()
+    smooth_dm_minus = dm_minus.ewm(alpha=alpha, min_periods=window, adjust=False).mean()
+
+    safe_atr = atr_val.replace(0.0, float("nan"))
+    di_plus = 100.0 * smooth_dm_plus / safe_atr
+    di_minus = 100.0 * smooth_dm_minus / safe_atr
+
+    di_sum = (di_plus + di_minus).replace(0.0, float("nan"))
+    dx = 100.0 * (di_plus - di_minus).abs() / di_sum
+    return dx.ewm(alpha=alpha, min_periods=window, adjust=False).mean()
+
+
+def supertrend(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    atr_n: int = 14,
+    multiplier: float = 3.0,
+) -> tuple[pd.Series, pd.Series]:
+    """SuperTrend indicator (ATR 14, multiplier 3 by default).
+
+    Returns (supertrend_line, direction) where direction is +1.0 (uptrend) or
+    -1.0 (downtrend). Both Series are NaN until ATR warmup is complete.
+
+    In uptrend: supertrend_line is the lower ATR band (support below close).
+    In downtrend: supertrend_line is the upper ATR band (resistance above close).
+    """
+    hl2 = (high + low) / 2.0
+    atr_val = atr(high, low, close, atr_n)
+
+    basic_upper = (hl2 + multiplier * atr_val).values.tolist()
+    basic_lower = (hl2 - multiplier * atr_val).values.tolist()
+    close_list = close.values.tolist()
+    n = len(close)
+
+    final_upper = [float("nan")] * n
+    final_lower = [float("nan")] * n
+    st = [float("nan")] * n
+    direction = [float("nan")] * n
+
+    for i in range(n):
+        bu = basic_upper[i]
+        bl = basic_lower[i]
+        if bu != bu:  # NaN check (bu != bu is True only for NaN)
+            continue
+
+        # Ratchet bands: upper only moves down, lower only moves up.
+        if i == 0 or final_upper[i - 1] != final_upper[i - 1]:
+            final_upper[i] = bu
+            final_lower[i] = bl
+        else:
+            final_upper[i] = bu if (bu < final_upper[i - 1] or close_list[i - 1] > final_upper[i - 1]) else final_upper[i - 1]
+            final_lower[i] = bl if (bl > final_lower[i - 1] or close_list[i - 1] < final_lower[i - 1]) else final_lower[i - 1]
+
+        # Determine trend direction.
+        if i == 0 or st[i - 1] != st[i - 1]:
+            # First valid bar: initialize by comparing close to midband.
+            midband = (final_upper[i] + final_lower[i]) / 2.0
+            if close_list[i] >= midband:
+                st[i] = final_lower[i]
+                direction[i] = 1.0
+            else:
+                st[i] = final_upper[i]
+                direction[i] = -1.0
+        elif direction[i - 1] == -1.0:
+            # Was downtrend: flip up if close breaks above upper band.
+            if close_list[i] > final_upper[i]:
+                st[i] = final_lower[i]
+                direction[i] = 1.0
+            else:
+                st[i] = final_upper[i]
+                direction[i] = -1.0
+        else:
+            # Was uptrend: flip down if close breaks below lower band.
+            if close_list[i] < final_lower[i]:
+                st[i] = final_upper[i]
+                direction[i] = -1.0
+            else:
+                st[i] = final_lower[i]
+                direction[i] = 1.0
+
+    return (
+        pd.Series(st, index=close.index),
+        pd.Series(direction, index=close.index),
+    )
