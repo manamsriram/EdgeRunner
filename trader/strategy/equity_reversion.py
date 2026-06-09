@@ -64,7 +64,7 @@ class EquityBollingerReversion(Strategy):
             return Signal(self.symbol, "hold", 0.0, "insufficient history")
 
         close = bars["close"]
-        upper_bb, mid_bb, lower_bb = bollinger_bands(close, self.bb_window, self.bb_std)
+        _, mid_bb, lower_bb = bollinger_bands(close, self.bb_window, self.bb_std)
         rsi_val = rsi(close, self.rsi_window)
         sma_trend = sma(close, self.trend_window)
         zscore_val = zscore(close, self.bb_window)
@@ -76,7 +76,7 @@ class EquityBollingerReversion(Strategy):
         curr_sma = float(sma_trend.iloc[-1])
         curr_z = float(zscore_val.iloc[-1])
 
-        if any(pd.isna(v) for v in [curr_rsi, curr_lower, curr_mid, curr_sma]):
+        if any(pd.isna(v) for v in [curr_rsi, curr_lower, curr_mid, curr_sma, curr_z]):
             return Signal(self.symbol, "hold", 0.0, "indicators not yet defined")
 
         # EXIT: RSI overbought or price recovered to mid band.

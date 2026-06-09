@@ -58,12 +58,22 @@ def test_buy_on_oversold_dip_in_uptrend():
 
 
 def test_no_buy_when_below_sma200():
-    # Downtrend for 220 bars — close always well below SMA200 midpoint
-    closes = list(200.0 - np.arange(220) * 0.5)
+    """Buy blocked by SMA200 filter even when close < lower_band and RSI oversold."""
+    # Build a downtrend where current close is well below SMA200:
+    # 220 bars: start at 200, fall steadily to 100.
+    # At the end, close is well below SMA200 (which lags at ~150).
+    # Add sharp drop at the end to push below lower_bb and RSI oversold.
+    n = 220
+    # Steady decline to 110
+    base = list(np.linspace(200.0, 110.0, 210))
+    # Sharp 10-bar drop to get close below lower_bb and RSI oversold
+    drop_start = base[-1]
+    drop = [drop_start - i * (drop_start * 0.008) for i in range(1, 11)]
+    closes = base + drop
     bars = _make_bars(closes)
     sig = EquityBollingerReversion("X").generate(bars, bars.index[-1])
-    # SMA200 filter should block buy in a downtrend
-    assert sig.side in {"hold", "sell"}
+    # close is below lower_bb and RSI(2) is oversold, but close << SMA200 → blocked
+    assert sig.side == "hold"
 
 
 # ---- exit logic -------------------------------------------------------------
@@ -80,6 +90,28 @@ def test_sell_when_rsi2_overbought():
     strat._in_position = True
     sig = strat.generate(bars, bars.index[-1])
     assert sig.side == "sell"
+
+
+def test_sell_when_price_recovers_to_mid_band():
+    """Exit triggered when close recovers above mid Bollinger Band."""
+    # Build a series: uptrend for 210 bars then an alternating oscillation (±0.5/0.3)
+    # for 20 bars around a level above the mid Bollinger Band.
+    # Alternating gains/losses keep RSI(2) near 50 (well below the 85 RSI-exit threshold),
+    # while the slightly rising oscillation keeps close above the mid-band.
+    base = list(100.0 + np.arange(210) * 0.3)
+    osc_start = base[-1]
+    osc = []
+    v = osc_start
+    for i in range(20):
+        v += 0.5 if i % 2 == 0 else -0.3
+        osc.append(v)
+    bars = _make_bars(base + osc)
+    strat = EquityBollingerReversion("X")
+    strat._in_position = True
+    sig = strat.generate(bars, bars.index[-1])
+    # close above mid-band, RSI(2) ~45 (not overbought) → mid-band exit (strength 0.8)
+    assert sig.side == "sell"
+    assert sig.strength == 0.8
 
 
 # ---- empty data -------------------------------------------------------------
