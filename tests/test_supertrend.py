@@ -69,7 +69,7 @@ def test_hold_in_uptrend_when_adx_below_threshold():
     bars = _make_bars(closes)
     sig = SuperTrend("X", adx_threshold=20.0).generate(bars, bars.index[-1])
     # Low ADX regime: must not generate buy
-    assert sig.side in {"hold", "sell"}
+    assert sig.side == "hold"
 
 
 # ---- downtrend --------------------------------------------------------------
