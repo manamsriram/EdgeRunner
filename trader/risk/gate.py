@@ -146,20 +146,21 @@ class RiskGate:
 
         # 3. Daily-loss circuit breaker (None = unprovable = reject when check is required).
         #    CCXT brokers set require_daily_pnl_check=False because they have no last_equity.
-        if limits.require_daily_pnl_check:
-            if state.daily_pnl_pct is None:
-                return RiskDecision.reject("daily P&L unknown")
-            if state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
-                return RiskDecision.reject(
-                    f"daily loss {state.daily_pnl_pct:.2%} hit limit "
-                    f"-{limits.daily_loss_limit_pct:.2%}"
-                )
+        # DISABLED: daily loss halt — too blunt; stops unrelated trades after position crashes.
+        # if limits.require_daily_pnl_check:
+        #     if state.daily_pnl_pct is None:
+        #         return RiskDecision.reject("daily P&L unknown")
+        #     if state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
+        #         return RiskDecision.reject(
+        #             f"daily loss {state.daily_pnl_pct:.2%} hit limit "
+        #             f"-{limits.daily_loss_limit_pct:.2%}"
+        #         )
 
-        # 4. Churn circuit breaker.
-        if state.trades_today >= limits.max_trades_per_day:
-            return RiskDecision.reject(
-                f"max trades/day reached ({state.trades_today}/{limits.max_trades_per_day})"
-            )
+        # DISABLED: max trades/day cap — monitoring uncapped performance.
+        # if state.trades_today >= limits.max_trades_per_day:
+        #     return RiskDecision.reject(
+        #         f"max trades/day reached ({state.trades_today}/{limits.max_trades_per_day})"
+        #     )
 
         # 4b. PDT guard — US equity FINRA rule only; does not apply to crypto.
         #     trades_today counts individual fills; a day-trade is a buy+sell pair, so

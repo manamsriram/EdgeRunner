@@ -86,22 +86,22 @@ def run_pipeline(
         state.equity, state.trades_today, config.autonomy,
     )
 
-    # Alert at most once per calendar day if the daily-loss breaker is live.
-    _today = asof.date()
-    if (
-        state.daily_pnl_pct is not None
-        and state.daily_pnl_pct <= -config.risk.daily_loss_limit_pct
-        and getattr(run_pipeline, "_loss_alert_date", None) != _today
-    ):
-        send_alert(
-            f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
-            f"(limit {-config.risk.daily_loss_limit_pct:.2%})",
-            config.slack_webhook_url,
-            alert_email=config.alert_email,
-            smtp_user=config.smtp_user,
-            smtp_password=config.smtp_password,
-        )
-        run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
+    # DISABLED: daily-loss breaker alert — breaker itself disabled for performance monitoring.
+    # _today = asof.date()
+    # if (
+    #     state.daily_pnl_pct is not None
+    #     and state.daily_pnl_pct <= -config.risk.daily_loss_limit_pct
+    #     and getattr(run_pipeline, "_loss_alert_date", None) != _today
+    # ):
+    #     send_alert(
+    #         f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
+    #         f"(limit {-config.risk.daily_loss_limit_pct:.2%})",
+    #         config.slack_webhook_url,
+    #         alert_email=config.alert_email,
+    #         smtp_user=config.smtp_user,
+    #         smtp_password=config.smtp_password,
+    #     )
+    #     run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
 
     # Pre-fetch bars for all equity symbols in one batch call.
     # Crypto symbols are excluded — they use a separate data path.

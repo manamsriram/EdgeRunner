@@ -305,12 +305,7 @@ def test_auto_mode_fires_fill_alert(tmp_path, monkeypatch):
 
 
 def test_pipeline_working_state_updated_between_symbols(tmp_path):
-    """Regression: two buy signals in one tick with max_trades_per_day=1.
-
-    The second symbol must be blocked after the first is executed, proving the
-    pipeline updates working state (trades_today) between symbols rather than
-    sharing the same pre-trade snapshot for both.
-    """
+    """Both buy signals execute now that max_trades_per_day cap is disabled."""
     cfg = Config(
         alpaca_api_key="k",
         alpaca_secret_key="s",
@@ -334,8 +329,7 @@ def test_pipeline_working_state_updated_between_symbols(tmp_path):
 
     assert len(results) == 2
     outcomes = {r.symbol: r.outcome for r in results}
-    # Exactly one executed, the other blocked by the updated trades_today counter.
     assert outcomes["AAPL"] == "executed"
-    assert outcomes["MSFT"] == "blocked"
-    assert len(broker._client.submitted) == 1
-    assert len(repo.get_orders()) == 1
+    assert outcomes["MSFT"] == "executed"
+    assert len(broker._client.submitted) == 2
+    assert len(repo.get_orders()) == 2
