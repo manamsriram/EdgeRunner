@@ -188,18 +188,24 @@ def start_crypto_scheduler(
 
 
 def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build 2-strategy stack (MACrossover + SmashDayB) per equity symbol.
+    """Build 4-strategy stack per equity symbol.
 
-    Backtest (2-year OOS) showed GapPatternA degraded Sharpe and dragged average
-    return from 22.4% to 18.2% when combined with MA+Smash. MA+Smash alone achieves
-    Sharpe 0.48 vs 0.40 for the 3-strategy combo.
+    SuperTrend (ATR-adaptive trend, ADX-filtered) replaces MACrossover.
+    EquityBollingerReversion adds a mean-reversion signal anti-correlated with trend
+    strategies. DonchianBreakout captures channel breakouts without the one-day
+    entry delay that degraded GapPatternA.
     """
-    from trader.strategy.ma_crossover import MACrossover
+    from trader.strategy.supertrend import SuperTrend
     from trader.strategy.smash_day import SmashDayB
+    from trader.strategy.equity_reversion import EquityBollingerReversion
+    from trader.strategy.donchian_breakout import DonchianBreakout
+
     strategies: list[Strategy] = []
     for sym in symbols:
-        strategies.append(MACrossover(symbol=sym))
+        strategies.append(SuperTrend(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
+        strategies.append(EquityBollingerReversion(symbol=sym))
+        strategies.append(DonchianBreakout(symbol=sym))
     return strategies
 
 
