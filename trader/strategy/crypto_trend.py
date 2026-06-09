@@ -14,15 +14,17 @@ from trader.strategy.indicators import ema
 
 
 class CryptoEMACrossover(Strategy):
-    def __init__(self, symbol: str, fast: int = 12, slow: int = 26) -> None:
+    def __init__(self, symbol: str, fast: int = 12, slow: int = 26, adx_threshold: float = 20.0) -> None:
         super().__init__(symbol)
         if fast >= slow:
             raise ValueError("fast window must be shorter than slow window")
         self.fast = fast
         self.slow = slow
+        self.adx_threshold = adx_threshold
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
-        # Handle empty data
+        from trader.strategy.indicators import adx as compute_adx
+
         if bars.empty:
             return Signal(self.symbol, "hold", 0.0, "no bar data")
 
@@ -39,9 +41,15 @@ class CryptoEMACrossover(Strategy):
         strength = float(min(abs(spread) * 10.0, 1.0))
 
         if fast_val > slow_val:
+            adx_val = float(compute_adx(bars["high"], bars["low"], close).iloc[-1])
+            if pd.isna(adx_val) or adx_val < self.adx_threshold:
+                return Signal(
+                    self.symbol, "hold", 0.0,
+                    f"EMA bullish but ADX {adx_val:.1f} < {self.adx_threshold} — choppy",
+                )
             return Signal(
                 self.symbol, "buy", strength,
-                f"EMA{self.fast} {fast_val:.2f} > EMA{self.slow} {slow_val:.2f}",
+                f"EMA{self.fast} {fast_val:.2f} > EMA{self.slow} {slow_val:.2f}, ADX {adx_val:.1f}",
             )
         if fast_val < slow_val:
             return Signal(
