@@ -43,9 +43,10 @@ class CryptoEMACrossover(Strategy):
         if fast_val > slow_val:
             adx_val = float(compute_adx(bars["high"], bars["low"], close).iloc[-1])
             if pd.isna(adx_val) or adx_val < self.adx_threshold:
+                adx_str = "not yet defined" if pd.isna(adx_val) else f"{adx_val:.1f}"
                 return Signal(
                     self.symbol, "hold", 0.0,
-                    f"EMA bullish but ADX {adx_val:.1f} < {self.adx_threshold} — choppy",
+                    f"EMA bullish but ADX {adx_str} < {self.adx_threshold} — choppy",
                 )
             return Signal(
                 self.symbol, "buy", strength,

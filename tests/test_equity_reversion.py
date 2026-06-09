@@ -121,3 +121,11 @@ def test_empty_bars_returns_hold():
     bars.index = pd.DatetimeIndex([])
     sig = EquityBollingerReversion("X").generate(bars, pd.Timestamp("2023-01-02"))
     assert sig.side == "hold"
+
+
+def test_reset_state_clears_in_position():
+    bars = _long_uptrend_then_dip(n=220)
+    strat = EquityBollingerReversion("X")
+    strat._in_position = True
+    strat.reset_state()
+    assert strat._in_position is False
