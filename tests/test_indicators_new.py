@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from trader.strategy.indicators import adx, supertrend
 
@@ -30,8 +29,8 @@ def test_adx_returns_series_same_length():
 def test_adx_nan_before_warmup():
     high, low, close = _trending_bars(n=100)
     result = adx(high, low, close, window=14)
-    # First 13 bars cannot have a valid ADX (need window bars for Wilder EMA, then another window for DX smoothing)
-    assert result.iloc[:13].isna().all()
+    # First 26 bars are NaN (warmup period: ~2*window - 2)
+    assert result.iloc[:26].isna().all()
 
 
 def test_adx_values_in_range():
@@ -60,7 +59,16 @@ def test_adx_low_on_choppy_market():
     high = close + 0.3
     low = close - 0.3
     result = adx(high, low, close, window=14)
-    assert result.dropna().iloc[-1] < 30.0
+    assert result.dropna().iloc[-1] < 25.0
+
+
+def test_adx_no_lookahead():
+    """Verify ADX has no lookahead: truncating input doesn't change past values."""
+    high, low, close = _trending_bars(n=100)
+    asof = close.index[59]
+    full = adx(high, low, close, window=14)
+    trunc = adx(high.loc[:asof], low.loc[:asof], close.loc[:asof], window=14)
+    pd.testing.assert_series_equal(full.loc[:asof], trunc)
 
 
 # ---- supertrend ------------------------------------------------------------
@@ -102,3 +110,13 @@ def test_supertrend_line_below_close_in_uptrend():
     last_idx = last_valid.index[-1]
     if last_dir.loc[last_idx] == 1.0:
         assert float(last_valid.iloc[-1]) < float(close.loc[last_idx])
+
+
+def test_supertrend_no_lookahead():
+    """Verify SuperTrend has no lookahead: truncating input doesn't change past values."""
+    high, low, close = _trending_bars(n=100)
+    asof = close.index[59]
+    st_full, dir_full = supertrend(high, low, close)
+    st_trunc, dir_trunc = supertrend(high.loc[:asof], low.loc[:asof], close.loc[:asof])
+    pd.testing.assert_series_equal(st_full.loc[:asof], st_trunc)
+    pd.testing.assert_series_equal(dir_full.loc[:asof], dir_trunc)
