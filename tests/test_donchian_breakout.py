@@ -77,6 +77,15 @@ def test_no_buy_when_no_breakout():
     assert sig.side == "hold"
 
 
+def test_no_buy_on_continuous_uptrend_without_flat_top():
+    """Guard rejects entry if prior bar was already above the channel high (continuation, not fresh breakout)."""
+    n = 70
+    closes = list(np.linspace(100.0, 110.0, n - 1)) + [113.0]
+    bars = _make_bars(closes)
+    sig = DonchianBreakout("X", channel_n=20, trend_n=20).generate(bars, bars.index[-1])
+    assert sig.side == "hold"
+
+
 # ---- exit -------------------------------------------------------------------
 
 def test_time_exit_after_hold_limit():

@@ -105,9 +105,9 @@ class DonchianBreakout(Strategy):
         if pd.isna(prior_high):
             return Signal(self.symbol, "hold", 0.0, "Donchian channel not yet defined")
 
-        # Fresh-breakout check: the prior bar must NOT already have been above the
-        # channel ceiling. This prevents firing on every bar of a continuous uptrend
-        # — only the first bar that escapes the channel is a true Donchian breakout.
+        # Fresh-breakout check: only enter on the bar that *first* escapes the channel.
+        # Prevents repeated buy signals on every bar of a continuous uptrend already above the high.
+        # The prior bar must NOT already have been above the channel ceiling.
         prev_close = float(close.iloc[-2])
         prior_prior_high = float(rolling_high(close.iloc[:-2], self.channel_n).iloc[-1])
         fresh_breakout = pd.isna(prior_prior_high) or (prev_close <= prior_prior_high)
