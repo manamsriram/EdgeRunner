@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 import pandas as pd
 
@@ -21,6 +22,20 @@ except ImportError:
     anthropic = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+# ---- In-process overlay cache ----
+
+# (symbol, side) -> (monotonic_timestamp, Signal)
+_OVERLAY_CACHE: dict[tuple[str, str], tuple[float, Signal]] = {}
+_OVERLAY_TTL = 300.0  # 5 minutes — matches Anthropic cache TTL and news freshness window
+
+
+def _clear_overlay_cache() -> None:
+    """Test helper — clears the in-process overlay cache."""
+    _OVERLAY_CACHE.clear()
+
+
+# ---- System prompts ----
 
 _EQUITY_SYSTEM_PROMPT = """\
 You are a senior quantitative equity analyst at a systematic trading fund. You review
@@ -131,6 +146,14 @@ def apply_claude_overlay(
 ) -> Signal:
     """Call Claude to review a quant signal. Returns original signal on any failure."""
     try:
+        cache_key = (signal.symbol, signal.side)
+        now = time.monotonic()
+        if cache_key in _OVERLAY_CACHE:
+            ts, cached = _OVERLAY_CACHE[cache_key]
+            if now - ts < _OVERLAY_TTL:
+                logger.debug("overlay cache hit symbol=%s side=%s age=%.0fs", signal.symbol, signal.side, now - ts)
+                return cached
+
         if anthropic is None:
             raise RuntimeError("anthropic package not installed; add anthropic>=0.40.0 to requirements")
 
@@ -169,6 +192,15 @@ def apply_claude_overlay(
             messages=[{"role": "user", "content": user_message}],
         )
 
+        usage = response.usage
+        logger.debug(
+            "overlay cache usage symbol=%s cache_read=%d cache_write=%d uncached=%d",
+            signal.symbol,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            usage.input_tokens,
+        )
+
         raw = response.content[0].text
         parsed = _parse_response(raw)
         logger.info(
@@ -186,19 +218,22 @@ def apply_claude_overlay(
             raise ValueError(f"strength out of range: {strength!r}")
 
         if action == "veto":
-            return Signal(
+            result = Signal(
                 symbol=signal.symbol,
                 side="hold",
                 strength=0.0,
                 reason=f"[overlay veto] {rationale}",
             )
+        else:
+            result = Signal(
+                symbol=signal.symbol,
+                side=signal.side,
+                strength=float(strength),
+                reason=f"[overlay approved] {rationale}",
+            )
 
-        return Signal(
-            symbol=signal.symbol,
-            side=signal.side,
-            strength=float(strength),
-            reason=f"[overlay approved] {rationale}",
-        )
+        _OVERLAY_CACHE[cache_key] = (now, result)
+        return result
 
     except Exception as exc:  # noqa: BLE001
         logger.warning("claude overlay failed for %s, passing through: %s", signal.symbol, exc)

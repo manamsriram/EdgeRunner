@@ -175,6 +175,15 @@ def check_fundamental_gate(
             messages=[{"role": "user", "content": user_message}],
         )
 
+        usage = response.usage
+        logger.debug(
+            "fundamental gate cache usage symbol=%s cache_read=%d cache_write=%d uncached=%d",
+            symbol,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            usage.input_tokens,
+        )
+
         raw = response.content[0].text
         parsed = _parse_response(raw)
         action = parsed["action"]

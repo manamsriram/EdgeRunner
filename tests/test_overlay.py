@@ -17,6 +17,18 @@ from trader.strategy.base import Signal
 
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def clear_overlay_cache():
+    from trader.overlay.claude_overlay import _clear_overlay_cache
+    _clear_overlay_cache()
+    yield
+    _clear_overlay_cache()
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
