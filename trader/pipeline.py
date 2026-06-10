@@ -403,6 +403,7 @@ def _execute_signal(
             client_order_id=client_order_id,
             notional=risk_decision.approved_notional if signal.side == "buy" else None,
             qty=qty if signal.side == "sell" else None,
+            ref_price=ref_price,
         )
         broker_order_id = str(getattr(order, "id", "") or "")
         repo.record_order(OrderRow(
@@ -600,11 +601,13 @@ def _run_pair(
             symbol=sym_a, side=pair_signal.side_a, client_order_id=oid_a,
             notional=decision_a.approved_notional if pair_signal.side_a == "buy" else None,
             qty=qty_a,
+            ref_price=price_a,
         )
         order_b = broker.submit(
             symbol=sym_b, side=pair_signal.side_b, client_order_id=oid_b,
             notional=decision_b.approved_notional if pair_signal.side_b == "buy" else None,
             qty=qty_b,
+            ref_price=price_b,
         )
 
         for oid, sym, side, decision in (

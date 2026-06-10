@@ -243,12 +243,18 @@ class AlpacaBroker:
         client_order_id: str,
         notional: float | None = None,
         qty: float | None = None,
+        ref_price: float | None = None,
     ) -> Any:
         """Place a market order, exactly one of `notional` (dollars) or `qty` (shares).
 
         Buys use notional (Alpaca's fractional path). Sells/exits use `qty` — Alpaca
         restricts *notional* sells, and a long/flat exit closes the held quantity. Idem-
         potent: a duplicate `client_order_id` is swallowed and the existing order returned.
+
+        Non-fractionable assets reject notional orders (Alpaca code 40310000). When
+        `ref_price` is supplied, such a rejection retries once as a whole-share qty
+        order (floor(notional / ref_price)), reusing the same client_order_id. If even
+        one share exceeds the notional, the original rejection propagates.
         """
         if side not in {"buy", "sell"}:
             raise ValueError(f"invalid side: {side!r}")
@@ -259,6 +265,30 @@ class AlpacaBroker:
             symbol=symbol, side=side, client_order_id=client_order_id,
             notional=notional, qty=qty,
         )
+        try:
+            return self._submit_idempotent(client, request, client_order_id)
+        except Exception as exc:  # noqa: BLE001 - inspect for the non-fractionable case only
+            whole_qty = (
+                float(int(notional // ref_price))
+                if notional is not None and ref_price is not None and ref_price > 0
+                else 0.0
+            )
+            if not (_is_not_fractionable(exc) and whole_qty >= 1.0):
+                raise
+            logger.info(
+                "asset %s not fractionable; retrying %s as %d whole shares",
+                symbol, client_order_id, int(whole_qty),
+            )
+            request = self._request_builder(
+                symbol=symbol, side=side, client_order_id=client_order_id,
+                notional=None, qty=whole_qty,
+            )
+            return self._submit_idempotent(client, request, client_order_id)
+
+    def _submit_idempotent(
+        self, client: _TradingClient, request: Any, client_order_id: str
+    ) -> Any:
+        """Submit, treating a duplicate client_order_id as success (return existing)."""
         try:
             return client.submit_order(order_data=request)
         except Exception as exc:  # noqa: BLE001 - inspect for the duplicate case only
@@ -277,10 +307,19 @@ def _is_filled(order: Any) -> bool:
 
 
 def _is_duplicate_order(exc: Exception) -> bool:
-    """Return True only when Alpaca signals a reused client_order_id (HTTP 422 with
-    an explicit duplicate-id message). Unrelated 422 validation errors are not caught."""
+    """Return True only when Alpaca signals a reused client_order_id. Production
+    Alpaca phrases this 'client_order_id must be unique' (code 40010001); older
+    phrasings use 'exists'/'duplicate'. Unrelated validation errors are not caught."""
     text = str(exc).lower()
-    return "client_order_id" in text and ("exist" in text or "duplicate" in text)
+    return "client_order_id" in text and (
+        "exist" in text or "duplicate" in text or "unique" in text
+    )
+
+
+def _is_not_fractionable(exc: Exception) -> bool:
+    """True when Alpaca rejected a notional order on a non-fractionable asset
+    (code 40310000, message 'asset "X" is not fractionable')."""
+    return "not fractionable" in str(exc).lower()
 
 
 def _build_market_order_request(

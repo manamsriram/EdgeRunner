@@ -166,6 +166,83 @@ def test_non_duplicate_422_is_not_swallowed():
         )
 
 
+def test_duplicate_detected_with_alpaca_must_be_unique_message():
+    """Production Alpaca rejects duplicate ids with 'client_order_id must be unique'
+    (code 40010001). That phrasing must route to the idempotent path, not propagate."""
+    class ProdDuplicateClient(FakeClient):
+        def submit_order(self, order_data):
+            if order_data["client_order_id"] in self._by_coid:
+                raise Exception(
+                    '{"code":40010001,"message":"client_order_id must be unique"}'
+                )
+            return super().submit_order(order_data)
+
+    client = ProdDuplicateClient()
+    broker = _broker(client)
+    first = broker.submit(symbol="SMCI", side="buy", notional=1000.0, client_order_id="dup2")
+    second = broker.submit(symbol="SMCI", side="buy", notional=1000.0, client_order_id="dup2")
+    assert len(client.submitted) == 1
+    assert first.client_order_id == second.client_order_id
+
+
+# ---- non-fractionable fallback ----
+
+class FakeNotFractionableClient(FakeClient):
+    """Rejects notional orders the way Alpaca does for non-fractionable assets."""
+
+    def submit_order(self, order_data):
+        if order_data["notional"] is not None:
+            raise Exception(
+                '{"code":40310000,"message":"asset \\"MSTU\\" is not fractionable"}'
+            )
+        return super().submit_order(order_data)
+
+
+def test_notional_buy_falls_back_to_whole_share_qty_when_not_fractionable():
+    client = FakeNotFractionableClient()
+    order = _broker(client).submit(
+        symbol="MSTU", side="buy", notional=1174.13, ref_price=11.50,
+        client_order_id="frac1",
+    )
+    assert len(client.submitted) == 1
+    assert order.notional is None
+    assert order.qty == 102.0          # floor(1174.13 / 11.50)
+    assert order.client_order_id == "frac1"
+
+
+def test_not_fractionable_fallback_is_idempotent():
+    client = FakeNotFractionableClient()
+    broker = _broker(client)
+    first = broker.submit(
+        symbol="MSTU", side="buy", notional=1174.13, ref_price=11.50,
+        client_order_id="frac4",
+    )
+    second = broker.submit(
+        symbol="MSTU", side="buy", notional=1174.13, ref_price=11.50,
+        client_order_id="frac4",
+    )
+    assert len(client.submitted) == 1
+    assert first.client_order_id == second.client_order_id
+
+
+def test_not_fractionable_reraises_when_one_share_unaffordable():
+    client = FakeNotFractionableClient()
+    with pytest.raises(Exception, match="not fractionable"):
+        _broker(client).submit(
+            symbol="MSTU", side="buy", notional=50.0, ref_price=100.0,
+            client_order_id="frac2",
+        )
+    assert client.submitted == []
+
+
+def test_not_fractionable_reraises_without_ref_price():
+    client = FakeNotFractionableClient()
+    with pytest.raises(Exception, match="not fractionable"):
+        _broker(client).submit(
+            symbol="MSTU", side="buy", notional=1000.0, client_order_id="frac3"
+        )
+
+
 def test_submit_rejects_bad_side():
     with pytest.raises(ValueError):
         _broker(FakeClient()).submit(
