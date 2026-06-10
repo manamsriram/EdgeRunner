@@ -31,6 +31,13 @@ INITIAL_CAPITAL = 100_000.0
 DEFAULT_STOP_LOSS = 0.08  # mirrors RiskLimits.stop_loss_pct in the live pipeline
 
 _STOP_LOSS: float | None = DEFAULT_STOP_LOSS  # set from --stop-loss in main()
+_EXEMPT: set[str] = set()                     # strategy keys exempt from the stop (--exempt)
+
+
+def _stop_for(key: str) -> float | None:
+    """Per-strategy stop: exempted keys run without a stop-loss. Only applicable
+    to singles and sleeves; a composite shares one book and uses the global stop."""
+    return None if key in _EXEMPT else _STOP_LOSS
 
 
 class CompositeStrategy:
@@ -87,14 +94,14 @@ COMBOS: list[tuple[str, list[str]]] = [
 ]
 
 
-def _backtest(strategy, bars: pd.DataFrame):
+def _backtest(strategy, bars: pd.DataFrame, stop_loss_pct: float | None):
     from trader.backtest.costs import CostModel
     from trader.backtest.engine import run_backtest
 
     return run_backtest(
         bars, strategy,
         cost_model=CostModel(slippage_bps=EQUITY_SLIPPAGE_BPS),
-        stop_loss_pct=_STOP_LOSS,
+        stop_loss_pct=stop_loss_pct,
     )
 
 
@@ -102,8 +109,10 @@ def _run_composite(sym: str, keys: list[str], bars: pd.DataFrame, make: dict):
     from trader.backtest.metrics import compute_metrics
 
     members = [make[k](sym) for k in keys]
-    strategy = members[0] if len(members) == 1 else CompositeStrategy(sym, members)
-    result = _backtest(strategy, bars)
+    if len(members) == 1:
+        result = _backtest(members[0], bars, _stop_for(keys[0]))
+    else:
+        result = _backtest(CompositeStrategy(sym, members), bars, _STOP_LOSS)
     return compute_metrics(result.equity_curve, result.trades), len(result.trades)
 
 
@@ -115,7 +124,7 @@ def _run_sleeves(sym: str, keys: list[str], bars: pd.DataFrame, make: dict):
     curves = []
     trades: list = []
     for k in keys:
-        result = _backtest(make[k](sym), bars)
+        result = _backtest(make[k](sym), bars, _stop_for(k))
         if result.equity_curve.empty:
             return None
         curves.append(result.equity_curve / result.equity_curve.iloc[0])
@@ -149,10 +158,15 @@ def main() -> int:
         "--stop-loss", type=float, default=DEFAULT_STOP_LOSS,
         help="stop-loss fraction matching the live pipeline (0 disables)",
     )
+    parser.add_argument(
+        "--exempt", default="",
+        help="comma-separated strategy keys exempt from the stop (e.g. DI or DI,ST)",
+    )
     args = parser.parse_args()
 
-    global _STOP_LOSS
+    global _STOP_LOSS, _EXEMPT
     _STOP_LOSS = args.stop_loss if args.stop_loss > 0 else None
+    _EXEMPT = {k.strip().upper() for k in args.exempt.split(",") if k.strip()}
 
     end = datetime.strptime(args.end, "%Y-%m-%d") if args.end else datetime.utcnow()
     start = (
@@ -173,6 +187,8 @@ def main() -> int:
     make = _factories()
 
     _sl = f"{_STOP_LOSS:.0%}" if _STOP_LOSS else "off"
+    if _EXEMPT:
+        _sl += f" (exempt: {', '.join(sorted(_EXEMPT))})"
     print(f"\nCombo Backtest  |  {start.date()} → {end.date()}")
     print(f"Symbols: {', '.join(symbols)}  |  Slippage: {EQUITY_SLIPPAGE_BPS}bps  |  Stop-loss: {_sl}")
 
@@ -189,7 +205,7 @@ def main() -> int:
             print(f"  SKIP {sym}: insufficient data")
             continue
 
-        bh = _backtest(make["DI"](sym), bars).buy_hold_curve
+        bh = _backtest(make["DI"](sym), bars, None).buy_hold_curve
         bh_returns.append(compute_metrics(bh, []).total_return)
         print(f"  {sym}: {len(bars)} bars, B&H {bh_returns[-1]:+.1%}")
 
