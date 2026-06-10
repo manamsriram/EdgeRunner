@@ -256,18 +256,28 @@ def _refresh_dynamic_universe(
 
 
 def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build 2-strategy stack (EMA crossover + SmashDayB) per crypto symbol.
+    """Build 3-strategy stack (EMA crossover + SmashDayB + DipRecovery) per crypto symbol.
 
     Backtest (2-year OOS) showed CryptoBollingerReversion and GapPatternA
     both degraded risk-adjusted returns. EMA + SmashDayB achieves Sharpe 0.33
     and beats buy-and-hold by ~32% on average.
+
+    DipRecovery uses crypto-widened parameters (30% dip / 10% expansion vs the
+    10%/5% equity defaults) — crypto drawdowns run far deeper. Standalone it is
+    weak on crypto (dips often never recover to the prior ATH), but in the combo
+    the other strategies' sell signals provide exits, and adding it improved the
+    stack on both the 2yr (12% → 21%, Sharpe 0.15 → 0.22) and 4yr (90% → 132%,
+    Sharpe 0.35 → 0.41) split windows. SuperTrend, HAPullback and
+    EquityBollingerReversion all tested negative on crypto and stay out.
     """
     from trader.strategy.crypto_trend import CryptoEMACrossover
     from trader.strategy.smash_day import SmashDayB
+    from trader.strategy.dip_recovery import DipRecovery
     strategies: list[Strategy] = []
     for sym in symbols:
         strategies.append(CryptoEMACrossover(symbol=sym))
         strategies.append(SmashDayB(symbol=sym, long_only=True))
+        strategies.append(DipRecovery(symbol=sym, dip_pct=0.30, expansion_pct=0.10))
     return strategies
 
 
