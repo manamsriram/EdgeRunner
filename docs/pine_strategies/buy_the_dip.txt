@@ -1,0 +1,50 @@
+//@version=6
+strategy("NQ Drawdown Stack + ATH Expansion Exit", overlay=true, pyramiding=50, initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1, process_orders_on_close=true)
+
+qty = input.int(1, "Contracts Per Entry", minval=1)
+dipStepPct = input.float(10.0, "Dip Step % (X)", minval=1, step=1)
+exitExpansionPct = input.float(5.0, "Exit Above ATH %", minval=0.0, step=1)
+maxLayers = input.int(20, "Max Stack Entries", minval=1, maxval=500)
+
+isDaily = timeframe.isdaily
+step = dipStepPct * 0.01
+expansion = exitExpansionPct * 0.01
+
+var float anchorAth = na
+var int nextLayer = 1
+
+if na(anchorAth)
+    anchorAth := high
+
+if strategy.position_size == 0
+    anchorAth := math.max(anchorAth, high)
+    nextLayer := 1
+
+// Drawdown for entries uses the bar's LOW so any intrabar touch of the next -X% level fires
+drawdownFromAth   = anchorAth > 0 ? (anchorAth - close) / anchorAth : na
+drawdownTouchPct  = anchorAth > 0 ? (anchorAth - low)   / anchorAth : na
+layersReached     = not na(drawdownTouchPct) and step > 0 ? int(math.floor(drawdownTouchPct / step)) : 0
+layersToAdd       = math.max(0, math.min(maxLayers, layersReached) - (nextLayer - 1))
+
+if isDaily and layersToAdd > 0
+    for i = 0 to layersToAdd - 1
+        layerId = nextLayer + i
+        strategy.entry("L" + str.tostring(layerId), strategy.long, qty=qty)
+    nextLayer += layersToAdd
+
+exitPrice = anchorAth * (1.0 + expansion)
+exitAll = isDaily and strategy.position_size > 0 and close >= exitPrice
+if exitAll
+    strategy.close_all("Exit ATH Expansion")
+    anchorAth := high
+    nextLayer := 1
+
+nextBuyPrice = nextLayer <= maxLayers ? anchorAth * (1.0 - step * nextLayer) : na
+
+plot(anchorAth, "Anchor ATH", color=color.new(color.orange, 0), linewidth=2)
+plot(exitPrice, "Exit Price", color=color.new(color.red, 0), linewidth=2)
+plot(nextBuyPrice, "Next Buy Level", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+plot(drawdownFromAth * 100.0, "Drawdown %", color=color.new(color.blue, 0), display=display.data_window)
+
+bgcolor(isDaily ? na : color.new(color.red, 85), title="Use on Daily Timeframe")
+

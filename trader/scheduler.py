@@ -188,17 +188,20 @@ def start_crypto_scheduler(
 
 
 def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build 4-strategy stack per equity symbol.
+    """Build 5-strategy stack per equity symbol.
 
     SuperTrend (ATR-adaptive trend, ADX-filtered) replaces MACrossover.
     EquityBollingerReversion adds a mean-reversion signal anti-correlated with trend
     strategies. DonchianBreakout captures channel breakouts without the one-day
-    entry delay that degraded GapPatternA.
+    entry delay that degraded GapPatternA. DipRecovery buys >=10% drawdowns from
+    the all-time high and exits 5% above it — backtests (2yr and 4yr, split-adjusted)
+    showed the best Sharpe of any strategy and improved the combo on both windows.
     """
     from trader.strategy.supertrend import SuperTrend
     from trader.strategy.smash_day import SmashDayB
     from trader.strategy.equity_reversion import EquityBollingerReversion
     from trader.strategy.donchian_breakout import DonchianBreakout
+    from trader.strategy.dip_recovery import DipRecovery
 
     strategies: list[Strategy] = []
     for sym in symbols:
@@ -206,6 +209,7 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
         strategies.append(SmashDayB(symbol=sym, long_only=True))
         strategies.append(EquityBollingerReversion(symbol=sym))
         strategies.append(DonchianBreakout(symbol=sym))
+        strategies.append(DipRecovery(symbol=sym))
     return strategies
 
 

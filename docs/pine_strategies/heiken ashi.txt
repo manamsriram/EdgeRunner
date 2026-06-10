@@ -1,0 +1,199 @@
+//@version=6
+strategy("SMA Crossover + HA Pullback Strategy V2", overlay=true,
+     default_qty_type=strategy.fixed, default_qty_value=1,
+     margin_long=0, margin_short=0,
+     pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true,
+     fill_orders_on_standard_ohlc=true)
+
+// ─────────────────────────────────────────────────────────────────────
+// FORCE REAL OHLC (works correctly even on Heikin Ashi / Renko charts)
+// All entries, SL, TP, SMAs and ATR are computed from the STANDARD
+// candles of the same symbol, so trades execute at real market prices.
+// ─────────────────────────────────────────────────────────────────────
+stdSym = ticker.standard(syminfo.tickerid)
+[rOpen, rHigh, rLow, rClose] = request.security(stdSym, timeframe.period,
+     [open, high, low, close], barmerge.gaps_off, barmerge.lookahead_off)
+
+// ─────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────
+grpMA  = "Moving Averages"
+sma1Len = input.int(15, "Fast SMA Length", minval=1, group=grpMA)
+sma2Len = input.int(50, "Slow SMA Length", minval=1, group=grpMA)
+
+grpSig = "Signal Settings"
+crossLookback = input.int(20, "Bars to Remember Cross", minval=1, maxval=500, group=grpSig,
+     tooltip="How many bars after the SMA cross we remain looking for a pullback + HA signal")
+requirePullback = input.bool(true, "Require Pullback to Fast SMA Before Entry", group=grpSig,
+     tooltip="Price must touch/cross fast SMA after the crossover to count as a pullback")
+
+grpQty = "Position Sizing"
+qty = input.int(1, "Contracts / Units", minval=1, group=grpQty)
+
+grpSL  = "Stop Loss"
+slMode = input.string("ATR", "Stop Loss Mode", options=["ATR", "Below/Above SMA Fast", "Below/Above SMA Slow", "Signal Candle"], group=grpSL)
+atrLen = input.int(14, "ATR Length", minval=1, group=grpSL)
+atrMult= input.float(1.5, "ATR Multiplier (SL)", minval=0.1, step=0.1, group=grpSL)
+slBuf  = input.float(0.0, "Extra SL Buffer (price units)", minval=0.0, step=0.1, group=grpSL,
+     tooltip="Optional extra buffer below low / above high for SMA & candle modes")
+
+grpTP  = "Take Profit"
+tpMode = input.string("RR", "Take Profit Mode", options=["RR", "ATR"], group=grpTP)
+rrRatio= input.float(2.0, "Risk:Reward Ratio", minval=0.1, step=0.1, group=grpTP)
+atrTpMult = input.float(2.5, "ATR Multiplier (TP)", minval=0.1, step=0.1, group=grpTP)
+
+// ─────────────────────────────────────────────────────────────────────
+// INDICATORS (computed on REAL OHLC)
+// ─────────────────────────────────────────────────────────────────────
+smaFast = ta.sma(rClose, sma1Len)
+smaSlow = ta.sma(rClose, sma2Len)
+
+// Manual ATR on real OHLC
+trueRange = math.max(rHigh - rLow, math.max(math.abs(rHigh - rClose[1]), math.abs(rLow - rClose[1])))
+atrVal    = ta.rma(trueRange, atrLen)
+
+// ─────────────────────────────────────────────────────────────────────
+// HEIKIN ASHI (manually calculated from REAL OHLC – always correct
+// whether the user is viewing a normal or HA chart)
+// ─────────────────────────────────────────────────────────────────────
+ha_close = (rOpen + rHigh + rLow + rClose) / 4
+var float ha_open = na
+ha_open := na(ha_open[1]) ? (rOpen + rClose) / 2 : (ha_open[1] + ha_close[1]) / 2
+ha_high  = math.max(rHigh, math.max(ha_open, ha_close))
+ha_low   = math.min(rLow,  math.min(ha_open, ha_close))
+
+ha_bull = ha_close > ha_open
+ha_bear = ha_close < ha_open
+
+// ─────────────────────────────────────────────────────────────────────
+// SMA CROSS DETECTION + STATE TRACKING
+// ─────────────────────────────────────────────────────────────────────
+bullCross = ta.crossover(smaFast, smaSlow)
+bearCross = ta.crossunder(smaFast, smaSlow)
+
+var int  barsSinceBullCross = na
+var int  barsSinceBearCross = na
+var bool bullPullbackDone   = false
+var bool bearPullbackDone   = false
+
+if bullCross
+    barsSinceBullCross := 0
+    bullPullbackDone   := false
+    barsSinceBearCross := na
+    bearPullbackDone   := false
+else if not na(barsSinceBullCross)
+    barsSinceBullCross := barsSinceBullCross + 1
+
+if bearCross
+    barsSinceBearCross := 0
+    bearPullbackDone   := false
+    barsSinceBullCross := na
+    bullPullbackDone   := false
+else if not na(barsSinceBearCross)
+    barsSinceBearCross := barsSinceBearCross + 1
+
+// Pullback detection: REAL price tags the fast SMA after the cross
+if not na(barsSinceBullCross) and barsSinceBullCross > 0 and rLow <= smaFast
+    bullPullbackDone := true
+
+if not na(barsSinceBearCross) and barsSinceBearCross > 0 and rHigh >= smaFast
+    bearPullbackDone := true
+
+bullWindow = not na(barsSinceBullCross) and barsSinceBullCross <= crossLookback
+bearWindow = not na(barsSinceBearCross) and barsSinceBearCross <= crossLookback
+
+// ─────────────────────────────────────────────────────────────────────
+// ENTRY CONDITIONS
+// Trigger = HEIKIN ASHI close above/below the fast SMA (signal logic)
+// Execution = at REAL OHLC close (price filling, set above)
+// Slow SMA still filters trend direction using REAL price
+// ─────────────────────────────────────────────────────────────────────
+haAboveFast = ha_close > smaFast       // HA closed above fast SMA  -> long trigger
+haBelowFast = ha_close < smaFast       // HA closed below fast SMA  -> short trigger
+
+trendUp   = rClose > smaSlow           // higher-TF trend filter on real price
+trendDown = rClose < smaSlow
+
+longSignal  = bullWindow and trendUp   and haAboveFast and ha_bull and (not requirePullback or bullPullbackDone) and strategy.position_size == 0
+shortSignal = bearWindow and trendDown and haBelowFast and ha_bear and (not requirePullback or bearPullbackDone) and strategy.position_size == 0
+
+// ─────────────────────────────────────────────────────────────────────
+// SL / TP CALCULATION (all based on REAL OHLC)
+// ─────────────────────────────────────────────────────────────────────
+f_longSL(price) =>
+    sl = switch slMode
+        "ATR"                  => price - atrVal * atrMult
+        "Below/Above SMA Fast" => smaFast - slBuf
+        "Below/Above SMA Slow" => smaSlow - slBuf
+        "Signal Candle"        => rLow - slBuf
+        =>                        price - atrVal * atrMult
+    sl
+
+f_shortSL(price) =>
+    sl = switch slMode
+        "ATR"                  => price + atrVal * atrMult
+        "Below/Above SMA Fast" => smaFast + slBuf
+        "Below/Above SMA Slow" => smaSlow + slBuf
+        "Signal Candle"        => rHigh + slBuf
+        =>                        price + atrVal * atrMult
+    sl
+
+f_longTP(price, sl) =>
+    risk = price - sl
+    tp = tpMode == "RR" ? price + risk * rrRatio : price + atrVal * atrTpMult
+    tp
+
+f_shortTP(price, sl) =>
+    risk = sl - price
+    tp = tpMode == "RR" ? price - risk * rrRatio : price - atrVal * atrTpMult
+    tp
+
+var float entryPrice = na
+var float slPrice    = na
+var float tpPrice    = na
+
+// ─────────────────────────────────────────────────────────────────────
+// ORDER EXECUTION  (entry price = real close)
+// ─────────────────────────────────────────────────────────────────────
+if longSignal
+    px = rClose
+    sl = f_longSL(px)
+    sl := sl >= px ? px - atrVal * atrMult : sl
+    tp = f_longTP(px, sl)
+    strategy.entry("Long", strategy.long, qty=qty)
+    strategy.exit("Long Exit", from_entry="Long", stop=sl, limit=tp)
+    entryPrice := px
+    slPrice    := sl
+    tpPrice    := tp
+
+if shortSignal
+    px = rClose
+    sl = f_shortSL(px)
+    sl := sl <= px ? px + atrVal * atrMult : sl
+    tp = f_shortTP(px, sl)
+    strategy.entry("Short", strategy.short, qty=qty)
+    strategy.exit("Short Exit", from_entry="Short", stop=sl, limit=tp)
+    entryPrice := px
+    slPrice    := sl
+    tpPrice    := tp
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryPrice := na
+    slPrice    := na
+    tpPrice    := na
+
+// ─────────────────────────────────────────────────────────────────────
+// PLOTS
+// ─────────────────────────────────────────────────────────────────────
+plot(smaFast, "Fast SMA", color=color.new(color.aqua, 0), linewidth=2)
+plot(smaSlow, "Slow SMA", color=color.new(color.orange, 0), linewidth=2)
+
+plot(strategy.position_size != 0 ? entryPrice : na, "Entry", color=color.new(color.yellow, 0), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size != 0 ? slPrice    : na, "SL",    color=color.new(color.red, 0),    style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size != 0 ? tpPrice    : na, "TP",    color=color.new(color.lime, 0),   style=plot.style_linebr, linewidth=1)
+
+plotshape(longSignal,  title="Long Signal",  location=location.belowbar, color=color.new(color.lime, 0), style=shape.triangleup,   size=size.small)
+plotshape(shortSignal, title="Short Signal", location=location.abovebar, color=color.new(color.red, 0),  style=shape.triangledown, size=size.small)
+
+bgcolor(bullWindow and not bullPullbackDone ? color.new(color.green, 92) : na, title="Awaiting Long Pullback")
+bgcolor(bearWindow and not bearPullbackDone ? color.new(color.red,   92) : na, title="Awaiting Short Pullback")

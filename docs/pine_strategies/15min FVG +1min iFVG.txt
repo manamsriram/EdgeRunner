@@ -1,0 +1,262 @@
+
+//@version=6
+strategy("NY Open FVG + M1 Inversion", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, default_qty_type=strategy.fixed, default_qty_value=1, process_orders_on_close=true)
+
+// INPUTS
+i_bullColor     = input.color(color.new(#00c087, 75), "Bullish FVG Color",  group="M5 FVG Zones")
+i_bearColor     = input.color(color.new(#f23645, 75), "Bearish FVG Color",  group="M5 FVG Zones")
+i_verticalLines = input.int(20,  "Show Past X Sessions (9:30 lines)", minval=1, maxval=100, group="Visuals")
+i_lineColor     = input.color(color.new(#ffcc00, 60), "NY Open Line Color", group="Visuals")
+i_lineWidth     = input.int(2,    "NY Open Line Width", minval=1, maxval=4, group="Visuals")
+i_showLabel     = input.bool(true, "Show 9:30 NY Label",                group="Visuals")
+i_rr            = input.float(0.5, "Take Profit R:R", minval=0.1, step=0.1, group="Trade")
+i_qty           = input.int(1,    "Contracts", minval=1, group="Trade")
+i_maxTrades     = input.int(2,    "Max Trades Per Day (0=unlimited)", minval=0, group="Trade")
+i_useTimeClose  = input.bool(true, "Enable Force Close Time", group="Trade")
+i_closeHr       = input.int(16,   "Force Close Hour (NY)", minval=0, maxval=23, group="Trade")
+i_closeMin      = input.int(45,   "Force Close Minute (NY)", minval=0, maxval=59, group="Trade")
+
+// TIME HELPERS
+nyHour   = hour(time, "America/New_York")
+nyMinute = minute(time, "America/New_York")
+nyTime   = nyHour * 60 + nyMinute
+isNYOpen = nyTime == 570
+
+var int dailyTrades = 0
+if isNYOpen
+    dailyTrades := 0
+
+closeTimeMinutes = i_closeHr * 60 + i_closeMin
+isBeforeClose = not i_useTimeClose or nyTime < closeTimeMinutes
+canTrade = (i_maxTrades == 0 or dailyTrades < i_maxTrades) and isBeforeClose
+
+// NY OPEN 9:30 VERTICAL LINES
+var line[]  histLines  = array.new<line>()
+var label[] histLabels = array.new<label>()
+
+if isNYOpen
+    newLine = line.new(x1=bar_index, y1=low, x2=bar_index, y2=high, color=i_lineColor, width=i_lineWidth, extend=extend.both, style=line.style_solid)
+    array.push(histLines, newLine)
+    if i_showLabel
+        newLbl = label.new(x=bar_index, y=high, text="9:30 NY", style=label.style_label_down, color=i_lineColor, textcolor=color.white, size=size.small)
+        array.push(histLabels, newLbl)
+    while array.size(histLines) > i_verticalLines
+        line.delete(array.shift(histLines))
+    while array.size(histLabels) > i_verticalLines
+        label.delete(array.shift(histLabels))
+
+// HTF FVG ZONE DETECTION
+i_htf = input.timeframe("15", "Higher Timeframe FVG (15m/5m)", group="HTF FVG Zones")
+
+var int    nyOpenBarIndex = na
+var box[]  sessionBoxes  = array.new<box>()
+var bool[] sessionBull   = array.new<bool>()
+var float[] sessionTop   = array.new<float>()
+var float[] sessionBot   = array.new<float>()
+var bool   foundFirstHTF = false
+
+if isNYOpen
+    nyOpenBarIndex := bar_index
+    foundFirstHTF  := false
+    if array.size(sessionBoxes) > 0
+        for i = 0 to array.size(sessionBoxes) - 1
+            b = array.get(sessionBoxes, i)
+            box.set_right(b, bar_index)
+            box.set_extend(b, extend.none)
+    array.clear(sessionBoxes)
+    array.clear(sessionBull)
+    array.clear(sessionTop)
+    array.clear(sessionBot)
+
+// Evaluate FVG exactly in HTF context
+[htf_h0, htf_l0, htf_h2, htf_l2, htf_t] = request.security(syminfo.tickerid, i_htf, [high[1], low[1], high[3], low[3], time[1]], lookahead=barmerge.lookahead_on)
+
+isBullHTF   = htf_l0 > htf_h2
+isBearHTF   = htf_h0 < htf_l2
+htf_newBar  = ta.change(htf_t) != 0
+detectHTF   = not foundFirstHTF and not na(nyOpenBarIndex) and nyTime >= 585 and htf_newBar
+
+if detectHTF and isBullHTF
+    fTop = htf_l0
+    fBot = htf_h2
+    if fTop > fBot
+        foundFirstHTF := true
+        b = box.new(left=bar_index-1, top=fTop, right=bar_index+500, bottom=fBot, border_color=color.new(#00c087,20), border_width=1, bgcolor=i_bullColor, extend=extend.right)
+        label.new(x=bar_index, y=fTop, text="▲ BHTF", style=label.style_label_lower_right, color=color.new(#00c087,60), textcolor=color.white, size=size.tiny)
+        array.push(sessionBoxes, b)
+        array.push(sessionBull,  true)
+        array.push(sessionTop,   fTop)
+        array.push(sessionBot,   fBot)
+
+if detectHTF and isBearHTF
+    fTop = htf_l2
+    fBot = htf_h0
+    if fTop > fBot
+        foundFirstHTF := true
+        b = box.new(left=bar_index-1, top=fTop, right=bar_index+500, bottom=fBot, border_color=color.new(#f23645,20), border_width=1, bgcolor=i_bearColor, extend=extend.right)
+        label.new(x=bar_index, y=fBot, text="▼ SHTF", style=label.style_label_upper_right, color=color.new(#f23645,60), textcolor=color.white, size=size.tiny)
+        array.push(sessionBoxes, b)
+        array.push(sessionBull,  false)
+        array.push(sessionTop,   fTop)
+        array.push(sessionBot,   fBot)
+
+// M1 FVG TRACKING — ALWAYS ON
+var float lastBullM1Top = na
+var float lastBullM1Bot = na
+var bool  hasBullM1     = false
+var float lastBearM1Top = na
+var float lastBearM1Bot = na
+var bool  hasBearM1     = false
+
+m1_isBull = low[1] > high[3]
+m1_isBear = high[1] < low[3]
+
+m1_bullTop = m1_isBull ? low[1] : na
+m1_bullBot = m1_isBull ? high[3] : na
+m1_bearTop = m1_isBear ? low[3] : na
+m1_bearBot = m1_isBear ? high[1] : na
+
+if m1_isBull and not na(m1_bullTop)
+    lastBullM1Top := m1_bullTop
+    lastBullM1Bot := m1_bullBot
+    hasBullM1     := true
+if m1_isBear and not na(m1_bearTop)
+    lastBearM1Top := m1_bearTop
+    lastBearM1Bot := m1_bearBot
+    hasBearM1     := true
+
+// STATE MACHINE — ARM + OPPOSING M1 FVG TRACKING
+var float sm_zoneTop    = na
+var float sm_zoneBot    = na
+var bool  sm_zoneIsBull = false
+var bool  sm_armed      = false
+var bool  sm_inTrade    = false
+var float sm_oppTop     = na
+var float sm_oppBot     = na
+var bool  sm_oppIsSet   = false
+
+if isNYOpen
+    sm_zoneTop    := na
+    sm_zoneBot    := na
+    sm_zoneIsBull := false
+    sm_armed      := false
+    sm_inTrade    := false
+    sm_oppTop     := na
+    sm_oppBot     := na
+    sm_oppIsSet   := false
+
+if sm_inTrade and strategy.position_size == 0
+    sm_inTrade  := false
+    sm_armed    := false
+    sm_zoneTop  := na
+    sm_zoneBot  := na
+    sm_oppTop   := na
+    sm_oppBot   := na
+    sm_oppIsSet := false
+
+// ARM: wick overlaps an HTF zone
+if not sm_armed and not sm_inTrade and array.size(sessionBoxes) > 0
+    for i = 0 to array.size(sessionBoxes) - 1
+        bTop  = array.get(sessionTop,  i)
+        bBot  = array.get(sessionBot,  i)
+        bBull = array.get(sessionBull, i)
+        if low <= bTop and high >= bBot
+            sm_armed      := true
+            sm_zoneTop    := bTop
+            sm_zoneBot    := bBot
+            sm_zoneIsBull := bBull
+            if bBull and hasBearM1
+                sm_oppTop   := lastBearM1Top
+                sm_oppBot   := lastBearM1Bot
+                sm_oppIsSet := true
+            else if not bBull and hasBullM1
+                sm_oppTop   := lastBullM1Top
+                sm_oppBot   := lastBullM1Bot
+                sm_oppIsSet := true
+            break
+
+// While armed, update with newer OPPOSING M1 FVGs only
+if sm_armed and not sm_inTrade
+    if sm_zoneIsBull and m1_isBear and not na(m1_bearTop)
+        sm_oppTop   := m1_bearTop
+        sm_oppBot   := m1_bearBot
+        sm_oppIsSet := true
+    else if not sm_zoneIsBull and m1_isBull and not na(m1_bullTop)
+        sm_oppTop   := m1_bullTop
+        sm_oppBot   := m1_bullBot
+        sm_oppIsSet := true
+
+// ENTRY SIGNALS
+goLong  = sm_armed and sm_zoneIsBull and sm_oppIsSet and not na(sm_oppTop) and ta.crossover(close, sm_oppTop) and close > sm_zoneTop and strategy.position_size == 0 and canTrade
+goShort = sm_armed and not sm_zoneIsBull and sm_oppIsSet and not na(sm_oppBot) and ta.crossunder(close, sm_oppBot) and close < sm_zoneBot and strategy.position_size == 0 and canTrade
+
+var float entryPrice = na
+var float slPrice    = na
+var float tpPrice    = na
+
+if goLong
+    entryPrice := close
+    slPrice    := sm_zoneBot
+    tpPrice    := entryPrice + (entryPrice - slPrice) * i_rr
+    strategy.entry("Long",  strategy.long,  qty=i_qty, comment="M1 Inv Long")
+    strategy.exit("LX",     "Long",  stop=slPrice, limit=tpPrice)
+    sm_inTrade   := true
+    dailyTrades  := dailyTrades + 1
+
+if goShort
+    entryPrice := close
+    slPrice    := sm_zoneTop
+    tpPrice    := entryPrice - (slPrice - entryPrice) * i_rr
+    strategy.entry("Short", strategy.short, qty=i_qty, comment="M1 Inv Short")
+    strategy.exit("SX",     "Short", stop=slPrice, limit=tpPrice)
+    sm_inTrade   := true
+    dailyTrades  := dailyTrades + 1
+
+if i_useTimeClose and nyTime >= closeTimeMinutes and strategy.position_size != 0
+    strategy.close("Long",  comment="Time Close")
+    strategy.close("Short", comment="Time Close")
+
+// TRADE VISUALIZATION
+var bool  vizActive   = false
+var int   vizEntryBar = na
+var float vizSL       = na
+var float vizTP       = na
+var float vizEntry    = na
+var bool  vizIsLong   = false
+var box   tradeBox    = na
+
+if goLong or goShort
+    vizActive   := true
+    vizEntryBar := bar_index
+    vizSL       := slPrice
+    vizTP       := tpPrice
+    vizEntry    := entryPrice
+    vizIsLong   := goLong
+    box.delete(tradeBox)
+    tradeBox := box.new(left=bar_index, top=vizTP, right=bar_index + 1, bottom=vizSL, bgcolor=vizIsLong ? color.new(color.lime, 93) : color.new(color.red, 93), border_color=na, border_width=0)
+    label.new(bar_index, vizEntry, "  ENTRY " + str.tostring(vizEntry, format.mintick), style=label.style_label_right, color=color.new(color.white, 80), textcolor=color.white, size=size.small)
+    label.new(bar_index, vizSL,    "  SL "    + str.tostring(vizSL,    format.mintick), style=label.style_label_right, color=color.new(color.red,  70), textcolor=color.red,  size=size.small)
+    label.new(bar_index, vizTP,    "  TP "    + str.tostring(vizTP,    format.mintick), style=label.style_label_right, color=color.new(color.lime, 70), textcolor=color.lime, size=size.small)
+
+if vizActive and not na(tradeBox)
+    box.set_right(tradeBox, bar_index + 1)
+
+if vizActive and not na(vizEntryBar) and bar_index > vizEntryBar and strategy.position_size == 0
+    vizActive := false
+    lastProfit = strategy.closedtrades > 0 ? strategy.closedtrades.profit(strategy.closedtrades - 1) : 0.0
+    isWin     = lastProfit >= 0
+    exitText  = isWin ? "✓ WIN" : "✗ LOSS"
+    exitColor = isWin ? color.lime : color.red
+    exitY     = isWin ? vizTP : vizSL
+    label.new(bar_index - 1, exitY, exitText, style=vizIsLong ? label.style_label_down : label.style_label_up, color=color.new(exitColor, 40), textcolor=exitColor, size=size.small)
+
+slPlot    = vizActive ? vizSL    : na
+tpPlot    = vizActive ? vizTP    : na
+entryPlot = vizActive ? vizEntry : na
+plot(slPlot,    "Stop Loss",   color.red,   2, plot.style_steplinebr)
+plot(tpPlot,    "Take Profit", color.lime,  2, plot.style_steplinebr)
+plot(entryPlot, "Entry",       color.white, 1, plot.style_steplinebr)
+plotshape(goLong,  title="Long Entry",  location=location.belowbar, style=shape.triangleup,   color=color.lime, size=size.normal, text="LONG")
+plotshape(goShort, title="Short Entry", location=location.abovebar, style=shape.triangledown, color=color.red,  size=size.normal, text="SHORT")
+bgcolor(vizActive ? color.new(vizIsLong ? color.lime : color.red, 96) : na)
+

@@ -1,0 +1,291 @@
+//@version=6
+strategy("NY ORB - alphazone-ai.com V2",
+     overlay              = true,
+     initial_capital      = 10000,
+     default_qty_type     = strategy.fixed,
+     default_qty_value    = 1,
+     pyramiding           = 0,
+     calc_on_every_tick   = false,
+     process_orders_on_close = true,
+     commission_type      = strategy.commission.cash_per_order,
+     commission_value     = 0,
+     margin_long          = 0,
+     margin_short         = 0,
+     max_lines_count      = 500,
+     max_labels_count     = 500,
+     max_boxes_count      = 500)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════
+var string G_DAYS = "📅 Day Filter (New York Time)"
+i_mon = input.bool(true,  "Monday",    group=G_DAYS, inline="d")
+i_tue = input.bool(true,  "Tuesday",   group=G_DAYS, inline="d")
+i_wed = input.bool(false, "Wednesday", group=G_DAYS, inline="d")
+i_thu = input.bool(false, "Thursday",  group=G_DAYS, inline="d2")
+i_fri = input.bool(true,  "Friday",    group=G_DAYS, inline="d2")
+
+var string G_SESS = "⏰ Session Settings"
+i_orbSess   = input.session("0930-0945", "Opening Range Session", group=G_SESS, tooltip="The 15m window used to build the ORB high/low. Default = 9:30–9:45 NY.")
+i_tradeSess = input.session("0945-1745", "Trading Window",        group=G_SESS, tooltip="Entries only allowed during this window. Positions flat at end.")
+i_tz        = "America/New_York"
+
+var string G_SL = "🛑 Stop Loss"
+i_slMode = input.string("ORB High/Low", "Stop Loss Type", options=["ORB High/Low", "ATR Multiplier"], group=G_SL, tooltip="ORB High/Low: SL sits at the opposite extreme of the 15m range.\nATR Multiplier: SL = entry ± (ATR × Multiplier).")
+i_slBuffer  = input.float(35.0, "SL Buffer (price units)", minval=0, step=0.25, group=G_SL, tooltip="Extra distance beyond the ORB high/low (added only when using ORB High/Low SL).")
+i_atrLen    = input.int(14,  "ATR Length",     minval=1, group=G_SL)
+i_atrMult   = input.float(2, "ATR Multiplier", minval=0.1, step=0.1, group=G_SL)
+
+var string G_TP = "🎯 Take Profit"
+i_rr = input.float(1.0, "Risk : Reward Ratio", minval=0.1, step=0.1, group=G_TP, tooltip="TP distance = SL distance × R:R. Example: 2.0 means TP is 2× the risk.")
+
+var string G_RISK = "💰 Position Sizing"
+i_instrument = input.string("MNQ ($2/pt)", "Instrument", options=["NQ ($20/pt)", "MNQ ($2/pt)", "Custom"], group=G_RISK, tooltip="Select the contract you're trading. This sets the $ value per 1 point move.")
+i_customPV = input.float(20.0, "Custom $ per Point", minval=0.01, step=0.5, group=G_RISK, tooltip="Only used if Instrument = Custom.")
+i_riskMode = input.string("Fixed $ Risk", "Sizing Mode", options=["Fixed $ Risk", "Fixed Contracts"], group=G_RISK)
+i_riskUSD  = input.float(300.0, "Risk per Trade ($)", minval=1, step=50, group=G_RISK, tooltip="Target $ loss if SL hits. Contracts are rounded to the nearest whole number that gets closest to this value.")
+i_fixedQty = input.int(1, "Fixed Contracts", minval=1, group=G_RISK)
+
+var string G_VIS = "🎨 Visuals"
+i_showBox   = input.bool(true, "Show ORB Box",      group=G_VIS, inline="v1")
+i_showLvls  = input.bool(true, "Show Entry/SL/TP",  group=G_VIS, inline="v1")
+i_showLabel = input.bool(true, "Show Info Label",   group=G_VIS, inline="v2")
+i_boxCol    = input.color(color.new(color.blue,  80), "Range Fill", group=G_VIS, inline="v3")
+i_longCol   = input.color(color.new(color.lime,  0),  "Long",       group=G_VIS, inline="v4")
+i_shortCol  = input.color(color.new(color.red,   0),  "Short",      group=G_VIS, inline="v4")
+i_tpCol     = input.color(color.new(#26a69a, 0), "TP Line", group=G_VIS, inline="v5")
+i_slCol     = input.color(color.new(#ef5350, 0), "SL Line", group=G_VIS, inline="v5")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DAY FILTER (NY time)
+// ═══════════════════════════════════════════════════════════════════════════
+dow = dayofweek(time, i_tz)
+isTradingDay = (dow == dayofweek.monday    and i_mon) or (dow == dayofweek.tuesday and i_tue) or (dow == dayofweek.wednesday and i_wed) or (dow == dayofweek.thursday and i_thu) or (dow == dayofweek.friday and i_fri)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SESSION DETECTION
+// ═══════════════════════════════════════════════════════════════════════════
+inORB        = not na(time(timeframe.period, i_orbSess,   i_tz))
+inTrading    = not na(time(timeframe.period, i_tradeSess, i_tz))
+orbStarted   = inORB and not inORB[1]
+orbEnded     = not inORB and inORB[1]
+tradingEnded = not inTrading and inTrading[1]
+
+// ── NEW DAY DETECTOR (KB-validated pattern) ────────────────────────────────
+// This is the key fix: reset EVERYTHING at NY midnight, every single day.
+isNewDay = ta.change(time("D", i_tz))
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ORB BUILD
+// ═══════════════════════════════════════════════════════════════════════════
+var float orbHigh     = na
+var float orbLow      = na
+var int   orbStartBar = na
+var bool  tradedToday = false
+
+atrVal = ta.atr(i_atrLen)
+
+// ── DAILY RESET: wipe ORB + traded flag at NY midnight ─────────────────────
+if bool(isNewDay)
+    orbHigh     := na
+    orbLow      := na
+    orbStartBar := na
+    tradedToday := false
+
+// ── ORB BUILD ──────────────────────────────────────────────────────────────
+if orbStarted
+    orbHigh     := high
+    orbLow      := low
+    orbStartBar := bar_index
+else if inORB
+    orbHigh := math.max(nz(orbHigh, high), high)
+    orbLow  := math.min(nz(orbLow,  low),  low)
+
+orbReady = not na(orbHigh) and not na(orbLow) and not inORB
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SL / TP / SIZE CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+longEntry  = orbHigh
+shortEntry = orbLow
+
+float longSL  = na
+float shortSL = na
+if orbReady
+    if i_slMode == "ORB High/Low"
+        longSL  := orbLow  - i_slBuffer
+        shortSL := orbHigh + i_slBuffer
+    else
+        longSL  := longEntry  - (atrVal * i_atrMult)
+        shortSL := shortEntry + (atrVal * i_atrMult)
+
+longRisk  = orbReady ? math.max(longEntry - longSL,    syminfo.mintick) : na
+shortRisk = orbReady ? math.max(shortSL   - shortEntry, syminfo.mintick) : na
+
+longTP  = orbReady ? longEntry  + (longRisk  * i_rr) : na
+shortTP = orbReady ? shortEntry - (shortRisk * i_rr) : na
+
+dollarPerPoint = i_instrument == "NQ ($20/pt)"  ? 20.0 : i_instrument == "MNQ ($2/pt)" ? 2.0 : i_customPV
+
+f_roundContracts(rawQty) =>
+    rounded = math.floor(rawQty + 0.5)
+    rounded < 1 ? 1 : rounded
+
+float longQty  = na
+float shortQty = na
+if orbReady
+    if i_riskMode == "Fixed Contracts"
+        longQty  := i_fixedQty
+        shortQty := i_fixedQty
+    else
+        rawLong  = i_riskUSD / (longRisk  * dollarPerPoint)
+        rawShort = i_riskUSD / (shortRisk * dollarPerPoint)
+        longQty  := f_roundContracts(rawLong)
+        shortQty := f_roundContracts(rawShort)
+
+actualRiskL = orbReady ? longQty  * longRisk  * dollarPerPoint : na
+actualRiskS = orbReady ? shortQty * shortRisk * dollarPerPoint : na
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ORDER MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+canTrade = isTradingDay and orbReady and inTrading and not tradedToday and strategy.position_size == 0 and barstate.isconfirmed
+
+longBreakout  = canTrade and close > orbHigh and close[1] <= orbHigh
+shortBreakout = canTrade and close < orbLow  and close[1] >= orbLow
+
+var float activeSL = na
+var float activeTP = na
+var bool  isLong   = false
+
+if longBreakout
+    activeSL := longSL
+    activeTP := longTP
+    isLong   := true
+    tradedToday := true
+    strategy.entry("Long", strategy.long, qty=longQty, comment="ORB Long (Close)")
+
+if shortBreakout
+    activeSL := shortSL
+    activeTP := shortTP
+    isLong   := false
+    tradedToday := true
+    strategy.entry("Short", strategy.short, qty=shortQty, comment="ORB Short (Close)")
+
+if strategy.position_size > 0 and not na(activeSL) and not na(activeTP)
+    strategy.exit("Exit Long", from_entry="Long", stop=activeSL, limit=activeTP, comment_loss="SL", comment_profit="TP")
+
+if strategy.position_size < 0 and not na(activeSL) and not na(activeTP)
+    strategy.exit("Exit Short", from_entry="Short", stop=activeSL, limit=activeTP, comment_loss="SL", comment_profit="TP")
+
+if tradingEnded
+    strategy.close_all(comment="EOD")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    activeSL := na
+    activeTP := na
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VISUALS — all drawings reset at NY midnight so "today's" levels update daily
+// ═══════════════════════════════════════════════════════════════════════════
+var box   orbBox   = na
+var line  lnEntryL = na
+var line  lnEntryS = na
+var line  lnSLL    = na
+var line  lnSLS    = na
+var line  lnTPL    = na
+var line  lnTPS    = na
+var label lblInfo  = na
+
+// ── Wipe all drawings at NY midnight ───────────────────────────────────────
+if bool(isNewDay)
+    if not na(orbBox)
+        box.delete(orbBox)
+        orbBox := na
+    if not na(lnEntryL)
+        line.delete(lnEntryL)
+        lnEntryL := na
+    if not na(lnEntryS)
+        line.delete(lnEntryS)
+        lnEntryS := na
+    if not na(lnSLL)
+        line.delete(lnSLL)
+        lnSLL := na
+    if not na(lnSLS)
+        line.delete(lnSLS)
+        lnSLS := na
+    if not na(lnTPL)
+        line.delete(lnTPL)
+        lnTPL := na
+    if not na(lnTPS)
+        line.delete(lnTPS)
+        lnTPS := na
+    if not na(lblInfo)
+        label.delete(lblInfo)
+        lblInfo := na
+
+// ── ORB Box (build during ORB session) ─────────────────────────────────────
+if orbStarted and i_showBox and isTradingDay
+    orbBox := box.new(left=bar_index, top=high, right=bar_index+1, bottom=low, bgcolor=i_boxCol, border_color=color.new(color.blue, 40), border_width=1)
+
+if inORB and i_showBox and not na(orbBox)
+    box.set_top(orbBox, orbHigh)
+    box.set_bottom(orbBox, orbLow)
+    box.set_right(orbBox, bar_index + 1)
+
+if orbReady and inTrading and i_showBox and not na(orbBox)
+    box.set_right(orbBox, bar_index + 1)
+
+// ── Entry/SL/TP lines (created on ORB end, extended daily) ─────────────────
+if orbEnded and i_showLvls and isTradingDay and not na(orbHigh) and not na(orbLow)
+    // delete any stale lines/label first (safety — should already be nil from midnight reset)
+    if not na(lnEntryL)
+        line.delete(lnEntryL)
+    if not na(lnEntryS)
+        line.delete(lnEntryS)
+    if not na(lnSLL)
+        line.delete(lnSLL)
+    if not na(lnSLS)
+        line.delete(lnSLS)
+    if not na(lnTPL)
+        line.delete(lnTPL)
+    if not na(lnTPS)
+        line.delete(lnTPS)
+    if not na(lblInfo)
+        label.delete(lblInfo)
+
+    lnEntryL := line.new(bar_index, longEntry,  bar_index+1, longEntry,  color=i_longCol,  width=2, style=line.style_solid)
+    lnEntryS := line.new(bar_index, shortEntry, bar_index+1, shortEntry, color=i_shortCol, width=2, style=line.style_solid)
+    lnSLL    := line.new(bar_index, longSL,     bar_index+1, longSL,     color=i_slCol,    width=1, style=line.style_dashed)
+    lnSLS    := line.new(bar_index, shortSL,    bar_index+1, shortSL,    color=i_slCol,    width=1, style=line.style_dashed)
+    lnTPL    := line.new(bar_index, longTP,     bar_index+1, longTP,     color=i_tpCol,    width=1, style=line.style_dashed)
+    lnTPS    := line.new(bar_index, shortTP,    bar_index+1, shortTP,    color=i_tpCol,    width=1, style=line.style_dashed)
+
+    if i_showLabel
+        instrTxt = i_instrument == "NQ ($20/pt)" ? "NQ  $20/pt" : i_instrument == "MNQ ($2/pt)" ? "MNQ $2/pt" : "Custom $" + str.tostring(i_customPV, "#.##") + "/pt"
+        infoTxt = "📊 NY ORB  |  " + instrTxt + "\n" + "High: " + str.tostring(orbHigh, format.mintick) + "\n" + "Low:  " + str.tostring(orbLow,  format.mintick) + "\n" + "─────────────\n" + "LONG  SL dist: " + str.tostring(longRisk,  "#.##") + " pts\n" + "  Qty: " + str.tostring(longQty, "#") + " × $" + str.tostring(longRisk * dollarPerPoint, "#.##") + " = $" + str.tostring(actualRiskL, "#.##") + "\n" + "SHORT SL dist: " + str.tostring(shortRisk, "#.##") + " pts\n" + "  Qty: " + str.tostring(shortQty, "#") + " × $" + str.tostring(shortRisk * dollarPerPoint, "#.##") + " = $" + str.tostring(actualRiskS, "#.##") + "\n" + "─────────────\n" + "Target Risk: $" + str.tostring(i_riskUSD, "#.##") + "  |  R:R " + str.tostring(i_rr, "#.#")
+        lblInfo := label.new(bar_index+1, (orbHigh+orbLow)/2, text=infoTxt, style=label.style_label_left, color=color.new(color.black, 20), textcolor=color.white, size=size.small)
+
+// ── Extend lines/label right edge through the trading session ──────────────
+if orbReady and inTrading and i_showLvls
+    if not na(lnEntryL)
+        line.set_x2(lnEntryL, bar_index+1)
+    if not na(lnEntryS)
+        line.set_x2(lnEntryS, bar_index+1)
+    if not na(lnSLL)
+        line.set_x2(lnSLL, bar_index+1)
+    if not na(lnSLS)
+        line.set_x2(lnSLS, bar_index+1)
+    if not na(lnTPL)
+        line.set_x2(lnTPL, bar_index+1)
+    if not na(lnTPS)
+        line.set_x2(lnTPS, bar_index+1)
+    if i_showLabel and not na(lblInfo)
+        label.set_x(lblInfo, bar_index+1)
+
+plotshape(strategy.position_size > 0 and strategy.position_size[1] == 0, title="Long Entry",  style=shape.triangleup,   location=location.belowbar, color=i_longCol,  size=size.small)
+plotshape(strategy.position_size < 0 and strategy.position_size[1] == 0, title="Short Entry", style=shape.triangledown, location=location.abovebar, color=i_shortCol, size=size.small)
+
+bgcolor(inORB ? color.new(color.blue, 92) : na, title="ORB Session Tint")
+bgcolor(isTradingDay ? na : color.new(color.gray, 92), title="Non-Trading Day")
+
