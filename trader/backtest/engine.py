@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from trader.backtest.costs import CostModel
-from trader.strategy.base import Strategy
+from trader.strategy.base import Signal, Strategy
 
 
 @dataclass
@@ -50,9 +50,16 @@ def run_backtest(
     strategy: Strategy,
     initial_cash: float = 10_000.0,
     cost_model: CostModel | None = None,
+    stop_loss_pct: float | None = None,
 ) -> BacktestResult:
     """Replay `bars` through `strategy`. `bars` must have a sorted DatetimeIndex and a
-    `close` and `open` column."""
+    `close` and `open` column.
+
+    `stop_loss_pct` mirrors the live pipeline's stop-loss: when the decision bar's
+    close is that fraction or more below the entry fill price, the position is
+    force-sold at the next open, overriding the strategy's signal (the strategy is
+    not consulted on that bar, matching `_prepare_signal`). None disables it.
+    """
     if not bars.index.is_monotonic_increasing:
         bars = bars.sort_index()
     cost_model = cost_model or CostModel()
@@ -69,7 +76,20 @@ def run_backtest(
     # Stop at len-1: every decision at i needs a bar i+1 to fill against.
     for i in range(len(dates) - 1):
         asof = dates[i]
-        signal = strategy.generate(bars, asof)
+
+        drawdown_from_entry = (
+            (float(bars.iloc[i]["close"]) - open_entry["price"]) / open_entry["price"]
+            if shares > 0.0 and open_entry is not None
+            else 0.0
+        )
+        if stop_loss_pct is not None and drawdown_from_entry <= -stop_loss_pct:
+            signal = Signal(
+                strategy.symbol, "sell", 1.0,
+                f"stop-loss: close down {drawdown_from_entry:.1%} from entry "
+                f"{open_entry['price']:.4f}",
+            )
+        else:
+            signal = strategy.generate(bars, asof)
 
         next_open = float(bars.iloc[i + 1]["open"])
         fill_date = dates[i + 1]

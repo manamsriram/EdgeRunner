@@ -28,6 +28,9 @@ DEFAULT_EQUITY_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM"
 DEFAULT_YEARS = 2
 EQUITY_SLIPPAGE_BPS = 5.0
 INITIAL_CAPITAL = 100_000.0
+DEFAULT_STOP_LOSS = 0.08  # mirrors RiskLimits.stop_loss_pct in the live pipeline
+
+_STOP_LOSS: float | None = DEFAULT_STOP_LOSS  # set from --stop-loss in main()
 
 
 class CompositeStrategy:
@@ -89,7 +92,9 @@ def _backtest(strategy, bars: pd.DataFrame):
     from trader.backtest.engine import run_backtest
 
     return run_backtest(
-        bars, strategy, cost_model=CostModel(slippage_bps=EQUITY_SLIPPAGE_BPS)
+        bars, strategy,
+        cost_model=CostModel(slippage_bps=EQUITY_SLIPPAGE_BPS),
+        stop_loss_pct=_STOP_LOSS,
     )
 
 
@@ -140,7 +145,14 @@ def main() -> int:
     parser.add_argument("--years", type=int, default=DEFAULT_YEARS)
     parser.add_argument("--start", default=None)
     parser.add_argument("--end", default=None)
+    parser.add_argument(
+        "--stop-loss", type=float, default=DEFAULT_STOP_LOSS,
+        help="stop-loss fraction matching the live pipeline (0 disables)",
+    )
     args = parser.parse_args()
+
+    global _STOP_LOSS
+    _STOP_LOSS = args.stop_loss if args.stop_loss > 0 else None
 
     end = datetime.strptime(args.end, "%Y-%m-%d") if args.end else datetime.utcnow()
     start = (
@@ -160,8 +172,9 @@ def main() -> int:
     config = load_config()
     make = _factories()
 
+    _sl = f"{_STOP_LOSS:.0%}" if _STOP_LOSS else "off"
     print(f"\nCombo Backtest  |  {start.date()} → {end.date()}")
-    print(f"Symbols: {', '.join(symbols)}  |  Slippage: {EQUITY_SLIPPAGE_BPS}bps")
+    print(f"Symbols: {', '.join(symbols)}  |  Slippage: {EQUITY_SLIPPAGE_BPS}bps  |  Stop-loss: {_sl}")
 
     results: dict[tuple[str, str], list] = {}
     bh_returns: list[float] = []
