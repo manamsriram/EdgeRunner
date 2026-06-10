@@ -71,10 +71,16 @@ def run_pipeline(
 
     state = broker.reconcile()
 
-    # Seed ownership from DB; prune entries for positions no longer held.
+    # Seed ownership from DB; prune entries for positions no longer held and for
+    # owner strategies no longer in the active stack — otherwise a position bought
+    # by a retired strategy could only ever exit via stop-loss.
     try:
+        active_strategy_names = {type(s).__name__ for s in strategies}
         loaded_owners = repo.get_position_owners()
-        loaded_owners = {s: o for s, o in loaded_owners.items() if s in state.positions}
+        loaded_owners = {
+            s: o for s, o in loaded_owners.items()
+            if s in state.positions and o in active_strategy_names
+        }
         if loaded_owners:
             from dataclasses import replace as _replace_init
             state = _replace_init(state, position_owners=loaded_owners)

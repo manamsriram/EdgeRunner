@@ -333,3 +333,50 @@ def test_pipeline_working_state_updated_between_symbols(tmp_path):
     assert outcomes["MSFT"] == "executed"
     assert len(broker._client.submitted) == 2
     assert len(repo.get_orders()) == 2
+
+
+# ---- ownership pruning for retired strategies ----
+
+class _OtherStrategy(_FixedStrategy):
+    """Distinct class name so ownership comparisons see a different strategy."""
+
+
+def _held_state() -> AccountState:
+    return AccountState(
+        equity=100_000.0,
+        positions={_SYMBOL: 10.0},
+        open_order_symbols=frozenset(),
+        trades_today=0,
+        daily_pnl_pct=0.0,
+        stale=False,
+        cash=100_000.0,
+        avg_entry_prices={_SYMBOL: 100.0},
+    )
+
+
+def test_sell_allowed_when_owner_strategy_retired(tmp_path):
+    """A position owned by a strategy that is no longer in the active stack must
+    not be orphaned: ownership is pruned so remaining strategies can exit it."""
+    cfg = _config(tmp_path, autonomy="manual")
+    SQLiteRepository(cfg.portfolio_db_path).set_position_owner(_SYMBOL, "DonchianBreakout")
+
+    results, _, _ = _run([_FixedStrategy(_SYMBOL, "sell")], cfg, state=_held_state())
+
+    assert len(results) == 1
+    assert results[0].outcome == "queued"  # sell proposal, not ownership-blocked
+
+
+def test_sell_still_blocked_when_owner_strategy_active(tmp_path):
+    """Ownership must keep blocking cross-strategy sells while the owner runs."""
+    cfg = _config(tmp_path, autonomy="manual")
+    SQLiteRepository(cfg.portfolio_db_path).set_position_owner(_SYMBOL, "_OtherStrategy")
+
+    results, _, _ = _run(
+        [_FixedStrategy(_SYMBOL, "sell"), _OtherStrategy(_SYMBOL, "hold")],
+        cfg,
+        state=_held_state(),
+    )
+
+    sell_result = next(r for r in results if r.signal and r.signal.side == "sell")
+    assert sell_result.outcome == "blocked"
+    assert "ownership conflict" in sell_result.risk_decision.reason

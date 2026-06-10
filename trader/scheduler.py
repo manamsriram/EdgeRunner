@@ -188,27 +188,37 @@ def start_crypto_scheduler(
 
 
 def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build 5-strategy stack per equity symbol.
+    """Build 2-strategy stack (SuperTrend + DipRecovery) per equity symbol.
 
-    SuperTrend (ATR-adaptive trend, ADX-filtered) replaces MACrossover.
-    EquityBollingerReversion adds a mean-reversion signal anti-correlated with trend
-    strategies. DonchianBreakout captures channel breakouts without the one-day
-    entry delay that degraded GapPatternA. DipRecovery buys >=10% drawdowns from
-    the all-time high and exits 5% above it — backtests (2yr and 4yr, split-adjusted)
-    showed the best Sharpe of any strategy and improved the combo on both windows.
+    Combination backtests (scripts/backtest_combos.py; 10 symbols, 2yr and 4yr
+    split-adjusted windows, independent-sleeve model matching live execution):
+
+      ST+Dip:        2yr 37.9% / Sharpe 0.91   4yr 151.3% / Sharpe 1.00
+      All 5 (prior): 2yr 23.8% / Sharpe 0.86   4yr  89.6% / Sharpe 0.98
+
+    SuperTrend (trend-following) and DipRecovery (deep-drawdown mean reversion)
+    are complementary; SmashDayB, EquityBollingerReversion and DonchianBreakout
+    each diluted returns at similar or worse drawdown on equities.
     """
+    # Previous 5-strategy stack — kept for easy rollback if ST+Dip underperforms
+    # live. To restore, replace the loop body below with:
+    #
+    # from trader.strategy.smash_day import SmashDayB
+    # from trader.strategy.equity_reversion import EquityBollingerReversion
+    # from trader.strategy.donchian_breakout import DonchianBreakout
+    # ...
+    #     strategies.append(SuperTrend(symbol=sym))
+    #     strategies.append(SmashDayB(symbol=sym, long_only=True))
+    #     strategies.append(EquityBollingerReversion(symbol=sym))
+    #     strategies.append(DonchianBreakout(symbol=sym))
+    #     strategies.append(DipRecovery(symbol=sym))
+
     from trader.strategy.supertrend import SuperTrend
-    from trader.strategy.smash_day import SmashDayB
-    from trader.strategy.equity_reversion import EquityBollingerReversion
-    from trader.strategy.donchian_breakout import DonchianBreakout
     from trader.strategy.dip_recovery import DipRecovery
 
     strategies: list[Strategy] = []
     for sym in symbols:
         strategies.append(SuperTrend(symbol=sym))
-        strategies.append(SmashDayB(symbol=sym, long_only=True))
-        strategies.append(EquityBollingerReversion(symbol=sym))
-        strategies.append(DonchianBreakout(symbol=sym))
         strategies.append(DipRecovery(symbol=sym))
     return strategies
 
