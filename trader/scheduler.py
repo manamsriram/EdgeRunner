@@ -270,6 +270,20 @@ def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[
     HAPullback and EquityBollingerReversion also tested negative on crypto.
     DipRecovery only helped the old EMA+Smash stack, which is now retired.
     """
+    # Previous stack (EMA crossover + SmashDayB + DipRecovery 30/10) — kept for easy
+    # rollback if pure Donchian underperforms live. To restore, replace the return
+    # below with:
+    #
+    # from trader.strategy.crypto_trend import CryptoEMACrossover
+    # from trader.strategy.smash_day import SmashDayB
+    # from trader.strategy.dip_recovery import DipRecovery
+    # strategies: list[Strategy] = []
+    # for sym in symbols:
+    #     strategies.append(CryptoEMACrossover(symbol=sym))
+    #     strategies.append(SmashDayB(symbol=sym, long_only=True))
+    #     strategies.append(DipRecovery(symbol=sym, dip_pct=0.30, expansion_pct=0.10))
+    # return strategies
+
     from trader.strategy.donchian_breakout import DonchianBreakout
     return [DonchianBreakout(symbol=sym) for sym in symbols]
 
