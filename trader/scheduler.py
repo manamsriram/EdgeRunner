@@ -256,29 +256,22 @@ def _refresh_dynamic_universe(
 
 
 def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build 3-strategy stack (EMA crossover + SmashDayB + DipRecovery) per crypto symbol.
+    """Build single-strategy stack (DonchianBreakout) per crypto symbol.
 
-    Backtest (2-year OOS) showed CryptoBollingerReversion and GapPatternA
-    both degraded risk-adjusted returns. EMA + SmashDayB achieves Sharpe 0.33
-    and beats buy-and-hold by ~32% on average.
+    Pure Donchian beat every tested combo on crypto across both the 2yr and 4yr
+    windows (7 pairs, 10bps slippage):
 
-    DipRecovery uses crypto-widened parameters (30% dip / 10% expansion vs the
-    10%/5% equity defaults) — crypto drawdowns run far deeper. Standalone it is
-    weak on crypto (dips often never recover to the prior ATH), but in the combo
-    the other strategies' sell signals provide exits, and adding it improved the
-    stack on both the 2yr (12% → 21%, Sharpe 0.15 → 0.22) and 4yr (90% → 132%,
-    Sharpe 0.35 → 0.41) split windows. SuperTrend, HAPullback and
-    EquityBollingerReversion all tested negative on crypto and stay out.
+      2yr: 56% ret / Sharpe 0.46 / -33% dd   vs EMA+Smash+Dip 21% / 0.22 / -51%
+      4yr: 205% ret / Sharpe 0.51 / -42% dd  vs EMA+Smash+Dip 132% / 0.41 / -56%
+
+    Every strategy added to it diluted returns AND worsened drawdown — the
+    composite's sell-priority lets weaker strategies' sells truncate Donchian's
+    big winners (XRP +265%, SOL +725%, DOGE +365% standalone). SuperTrend,
+    HAPullback and EquityBollingerReversion also tested negative on crypto.
+    DipRecovery only helped the old EMA+Smash stack, which is now retired.
     """
-    from trader.strategy.crypto_trend import CryptoEMACrossover
-    from trader.strategy.smash_day import SmashDayB
-    from trader.strategy.dip_recovery import DipRecovery
-    strategies: list[Strategy] = []
-    for sym in symbols:
-        strategies.append(CryptoEMACrossover(symbol=sym))
-        strategies.append(SmashDayB(symbol=sym, long_only=True))
-        strategies.append(DipRecovery(symbol=sym, dip_pct=0.30, expansion_pct=0.10))
-    return strategies
+    from trader.strategy.donchian_breakout import DonchianBreakout
+    return [DonchianBreakout(symbol=sym) for sym in symbols]
 
 
 def _build_crypto_strategies(config: Config) -> "list[Strategy]":
