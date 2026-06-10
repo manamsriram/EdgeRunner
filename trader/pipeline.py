@@ -243,8 +243,10 @@ def _prepare_signal(
 
         current_price = float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
+        _stop_exempt = state.position_owners.get(symbol) == "DipRecovery"
         if (
-            entry_price > 0
+            not _stop_exempt
+            and entry_price > 0
             and symbol in state.positions
             and state.positions[symbol] > 0
             and (current_price - entry_price) / entry_price <= -(
