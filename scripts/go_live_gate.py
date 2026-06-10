@@ -47,6 +47,18 @@ def _check_thresholds(metrics, bh_metrics, trade_count: int) -> tuple[bool, str]
     return True, "all thresholds met"
 
 
+def _gate_strategies() -> list:
+    """The production equity stack (mirrors trader.scheduler._build_strategies_for).
+    Each entry is a callable taking `symbol` and returning a Strategy."""
+    from trader.strategy.dip_recovery import DipRecovery
+    from trader.strategy.donchian_breakout import DonchianBreakout
+    from trader.strategy.equity_reversion import EquityBollingerReversion
+    from trader.strategy.smash_day import SmashDayB
+    from trader.strategy.supertrend import SuperTrend
+
+    return [SuperTrend, SmashDayB, EquityBollingerReversion, DonchianBreakout, DipRecovery]
+
+
 def _run_combo(symbol: str, strategy_cls, oos_start: datetime, oos_end: datetime, config):
     from trader.backtest.costs import CostModel
     from trader.backtest.engine import run_backtest
@@ -116,9 +128,7 @@ def main() -> int:
         symbols = list(DEFAULT_ALLOWLIST)
 
     # ---- strategies ----
-    from trader.strategy.ma_crossover import MACrossover
-    from trader.strategy.momentum_rsi import MomentumRSI
-    strategies = [MACrossover, MomentumRSI]
+    strategies = _gate_strategies()
 
     print(f"Go-Live Gate  |  OOS window: {oos_start.date()} → {oos_end.date()}")
     print(f"Symbols: {', '.join(symbols)}")

@@ -86,3 +86,22 @@ def test_aggregate_logic_4_of_8_fails():
     passed_count = sum(results)
     total = len(results)
     assert passed_count / total < PASS_RATIO  # 4/8 = 50% < 60%
+
+
+def test_gate_strategies_match_production_equity_stack():
+    """The gate must validate the strategies actually deployed in the scheduler,
+    and every entry must be constructible (guards against dead imports)."""
+    from go_live_gate import _gate_strategies
+
+    factories = _gate_strategies()
+    names = [f.__name__ for f in factories]
+    assert names == [
+        "SuperTrend",
+        "SmashDayB",
+        "EquityBollingerReversion",
+        "DonchianBreakout",
+        "DipRecovery",
+    ]
+    built = [f("AAPL") for f in factories]
+    assert all(s.symbol == "AAPL" for s in built)
+    assert built[1].long_only is True
