@@ -35,7 +35,7 @@ def get_daily_bars(
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
-    from alpaca.data.enums import DataFeed
+    from alpaca.data.enums import Adjustment, DataFeed
 
     config = config or load_config()
     config.require_alpaca()
@@ -50,6 +50,9 @@ def get_daily_bars(
         start=start,
         end=end,
         feed=DataFeed.IEX,
+        # Split/dividend-adjusted bars. The default (RAW) makes every split look
+        # like a crash, which poisons drawdown- and lookback-based strategies.
+        adjustment=Adjustment.ALL,
     )
     bars = client.get_stock_bars(request)
     return _to_frame(bars.df, symbol)
@@ -70,7 +73,7 @@ def get_daily_bars_batch(
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
-    from alpaca.data.enums import DataFeed
+    from alpaca.data.enums import Adjustment, DataFeed
 
     config = config or load_config()
     config.require_alpaca_credentials()
@@ -88,6 +91,7 @@ def get_daily_bars_batch(
         start=start,
         end=end,
         feed=DataFeed.IEX,
+        adjustment=Adjustment.ALL,
     )
     bars = client.get_stock_bars(request)
 
