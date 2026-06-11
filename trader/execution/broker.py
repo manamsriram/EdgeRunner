@@ -335,12 +335,14 @@ def _build_market_order_request(
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
 
+    # Alpaca crypto only accepts GTC; equity accepts DAY
+    tif = TimeInForce.GTC if "/" in symbol else TimeInForce.DAY
     return MarketOrderRequest(
         symbol=symbol,
         notional=round(notional, 2) if notional is not None else None,
         qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
-        time_in_force=TimeInForce.DAY,
+        time_in_force=tif,
         client_order_id=client_order_id,
     )
 

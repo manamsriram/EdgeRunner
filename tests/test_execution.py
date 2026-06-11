@@ -298,14 +298,22 @@ def test_real_sdk_request_builders_construct():
     pytest.importorskip("alpaca")
     from trader.execution.broker import _build_market_order_request, _build_order_filters
 
+    from alpaca.trading.enums import TimeInForce
+
     buy = _build_market_order_request(
         symbol="AAPL", side="buy", client_order_id="c1", notional=50.0
     )
     assert float(buy.notional) == 50.0 and buy.client_order_id == "c1"
+    assert buy.time_in_force == TimeInForce.DAY
     sell = _build_market_order_request(
         symbol="AAPL", side="sell", client_order_id="c2", qty=3.0
     )
     assert float(sell.qty) == 3.0
+    # Crypto symbols must use GTC (Alpaca rejects DAY for crypto)
+    crypto_buy = _build_market_order_request(
+        symbol="CRV/USD", side="buy", client_order_id="c3", notional=100.0
+    )
+    assert crypto_buy.time_in_force == TimeInForce.GTC
     open_filter, closed_filter = _build_order_filters(date(2026, 6, 3))
     assert open_filter.status is not None and closed_filter.after is not None
 
