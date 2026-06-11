@@ -88,6 +88,18 @@ def test_sell_exits_whole_position():
     )
 
 
+def test_reserved_cash_survives_round_trip():
+    # Flat prices, no costs: a 0.5-fraction round trip must return ALL capital,
+    # including the half that stayed in cash while the position was open.
+    flat = [100.0] * 6
+    result = run_backtest(
+        _bars(flat), _BuyThenSell("X"), initial_cash=10_000.0,
+        cost_model=_NO_COSTS, entry_fraction=lambda bars: 0.5,
+    )
+    assert len(result.trades) == 1
+    assert float(result.equity_curve.iloc[-1]) == 10_000.0
+
+
 def test_fraction_above_one_is_clamped_no_leverage():
     levered = run_backtest(
         _bars(_RISING), _BuyOnce("X"), cost_model=_NO_COSTS,

@@ -124,7 +124,9 @@ def run_backtest(
             price = cost_model.fill_price(next_open, "sell")
             proceeds = shares * price
             commission = cost_model.commission(proceeds)
-            cash = proceeds - commission
+            # Add to cash, never overwrite: with partial entry sizing the
+            # un-deployed remainder is still sitting in cash.
+            cash += proceeds - commission
             trades.append(Trade(
                 entry_date=open_entry["date"], entry_price=open_entry["price"],
                 exit_date=fill_date, exit_price=price, shares=shares))
