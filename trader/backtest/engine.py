@@ -15,6 +15,7 @@ Position model is intentionally simple and honest for a cash account: fully inve
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 import pandas as pd
 
@@ -51,6 +52,7 @@ def run_backtest(
     initial_cash: float = 10_000.0,
     cost_model: CostModel | None = None,
     stop_loss_pct: float | None = None,
+    entry_fraction: Callable[[pd.DataFrame], float] | None = None,
 ) -> BacktestResult:
     """Replay `bars` through `strategy`. `bars` must have a sorted DatetimeIndex and a
     `close` and `open` column.
@@ -59,6 +61,13 @@ def run_backtest(
     close is that fraction or more below the entry fill price, the position is
     force-sold at the next open, overriding the strategy's signal (the strategy is
     not consulted on that bar, matching `_prepare_signal`). None disables it.
+
+    `entry_fraction` is an optional sizing policy (e.g. vol targeting): called with
+    the bars visible at the decision (index <= asof), it returns the fraction of
+    cash a buy deploys; the remainder stays in cash until the position exits.
+    Returns outside (0, 1] are treated as full size — a buggy sizer can never
+    produce leverage or a zero/negative position. None means all-in (today's
+    behavior).
     """
     if not bars.index.is_monotonic_increasing:
         bars = bars.sort_index()
@@ -95,12 +104,18 @@ def run_backtest(
         fill_date = dates[i + 1]
 
         if signal.side == "buy" and shares == 0.0 and signal.strength > 0:
+            fraction = 1.0
+            if entry_fraction is not None:
+                requested = float(entry_fraction(bars.iloc[: i + 1]))
+                if 0.0 < requested <= 1.0:
+                    fraction = requested
             price = cost_model.fill_price(next_open, "buy")
-            commission = cost_model.commission(cash)
-            investable = cash - commission
+            spend = cash * fraction
+            commission = cost_model.commission(spend)
+            investable = spend - commission
             if investable > 0:
                 shares = investable / price
-                cash = 0.0
+                cash -= spend
                 open_entry = {"date": fill_date, "price": price, "shares": shares}
                 fills.append({"date": fill_date, "side": "buy", "price": price,
                               "shares": shares, "reason": signal.reason})
