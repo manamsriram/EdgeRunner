@@ -140,6 +140,8 @@ def apply_claude_overlay(
     groq_model: str,
     claude_key: str | None,
     claude_model: str,
+    gemini_key: str | None = None,
+    gemini_model: str = "gemini-2.0-flash-lite",
 ) -> Signal:
     """Call LLM to review a quant signal. Returns original signal on any failure."""
     try:
@@ -171,7 +173,7 @@ def apply_claude_overlay(
         )
         logger.debug("overlay user_message:\n%s", user_message)
 
-        raw = call_llm(system_prompt, user_message, 256, groq_key, groq_model, claude_key, claude_model)
+        raw = call_llm(system_prompt, user_message, 256, groq_key, groq_model, claude_key, claude_model, gemini_key, gemini_model)
         if not raw:
             logger.warning("overlay: no LLM response for %s, passing through", signal.symbol)
             return signal

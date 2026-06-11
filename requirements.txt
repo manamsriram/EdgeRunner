@@ -7,7 +7,8 @@ python-dotenv==1.0.0
 # --- trading-agent foundation (Phase 0-2) ---
 alpaca-py==0.43.4
 pytest==9.0.3
-# --- Phase 5: LLM overlay (Groq primary, Claude fallback) ---
+# --- Phase 5: LLM overlay (Gemini primary, Groq secondary, Claude last-resort) ---
+google-genai>=1.0.0
 groq>=0.11.0
 anthropic>=0.40.0
 # NOTE: indicators are implemented natively in trader/strategy/indicators.py.

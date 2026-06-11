@@ -130,6 +130,8 @@ def check_fundamental_gate(
     claude_key: str | None,
     claude_model: str,
     date_str: str,
+    gemini_key: str | None = None,
+    gemini_model: str = "gemini-2.0-flash-lite",
 ) -> bool:
     """Run fundamental + price-trend check for a first-entry equity buy.
 
@@ -154,7 +156,7 @@ def check_fundamental_gate(
 
         logger.info("fundamental gate request symbol=%s date=%s", symbol, date_str)
 
-        raw = call_llm(_SYSTEM_PROMPT, user_message, 128, groq_key, groq_model, claude_key, claude_model)
+        raw = call_llm(_SYSTEM_PROMPT, user_message, 128, groq_key, groq_model, claude_key, claude_model, gemini_key, gemini_model)
         if not raw:
             logger.warning("fundamental gate: no LLM response for %s, approving", symbol)
             return True

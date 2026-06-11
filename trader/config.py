@@ -92,6 +92,7 @@ class Config:
     ccxt_api_key: str | None = None
     ccxt_secret_key: str | None = None
     groq_api_key: str | None = None
+    gemini_api_key: str | None = None
 
     @property
     def alpaca_base_url(self) -> str:
@@ -161,4 +162,5 @@ def load_config() -> Config:
         crypto_exchange=os.getenv("CRYPTO_EXCHANGE", "alpaca").strip().lower(),
         ccxt_api_key=os.getenv("CCXT_API_KEY") or None,
         ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,
+        gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
     )

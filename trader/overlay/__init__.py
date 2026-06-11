@@ -28,14 +28,19 @@ def apply_fundamental_gate(
         return True
     groq_key = getattr(config, "groq_api_key", None)
     claude_key = getattr(config, "anthropic_api_key", None)
-    if not groq_key and not claude_key:
+    gemini_key = getattr(config, "gemini_api_key", None)
+    if not gemini_key and not groq_key and not claude_key:
         return True
 
     from trader.overlay.fundamental_gate import check_fundamental_gate
 
     groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     claude_model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-    return check_fundamental_gate(symbol, bars, groq_key, groq_model, claude_key, claude_model, date_str)
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    return check_fundamental_gate(
+        symbol, bars, groq_key, groq_model, claude_key, claude_model, date_str,
+        gemini_key=gemini_key, gemini_model=gemini_model,
+    )
 
 
 def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
@@ -49,11 +54,16 @@ def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
         return signal
     groq_key = getattr(config, "groq_api_key", None)
     claude_key = getattr(config, "anthropic_api_key", None)
-    if not groq_key and not claude_key:
+    gemini_key = getattr(config, "gemini_api_key", None)
+    if not gemini_key and not groq_key and not claude_key:
         return signal
 
     from trader.overlay.claude_overlay import apply_claude_overlay
 
     groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     claude_model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-    return apply_claude_overlay(signal, bars, groq_key, groq_model, claude_key, claude_model)
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    return apply_claude_overlay(
+        signal, bars, groq_key, groq_model, claude_key, claude_model,
+        gemini_key=gemini_key, gemini_model=gemini_model,
+    )
