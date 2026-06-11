@@ -1,7 +1,7 @@
 # Regime-Adaptive Strategy Parameters — Design
 
 **Date:** 2026-06-10
-**Status:** Approved
+**Status:** Validated — negative result, fixed params retained (see Outcome)
 
 ## Problem
 
@@ -90,3 +90,22 @@ optimizer, no mutable config, no state outside the bars.
 Adaptive DipRecovery beats fixed DipRecovery out-of-sample within the combo
 backtest (ST+Dip sleeves, stop-loss model with DipRecovery exempt), or we keep
 fixed params and record the negative result.
+
+## Outcome (2026-06-10)
+
+`scripts/backtest_adaptive_dip.py --years 4` over AAPL, MSFT, NVDA, AMZN,
+GOOGL, META, JPM, SPY, QQQ, TSLA:
+
+- **In-sample (2022-06 → 2024-06):** no regime table in the 27-point grid beat
+  the fixed 10% dip (best tied it at +119.8%; the tying table only shifted the
+  calm threshold to 8%, which fired no additional trades in-sample).
+- **Out-of-sample (2024-06 → 2026-06):** fixed +49.0% vs adaptive +48.6%
+  (sharpe 0.77 / max_dd -30.9% both). Adaptive's calm-8% entries were slightly
+  worse.
+
+**Decision: production keeps fixed `dip_pct=10%` / `expansion_pct=5%`.**
+Interpretation: deep-drawdown entries are self-regulating — a 10%+ drawdown is
+already a high-vol event, so conditioning the threshold on a vol regime adds no
+information. The `regime_params` mechanism stays in the codebase (default off,
+fully tested) for future regime-conditioned experiments; the validation harness
+is reusable for any of them.
