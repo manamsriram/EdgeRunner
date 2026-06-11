@@ -107,7 +107,7 @@ export interface PerformanceMetrics {
   sharpe: number
   max_drawdown: number
   win_rate: number
-  profit_factor: number | null   // null when infinity or no closed trades
+  profit_factor: number | null   // null when infinity (all trades profitable); 0.0 when no closed trades
   total_return: number
   benchmark_spy_return: number | null
   benchmark_btc_return: number | null

@@ -109,9 +109,6 @@ export default function Performance() {
   const pfDisplay = m.profit_factor === null ? '∞' : m.profit_factor.toFixed(2)
   const pfPasses = m.profit_factor === null ? true : m.profit_factor >= THRESHOLDS.profit_factor.min
 
-  const sortedSignals = Object.entries(m.strategy_signals).sort((a, b) => b[1] - a[1])
-  const maxSignals = sortedSignals[0]?.[1] ?? 1
-
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-2xl font-bold text-white">Performance</h1>
@@ -139,7 +136,7 @@ export default function Performance() {
         />
         <MetricTile
           label="Max Drawdown"
-          value={`${(m.max_drawdown * 100).toFixed(1)}%`}
+          value={`${(Math.abs(m.max_drawdown) * 100).toFixed(1)}%`}
           threshold={THRESHOLDS.max_drawdown.label}
           passing={passes('max_drawdown', m.max_drawdown)}
         />
@@ -178,36 +175,8 @@ export default function Performance() {
         <div className="bg-slate-800 rounded-xl px-4 border border-slate-700">
           <BenchmarkRow label="Portfolio" value={m.total_return} />
           <BenchmarkRow label="SPY" value={m.benchmark_spy_return} />
-          <BenchmarkRow label="BTC/USD" value={m.benchmark_btc_return} />
         </div>
       </section>
-
-      {/* Strategy signals */}
-      {sortedSignals.length > 0 && (
-        <section>
-          <h2 className="text-lg font-bold text-white mb-3">
-            Strategy Signal Activity
-            <span className="ml-2 text-xs font-normal text-slate-500">(V1 — counts only, not P&L)</span>
-          </h2>
-          <div className="bg-slate-800 rounded-xl px-4 border border-slate-700">
-            {sortedSignals.map(([strategy, count]) => (
-              <div
-                key={strategy}
-                className="flex items-center gap-4 py-3 border-t first:border-0 border-slate-700"
-              >
-                <span className="text-slate-300 text-sm w-36 shrink-0">{strategy}</span>
-                <div className="flex-1 bg-slate-700 rounded-full h-2">
-                  <div
-                    className="bg-blue-500 h-2 rounded-full"
-                    style={{ width: `${(count / maxSignals) * 100}%` }}
-                  />
-                </div>
-                <span className="text-slate-400 text-sm font-mono w-12 text-right">{count}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   )
 }

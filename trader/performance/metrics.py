@@ -167,10 +167,27 @@ def compute_live_metrics(config, broker, repo) -> LiveMetrics:
     if not history or len(history.get("equity", [])) < 2:
         return _insufficient
 
-    equity = pd.Series([float(e) if e is not None else np.nan for e in history["equity"]])
+    fills = broker.get_account_activities(activity_type="FILL")
+    pnls = _fifo_round_trips(fills)
+    trade_count = sum(1 for f in fills if f.get("side") == "sell")
+
+    raw_equity = [float(e) if e is not None else np.nan for e in history["equity"]]
     timestamps = history["timestamp"]
-    ts_start = _parse_ts(timestamps[0])
     ts_end = _parse_ts(timestamps[-1])
+
+    # Trim equity curve to start at first actual fill so Sharpe/drawdown/days_active
+    # reflect live-trading performance, not the flat pre-trading period.
+    if fills:
+        first_fill_ts = _parse_ts(min(fills, key=lambda f: f["ts"])["ts"])
+        trim_idx = next(
+            (i for i, ts in enumerate(timestamps) if _parse_ts(ts) >= first_fill_ts),
+            0,
+        )
+    else:
+        trim_idx = 0
+
+    equity = pd.Series(raw_equity[trim_idx:])
+    ts_start = _parse_ts(timestamps[trim_idx])
     days_active = max(0, (ts_end - ts_start).days)
 
     start_eq = float(equity.iloc[0])
@@ -178,10 +195,6 @@ def compute_live_metrics(config, broker, repo) -> LiveMetrics:
     total_return = (end_eq / start_eq - 1.0) if start_eq > 0 else 0.0
     sharpe = _sharpe(equity)
     max_dd = _max_drawdown(equity)
-
-    fills = broker.get_account_activities(activity_type="FILL")
-    pnls = _fifo_round_trips(fills)
-    trade_count = len(pnls)
     win_rate = sum(1 for p in pnls if p > 0) / trade_count if trade_count > 0 else 0.0
     pf = _profit_factor(pnls)
 
