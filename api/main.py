@@ -109,11 +109,19 @@ async def _crypto_scheduler_loop() -> None:
 
     if cfg.risk.dynamic_crypto_universe:
         from trader.universe.crypto_screener import fetch_dynamic_crypto_universe
-        try:
-            symbols = fetch_dynamic_crypto_universe(cfg, cfg.risk.crypto_universe_size)
-        except Exception:
-            logger.exception("initial crypto screener failed — scheduler disabled")
-            return
+        symbols = None
+        for attempt in range(1, 4):
+            try:
+                symbols = fetch_dynamic_crypto_universe(cfg, cfg.risk.crypto_universe_size)
+                break
+            except Exception:
+                logger.warning("crypto screener attempt %d/3 failed", attempt, exc_info=True)
+                if attempt < 3:
+                    await asyncio.sleep(60)
+        if symbols is None:
+            fallback = list(cfg.risk.crypto_allowlist) or ["BTC/USD", "ETH/USD"]
+            logger.warning("crypto screener failed 3 times — falling back to %s", fallback)
+            symbols = fallback
         strategies = _build_crypto_strategies_for(cfg, symbols)
         logger.info("crypto scheduler started — dynamic universe size=%d poll=240s", len(symbols))
     else:
