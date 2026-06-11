@@ -1,7 +1,7 @@
 # Vol-Targeted Position Sizing — Design
 
 **Date:** 2026-06-10
-**Status:** Approved (phase 2 of the regime-adaptive params spec)
+**Status:** Validated — negative result, flat sizing retained (see Outcome)
 
 ## Problem
 
@@ -94,3 +94,27 @@ warmup, sliced equity curves):
 Best in-sample (target_vol, application) config beats the unsized ST+Dip
 sleeves baseline on out-of-sample Sharpe, with the return give-up flag clear —
 or we keep flat sizing and record the negative result.
+
+## Outcome (2026-06-10)
+
+`scripts/backtest_vol_sizing.py --years 4` over AAPL, MSFT, NVDA, AMZN, GOOGL,
+META, JPM, SPY, QQQ, TSLA:
+
+- **In-sample (2022-06 → 2024-06):** best config (target_vol 15% on ST only)
+  edged the baseline on Sharpe (1.23 vs 1.19, max_dd -20.6% vs -23.3%) but gave
+  up 20 points of return (+72.8% vs +92.4%).
+- **Out-of-sample (2024-06 → 2026-06):** the edge did not generalize — Sharpe
+  0.79 vs baseline 0.87, return +30.5% vs +39.8%, drawdown only marginally
+  better (-20.2% vs -22.6%).
+
+**Decision: production keeps flat sizing (`cap_pct × free_cash`).**
+Interpretation: ST's ADX gate and trend-break exit already avoid most
+high-vol chop, and the 8% stop bounds entry risk — a vol overlay on top mostly
+just dilutes winners. Notably, every grid config that scaled DipRecovery
+("ST+DI") underperformed ST-only, re-confirming that DipRecovery's edge is
+taking full-size high-vol dip risk.
+
+The first validation run exposed a real engine bug (sell path overwrote cash,
+destroying reserved capital under partial sizing — fixed with a regression
+test). The `entry_fraction` engine support and `vol_scale` function stay in
+the codebase (default off, tested) for future sizing experiments.
