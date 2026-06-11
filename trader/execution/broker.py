@@ -358,6 +358,6 @@ def _build_order_filters(today: date) -> tuple[Any, Any]:
     midnight = _dt.combine(today, _time.min, tzinfo=timezone.utc)
     open_filter = GetOrdersRequest(status=QueryOrderStatus.OPEN)
     closed_today_filter = GetOrdersRequest(
-        status=QueryOrderStatus.CLOSED, after=midnight
+        status=QueryOrderStatus.CLOSED, after=midnight, limit=500
     )
     return open_filter, closed_today_filter
