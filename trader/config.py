@@ -68,6 +68,7 @@ class RiskLimits:
     # Dynamic crypto universe — ranks CRYPTO_CANDIDATE_UNIVERSE by 24h volume daily
     dynamic_crypto_universe: bool = False   # True → use crypto screener (env: DYNAMIC_CRYPTO_UNIVERSE)
     crypto_universe_size: int = 10          # max crypto pairs per day (env: CRYPTO_UNIVERSE_SIZE)
+    min_cash_reserve: float = 500.0         # floor kept liquid — never deployed (env: MIN_CASH_RESERVE)
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,7 @@ def load_config() -> Config:
             universe_size=int(os.getenv("UNIVERSE_SIZE", "100")),
             dynamic_crypto_universe=_env_bool("DYNAMIC_CRYPTO_UNIVERSE", False),
             crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
+            min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "500.0")),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),

@@ -653,7 +653,8 @@ def _notional_for_side(side: str, symbol: str, state, config, ref_price: float) 
     if side == "sell":
         held = state.positions.get(symbol, 0.0)
         return max(held * ref_price, 1.0)
-    return config.risk.max_crypto_position_pct * state.equity
+    free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
+    return config.risk.max_crypto_position_pct * free_cash
 
 
 def _notional_for(signal, state, config, ref_price: float) -> float:
@@ -671,5 +672,5 @@ def _notional_for(signal, state, config, ref_price: float) -> float:
         if is_crypto_symbol(signal.symbol)
         else config.risk.max_position_pct
     )
-    free_cash = max(state.cash - state.deployed_notional, 0.0)
+    free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
     return cap_pct * free_cash
