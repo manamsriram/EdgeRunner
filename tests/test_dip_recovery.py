@@ -95,3 +95,95 @@ def test_no_lookahead() -> None:
     bars = _bars(closes)
     signal = DipRecovery("TEST").generate(bars, bars.index[MIN_BARS - 1])
     assert signal.side == "hold"
+
+
+# ---- Regime-adaptive parameters ----
+
+REGIME_TABLE = {
+    "calm": (0.08, 0.05),
+    "normal": (0.10, 0.05),
+    "stressed": (0.15, 0.05),
+}
+
+
+def _closes_from_returns(returns: list[float]) -> list[float]:
+    closes = [100.0]
+    for r in returns:
+        closes.append(closes[-1] * (1.0 + r))
+    return closes[1:]
+
+
+def _quiet_then_crash_bars() -> pd.DataFrame:
+    """Quiet year, then a high-vol decline: stressed regime, ~13.8% drawdown."""
+    history = []
+    for _ in range(150):  # reciprocal pairs keep price pinned near 100
+        history += [0.002, 1.0 / 1.002 - 1.0]
+    crash = []
+    for _ in range(20):  # down-first so the crash never prints a new high
+        crash += [-0.0332, 0.0268]
+    return _bars(_closes_from_returns(history + crash))
+
+
+def _wild_then_quiet_decline_bars() -> pd.DataFrame:
+    """Volatile year, then a near-zero-vol drift down: calm regime, ~8.9% drawdown."""
+    history = []
+    for _ in range(150):
+        history += [0.02, 1.0 / 1.02 - 1.0]
+    decline = [-0.00184] * 40
+    return _bars(_closes_from_returns(history + decline))
+
+
+def test_regime_fixture_classification() -> None:
+    from trader.strategy.regime import classify_regime
+
+    assert classify_regime(_quiet_then_crash_bars()) == "stressed"
+    assert classify_regime(_wild_then_quiet_decline_bars()) == "calm"
+
+
+def test_invalid_regime_params_raise() -> None:
+    with pytest.raises(ValueError):
+        DipRecovery("TEST", regime_params={"stressed": (1.5, 0.05)})
+    with pytest.raises(ValueError):
+        DipRecovery("TEST", regime_params={"calm": (0.08, -0.1)})
+
+
+def test_stressed_regime_uses_deeper_dip_threshold() -> None:
+    bars = _quiet_then_crash_bars()
+    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
+    adaptive = DipRecovery("TEST", regime_params=REGIME_TABLE).generate(
+        bars, bars.index[-1]
+    )
+    # ~13.8% drawdown: deep enough for the fixed 10% trigger, not for the
+    # stressed-regime 15% trigger.
+    assert fixed.side == "buy"
+    assert adaptive.side == "hold"
+
+
+def test_calm_regime_uses_shallower_dip_threshold() -> None:
+    bars = _wild_then_quiet_decline_bars()
+    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
+    adaptive = DipRecovery("TEST", regime_params=REGIME_TABLE).generate(
+        bars, bars.index[-1]
+    )
+    # ~8.9% drawdown: shallow of the fixed 10% trigger, deep enough for the
+    # calm-regime 8% trigger.
+    assert fixed.side == "hold"
+    assert adaptive.side == "buy"
+
+
+def test_missing_regime_falls_back_to_base_params() -> None:
+    bars = _quiet_then_crash_bars()  # stressed regime
+    adaptive = DipRecovery("TEST", regime_params={"calm": (0.08, 0.05)}).generate(
+        bars, bars.index[-1]
+    )
+    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
+    assert adaptive.side == fixed.side == "buy"
+
+
+def test_uniform_regime_table_matches_fixed_params() -> None:
+    bars = _quiet_then_crash_bars()
+    uniform = {r: (0.10, 0.05) for r in ("calm", "normal", "stressed")}
+    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
+    adaptive = DipRecovery("TEST", regime_params=uniform).generate(bars, bars.index[-1])
+    assert adaptive.side == fixed.side
+    assert adaptive.strength == fixed.strength
