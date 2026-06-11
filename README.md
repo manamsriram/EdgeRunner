@@ -14,7 +14,7 @@ A paper-first autonomous trading agent on Alpaca: backtested quant strategies, h
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Render](https://img.shields.io/badge/Render-Backend-46E3B7?style=for-the-badge&logo=render&logoColor=white)
 ![Vercel](https://img.shields.io/badge/Vercel-Frontend-000000?style=for-the-badge&logo=vercel&logoColor=white)
-![pytest](https://img.shields.io/badge/pytest-155%20tests-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-241%20tests-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)
 
 [Live Demo](https://edgerunner-x53h.onrender.com) · [Report Bug](https://github.com/manamsriram/Stock-Analyzer-Bot/issues) · [Request Feature](https://github.com/manamsriram/Stock-Analyzer-Bot/issues)
@@ -31,16 +31,18 @@ A paper-first autonomous trading agent that executes backtested quantitative str
 
 ## Features
 
-- **Honest backtest harness** — bar-replay engine decides on bar *t* and fills on bar *t+1* open, charging fees + slippage, through the same `Strategy` interface the live loop uses. No-lookahead enforced by contract.
-- **Oxford B-rated strategies** — SmashDay Type B (momentum breakout: close > high[i-2] + trend filter) and Gap Pattern Type A (breakaway gap + N-bar channel filter) implemented from the Oxford Capital Strategies catalog. Each symbol runs multiple strategies in parallel; the risk gate ensures one order fires per tick.
+- **Honest backtest harness** — bar-replay engine decides on bar *t* and fills on bar *t+1* open, charging fees + slippage, through the same `Strategy` interface the live loop uses. Stop-loss modeled identically to the live pipeline; no-lookahead enforced by contract.
+- **Complementary strategy pair (equity)** — SuperTrend (ATR-adaptive trend-following with ADX regime filter) and DipRecovery (deep-drawdown entry / ATH-expansion exit) run in parallel per equity symbol. DipRecovery is exempt from stop-loss; its exit logic is the expansion trigger.
+- **Pure Donchian crypto** — DonchianBreakout (close above prior N-bar high + trend filter) beat every tested combo on crypto across 2yr and 4yr windows. Retired EMA crossover, SmashDayB, and DipRecovery stacks are commented in-place as rollback references.
+- **Backtest fidelity** — bar-replay engine decides on bar *t* and fills on bar *t+1* open, charging fees + slippage, through the same `Strategy` interface the live loop uses. Stop-loss logic mirrors the live pipeline exactly; no-lookahead enforced by contract.
 - **Fail-closed risk gate** — every order checks allowlist, position cap, daily-loss breaker, max-trades-per-day, no-short rule, PDT guard (< $25k with ≥ 3 day-trades), fundamental gate, and a file-backed kill switch.
 - **Idempotent Alpaca execution** — reconciles broker state before each order; crash-safe and retry-safe with the broker as single source of truth.
 - **Crypto trading** — 24/7 scheduler thread runs EMA crossover, Bollinger reversion, SmashDay B, and Gap Pattern A on configured crypto symbols via the Alpaca crypto API.
-- **Live performance tracker** — `trader/performance/metrics.py` computes Sharpe ratio, max drawdown, win-rate, profit factor, and trade count from live paper history. `GET /api/performance` returns a go-live verdict (PASS/FAIL) against configurable thresholds.
+- **Live performance tracker** — `trader/performance/metrics.py` computes Sharpe ratio, max drawdown, win-rate, profit factor, and trade count from live paper history (trimmed to first fill — excludes pre-trading flat period). `GET /api/performance` returns a go-live verdict (PASS/FAIL) against configurable thresholds.
 - **Human-in-the-loop / autonomy toggle** — `AUTONOMY=manual` queues proposals for dashboard approval; `auto` skips the queue but still passes the full risk gate.
 - **Claude overlay (non-load-bearing)** — Sonnet with prompt caching can veto or nudge confidence with a written rationale. Breaking-news context fetched per tick. Disabled if `ANTHROPIC_API_KEY` is unset.
 - **Observability** — structured logging at configurable level; Slack webhook alerts on fills, kill-switch trips, and daily-loss breaker events (deduped per session); equity curve and performance metrics in the React dashboard.
-- **155 tests, all offline** — risk gate, execution, portfolio, strategy, no-lookahead contract, backtest costs, overlay, scheduler, performance metrics, and go-live-gate logic run without Alpaca keys or network.
+- **241 tests, all offline** — risk gate, execution, portfolio, strategy, no-lookahead contract, backtest costs, overlay, scheduler, performance metrics, go-live-gate, and vol-sizing logic run without Alpaca keys or network.
 
 ---
 
@@ -79,20 +81,26 @@ trader/
     metrics.py         # Sharpe, drawdown, win-rate, profit factor from live history
   data/                # Alpaca daily bars + crypto bars
   strategy/
-    base.py            # Strategy interface (no-lookahead contract)
-    indicators.py      # SMA, RSI, EMA, Bollinger, ATR, rolling high/low
-    ma_crossover.py    # SMA crossover baseline
-    momentum_rsi.py    # RSI momentum
-    smash_day.py       # SmashDay Type B (Oxford Rating B)
-    gap_pattern.py     # Gap Pattern Type A (Oxford Rating B)
-    crypto_trend.py    # EMA crossover for crypto
-    crypto_mean_reversion.py  # Bollinger reversion for crypto
-    stat_arb.py        # Statistical arbitrage pairs
-  backtest/            # bar-replay harness: decide on t, fill on t+1 open
-  risk/                # fail-closed risk gate + kill switch + fundamental gate
-  execution/           # Alpaca broker adapter: reconcile + idempotent orders
-  portfolio/           # PortfolioRepository interface + SQLite + Postgres impls
-  overlay/             # Claude LLM overlay: veto / confidence adjust
+    base.py               # Strategy interface (no-lookahead contract)
+    indicators.py         # SMA, RSI, EMA, Bollinger, ATR, SuperTrend, rolling high/low
+    supertrend.py         # SuperTrend ATR-adaptive trend + ADX filter  [equity live]
+    dip_recovery.py       # DipRecovery deep-drawdown / ATH-expansion exit [equity live]
+    donchian_breakout.py  # Donchian channel breakout + trend filter     [crypto live]
+    ha_pullback.py        # Heikin Ashi pullback (tested; not in live stack)
+    equity_reversion.py   # Bollinger mean-reversion (tested; not in live stack)
+    smash_day.py          # SmashDay Type B (Oxford Rating B; retired from live)
+    gap_pattern.py        # Gap Pattern Type A (Oxford Rating B; retired from live)
+    ma_crossover.py       # SMA crossover baseline (retired from live)
+    crypto_trend.py       # EMA crossover for crypto (retired; rollback reference)
+    regime.py             # Volatility regime detector (infrastructure; off in prod)
+  universe/
+    screener.py           # equity dynamic universe screener
+    crypto_screener.py    # crypto dynamic universe screener
+  backtest/               # bar-replay harness: decide on t, fill on t+1 open
+  risk/                   # fail-closed risk gate + kill switch + fundamental gate
+  execution/              # Alpaca broker adapter: reconcile + idempotent orders
+  portfolio/              # PortfolioRepository interface + SQLite + Postgres impls
+  overlay/                # Claude LLM overlay: veto / confidence adjust
 api/
   main.py              # FastAPI app + lifespan (scheduler start)
   auth.py              # JWT auth endpoints
@@ -112,11 +120,18 @@ frontend/src/
     Analysis.tsx       # on-demand Claude analysis
     Performance.tsx    # live metrics dashboard + go-live verdict
 scripts/
-  go_live_gate.py          # OOS backtest + threshold checks; exits 0/1/2
-  paper_trading_report.py  # summarises paper auto-mode SQLite history
-  performance_tracker.py   # CLI: live metrics + go-live verdict
-  smoke_alpaca.py          # verify paper connectivity
-  smoke_order.py           # drive one real paper order end-to-end
+  go_live_gate.py              # OOS backtest + threshold checks; exits 0/1/2
+  backtest_full.py             # full IS/OOS backtest across equity universe
+  backtest_combos.py           # combo harness: test strategy combinations + stop-loss exemptions
+  backtest_candidates.py       # equity strategy candidate screening
+  backtest_crypto.py           # crypto IS/OOS backtest
+  backtest_crypto_candidates.py # crypto strategy candidate screening
+  backtest_adaptive_dip.py     # adaptive DipRecovery validation harness (regime params rejected OOS)
+  backtest_vol_sizing.py       # vol-targeted sizing validation harness (rejected OOS)
+  paper_trading_report.py      # summarises paper auto-mode SQLite history
+  performance_tracker.py       # CLI: live metrics + go-live verdict
+  smoke_alpaca.py              # verify paper connectivity
+  smoke_order.py               # drive one real paper order end-to-end
 ```
 
 ---
@@ -188,16 +203,22 @@ rm kill_switch.flag      # trading resumes
 
 ## Strategies
 
-Each equity symbol runs three strategies in parallel; the risk gate fires at most one order per symbol per tick:
+Each equity symbol runs two complementary strategies in parallel; the risk gate fires at most one order per symbol per tick. Crypto runs a single strategy on a 24/7 scheduler thread.
 
-| Strategy | Signal | Oxford Rating |
-|----------|--------|---------------|
-| MACrossover | SMA fast/slow crossover (baseline trend) | — |
-| MomentumRSI | RSI overbought/oversold | — |
-| SmashDayB | Close[i-1] > High[i-2] + 20-bar trend filter | **B** |
-| GapPatternA | Low[i] > High[i-1] + N-bar channel filter | **B** |
+**Equity (live stack)**
 
-Crypto symbols additionally run CryptoEMACrossover and CryptoBollingerReversion on a 24/7 scheduler thread.
+| Strategy | Signal | Stop-loss |
+|----------|--------|-----------|
+| SuperTrend | Close above ATR-adaptive support + ADX > 20 | ATR-based trailing stop |
+| DipRecovery | Drawdown ≥ dip_pct from ATH; exit when price expands above pre-dip high | **Exempt** — exit logic is the expansion trigger |
+
+**Crypto (live stack)**
+
+| Strategy | Signal |
+|----------|--------|
+| DonchianBreakout | Close breaks above prior N-bar rolling high + trend filter |
+
+Retired strategies (commented in scheduler.py as rollback references): MACrossover, MomentumRSI, SmashDayB, GapPatternA, CryptoEMACrossover, CryptoBollingerReversion. Tested but not deployed: HAPullback, EquityBollingerReversion.
 
 ---
 
@@ -230,8 +251,9 @@ Then confirm:
 tick (Alpaca clock)
   → data        Alpaca daily bars (equity) / crypto bars (24/7)
   → strategy    Strategy.generate(bars, asof) → Signal   [no-lookahead enforced]
-                MACrossover + SmashDayB + GapPatternA per equity symbol
-                EMA + Bollinger + SmashDayB + GapPatternA per crypto symbol
+                SuperTrend + DipRecovery per equity symbol
+                DonchianBreakout per crypto symbol
+  → stop-loss   ATR-based trailing stop per symbol (DipRecovery exempt)
   → overlay     Claude veto / confidence + rationale       [non-load-bearing]
   → risk gate   allowlist · position cap · daily-loss · max trades · PDT
                 fundamental gate · kill switch
@@ -240,8 +262,8 @@ tick (Alpaca clock)
   → record      orders / trades / signals / runs / proposals (SQLite / Postgres)
 
 performance tracker (on-demand)
-  → pull fills from SQLite
-  → compute Sharpe · drawdown · win-rate · profit factor
+  → pull fills from SQLite (trimmed to first fill — excludes pre-trading period)
+  → compute Sharpe · drawdown · win-rate · profit factor · trade count
   → emit PASS / FAIL verdict against go-live thresholds
 ```
 
@@ -279,7 +301,7 @@ git commit -m "feat: describe your change"
 git push origin feature/your-feature
 ```
 
-Run `pytest` before pushing — all 155 tests must pass offline (no API keys needed).
+Run `pytest` before pushing — all 241 tests must pass offline (no API keys needed).
 
 ---
 
@@ -287,6 +309,19 @@ Run `pytest` before pushing — all 155 tests must pass offline (no API keys nee
 
 Sri Ram Mannam  
 [GitHub](https://github.com/manamsriram) · [LinkedIn](https://www.linkedin.com/in/sri-ram-mannam-8b61aa228/)
+
+## Validation Outcomes (2026-06-10)
+
+Both in-tree adaptive mechanisms were stress-tested and rejected out-of-sample:
+
+| Mechanism | In-Sample | Out-of-Sample | Decision |
+|-----------|-----------|---------------|----------|
+| Regime-adaptive DipRecovery params | ✅ Pass | ❌ Fail (baseline better) | Code retained, disabled in prod (`REGIME_ADAPTIVE=false`) |
+| Vol-targeted position sizing (entry-fraction) | ✅ Pass | ❌ Fail (full-size wins at vol peaks) | Code retained, flat sizing in prod |
+
+Both tests used the IS/OOS validation harness with Sharpe-gated promotion (IS Sharpe ≥ 0.5 required to evaluate OOS). Full records in `scripts/backtest_adaptive_dip.py` and `scripts/backtest_vol_sizing.py`.
+
+---
 
 ## License
 
