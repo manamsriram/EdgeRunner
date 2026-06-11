@@ -15,12 +15,8 @@ import re
 
 import pandas as pd
 
+from trader.overlay.llm_client import call_llm
 from trader.overlay.news_context import fetch_financials
-
-try:
-    import anthropic
-except ImportError:
-    anthropic = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +91,10 @@ def _price_context(symbol: str, bars: pd.DataFrame) -> str:
     pct_from_high = (current - high_w) / high_w * 100
     pct_from_low = (current - low_w) / low_w * 100
 
-    # Short-term vs full-window mean; labeled "MA_full" since window may be < 200 bars
     ma20 = float(closes.iloc[-20:].mean()) if len(closes) >= 20 else None
     ma_full = float(closes.mean())
     trend = f"MA20/MA_full = {ma20 / ma_full:.3f}" if ma20 else "insufficient bars for MA20"
 
-    # Volume trend with zero/NaN guard
     vol_avg = float(volumes.mean()) if not volumes.empty else 0.0
     vol_recent = float(volumes.iloc[-20:].mean()) if len(volumes) >= 20 else None
     if vol_recent and vol_avg > 0:
@@ -119,7 +113,7 @@ def _price_context(symbol: str, bars: pd.DataFrame) -> str:
 
 
 def _parse_response(text: str) -> dict:
-    """Parse Claude's JSON response, stripping markdown fences if present."""
+    """Parse LLM JSON response, stripping markdown fences if present."""
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
@@ -131,15 +125,17 @@ def _parse_response(text: str) -> dict:
 def check_fundamental_gate(
     symbol: str,
     bars: pd.DataFrame,
-    api_key: str,
-    model: str,
+    groq_key: str | None,
+    groq_model: str,
+    claude_key: str | None,
+    claude_model: str,
     date_str: str,
 ) -> bool:
     """Run fundamental + price-trend check for a first-entry equity buy.
 
     Returns True (approved) or False (vetoed). Non-load-bearing: returns True on any
-    failure. Caches the Claude verdict by (symbol, date_str) — one API call per symbol
-    per trading day. Empty financials are not cached so the next tick retries the fetch.
+    failure. Caches the verdict by (symbol, date_str) — one API call per symbol per
+    trading day. Empty financials are not cached so the next tick retries the fetch.
     """
     try:
         cache_key = (symbol, date_str)
@@ -153,38 +149,16 @@ def check_fundamental_gate(
             logger.debug("fundamental gate no financials for %s — approving", symbol)
             return True  # not cached — retry fetch next tick
 
-        if anthropic is None:
-            raise RuntimeError("anthropic package not installed")
-
         price_ctx = _price_context(symbol, bars)
         user_message = f"{price_ctx}\n\nFinancial statements:\n{financials}"
 
         logger.info("fundamental gate request symbol=%s date=%s", symbol, date_str)
 
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=model,
-            max_tokens=128,
-            system=[
-                {
-                    "type": "text",
-                    "text": _SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": user_message}],
-        )
+        raw = call_llm(_SYSTEM_PROMPT, user_message, 128, groq_key, groq_model, claude_key, claude_model)
+        if not raw:
+            logger.warning("fundamental gate: no LLM response for %s, approving", symbol)
+            return True
 
-        usage = response.usage
-        logger.debug(
-            "fundamental gate cache usage symbol=%s cache_read=%d cache_write=%d uncached=%d",
-            symbol,
-            getattr(usage, "cache_read_input_tokens", 0) or 0,
-            getattr(usage, "cache_creation_input_tokens", 0) or 0,
-            usage.input_tokens,
-        )
-
-        raw = response.content[0].text
         parsed = _parse_response(raw)
         action = parsed["action"]
         rationale = parsed.get("rationale", "")

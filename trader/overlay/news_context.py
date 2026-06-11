@@ -1,72 +1,43 @@
 """Lightweight market context fetchers for the Claude overlay.
 
-Salvaged from tools/fetch_stock_info.py — pure data-fetching, no LLM dependency.
 All functions return empty string on any failure (never raise).
 """
 from __future__ import annotations
 
-import re
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 
-import requests
 import yfinance as yf
-from bs4 import BeautifulSoup
 
 
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/101.0.4951.54 Safari/537.36"
-    )
-}
+def fetch_news(
+    symbol: str,
+    timeout: float = 5.0,
+    alpaca_api_key: str | None = None,
+    alpaca_secret_key: str | None = None,
+) -> str:
+    """Fetch recent news headlines via Alpaca News API.
 
-_CRYPTO_NAMES: dict[str, str] = {
-    "BTC/USD": "Bitcoin",
-    "ETH/USD": "Ethereum",
-    "SOL/USD": "Solana",
-    "XRP/USD": "XRP Ripple",
-    "DOGE/USD": "Dogecoin",
-    "ADA/USD": "Cardano",
-    "AVAX/USD": "Avalanche crypto",
-    "LINK/USD": "Chainlink crypto",
-    "DOT/USD": "Polkadot crypto",
-    "MATIC/USD": "Polygon crypto",
-}
-
-
-def _news_query(symbol: str) -> str:
-    """Return a search query appropriate for equities or crypto symbols."""
-    if "/" in symbol:
-        name = _CRYPTO_NAMES.get(symbol.upper(), symbol.split("/")[0])
-        return f"{name} crypto news"
-    return f"{symbol} stock news"
-
-
-def _google_news_url(symbol: str) -> str:
-    query = _news_query(symbol)
-    url = f"https://www.google.com/search?q={query}&gl=us&tbm=nws&num=5"
-    return re.sub(r"\s", "+", url)
-
-
-def fetch_news(symbol: str, timeout: float = 5.0) -> str:
-    """Fetch recent news headlines for a US ticker symbol.
-
-    Salvaged from tools/fetch_stock_info.get_recent_stock_news().
     Returns empty string on any failure — never raises.
+    Keys are optional; if absent, loaded from config.
     """
     def _fetch() -> str:
-        url = _google_news_url(symbol)
-        response = requests.get(url, headers=_HEADERS, timeout=timeout)
-        soup = BeautifulSoup(response.content, "html.parser")
-        articles = soup.select("div.SoaBEf")
-        if not articles:
-            return ""
-        headlines = []
-        for article in articles[:4]:
-            title = article.select_one("div.MBeuO")
-            if title:
-                headlines.append(title.get_text())
+        from alpaca.data.historical.news import NewsClient
+        from alpaca.data.requests import NewsRequest
+
+        key = alpaca_api_key
+        secret = alpaca_secret_key
+        if not key or not secret:
+            from trader.config import load_config
+            cfg = load_config()
+            key = cfg.alpaca_api_key
+            secret = cfg.alpaca_secret_key
+
+        client = NewsClient(api_key=key, secret_key=secret)
+        query_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+        request = NewsRequest(symbols=query_symbol, limit=5)
+        response = client.get_news(request)
+        articles = getattr(response, "news", None) or []
+        headlines = [a.headline for a in articles[:4] if getattr(a, "headline", None)]
         if not headlines:
             return ""
         lines = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
@@ -83,8 +54,6 @@ def fetch_news(symbol: str, timeout: float = 5.0) -> str:
 def fetch_financials(symbol: str, timeout: float = 5.0) -> str:
     """Fetch key financials (balance sheet + income statement) for a US ticker.
 
-    Salvaged from tools/fetch_stock_info.get_financial_statements().
-    Fixes: removed time.sleep(4), US-ticker default, pd.concat replacing .append().
     Returns empty string on any failure — never raises.
     """
     import pandas as pd

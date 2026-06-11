@@ -1,7 +1,7 @@
-"""Claude LLM overlay — Phase 5.
+"""LLM overlay — Phase 5.
 
 Non-load-bearing: any failure returns the original signal unchanged.
-Claude may veto (side→"hold", strength=0.0) or adjust strength ∈ [0.0, 1.0].
+LLM may veto (side→"hold", strength=0.0) or adjust strength ∈ [0.0, 1.0].
 It never originates a trade, flips buy↔sell, or sets position size.
 """
 from __future__ import annotations
@@ -13,13 +13,9 @@ import time
 
 import pandas as pd
 
+from trader.overlay.llm_client import call_llm
 from trader.overlay.news_context import fetch_news
 from trader.strategy.base import Signal
-
-try:
-    import anthropic
-except ImportError:
-    anthropic = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # (symbol, side) -> (monotonic_timestamp, Signal)
 _OVERLAY_CACHE: dict[tuple[str, str], tuple[float, Signal]] = {}
-_OVERLAY_TTL = 300.0  # 5 minutes — matches Anthropic cache TTL and news freshness window
+_OVERLAY_TTL = 300.0  # 5 minutes
 
 
 def _clear_overlay_cache() -> None:
@@ -130,9 +126,8 @@ def _bars_context(symbol: str, bars: pd.DataFrame) -> str:
 
 
 def _parse_response(text: str) -> dict:
-    """Parse Claude's response, stripping markdown fences if present."""
+    """Parse LLM response, stripping markdown fences if present."""
     text = text.strip()
-    # Strip ```json ... ``` or ``` ... ``` wrappers
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     return json.loads(text.strip())
@@ -141,10 +136,12 @@ def _parse_response(text: str) -> dict:
 def apply_claude_overlay(
     signal: Signal,
     bars: pd.DataFrame,
-    api_key: str,
-    model: str,
+    groq_key: str | None,
+    groq_model: str,
+    claude_key: str | None,
+    claude_model: str,
 ) -> Signal:
-    """Call Claude to review a quant signal. Returns original signal on any failure."""
+    """Call LLM to review a quant signal. Returns original signal on any failure."""
     try:
         cache_key = (signal.symbol, signal.side)
         now = time.monotonic()
@@ -153,11 +150,6 @@ def apply_claude_overlay(
             if now - ts < _OVERLAY_TTL:
                 logger.debug("overlay cache hit symbol=%s side=%s age=%.0fs", signal.symbol, signal.side, now - ts)
                 return cached
-
-        if anthropic is None:
-            raise RuntimeError("anthropic package not installed; add anthropic>=0.40.0 to requirements")
-
-        client = anthropic.Anthropic(api_key=api_key)
 
         is_crypto = "/" in signal.symbol
         system_prompt = _CRYPTO_SYSTEM_PROMPT if is_crypto else _EQUITY_SYSTEM_PROMPT
@@ -179,29 +171,11 @@ def apply_claude_overlay(
         )
         logger.debug("overlay user_message:\n%s", user_message)
 
-        response = client.messages.create(
-            model=model,
-            max_tokens=256,
-            system=[
-                {
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": user_message}],
-        )
+        raw = call_llm(system_prompt, user_message, 256, groq_key, groq_model, claude_key, claude_model)
+        if not raw:
+            logger.warning("overlay: no LLM response for %s, passing through", signal.symbol)
+            return signal
 
-        usage = response.usage
-        logger.debug(
-            "overlay cache usage symbol=%s cache_read=%d cache_write=%d uncached=%d",
-            signal.symbol,
-            getattr(usage, "cache_read_input_tokens", 0) or 0,
-            getattr(usage, "cache_creation_input_tokens", 0) or 0,
-            usage.input_tokens,
-        )
-
-        raw = response.content[0].text
         parsed = _parse_response(raw)
         logger.info(
             "overlay response symbol=%s action=%s strength=%s rationale=%r",
@@ -236,5 +210,5 @@ def apply_claude_overlay(
         return result
 
     except Exception as exc:  # noqa: BLE001
-        logger.warning("claude overlay failed for %s, passing through: %s", signal.symbol, exc)
+        logger.warning("overlay failed for %s, passing through: %s", signal.symbol, exc)
         return signal

@@ -91,6 +91,7 @@ class Config:
     crypto_exchange: str = "alpaca"            # "alpaca" | "binance" | "coinbase" | "kraken"
     ccxt_api_key: str | None = None
     ccxt_secret_key: str | None = None
+    groq_api_key: str | None = None
 
     @property
     def alpaca_base_url(self) -> str:
@@ -131,6 +132,7 @@ def load_config() -> Config:
         autonomy=os.getenv("AUTONOMY", "manual").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+        groq_api_key=os.getenv("GROQ_API_KEY") or None,
         portfolio_db_path=_db,
         kill_switch_path=_ks,
         risk=RiskLimits(
