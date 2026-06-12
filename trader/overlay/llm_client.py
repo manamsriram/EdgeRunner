@@ -19,7 +19,7 @@ def call_llm(
     claude_key: str | None,
     claude_model: str,
     gemini_key: str | None = None,
-    gemini_model: str = "gemini-2.0-flash",
+    gemini_model: str = "gemini-3.1-flash-lite",
 ) -> str:
     """Try Gemini → Groq → Claude; return '' if all absent or fail."""
     providers = []
