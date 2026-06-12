@@ -77,6 +77,17 @@ class Strategy(ABC):
 
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
+        self._warmed_up = False
+
+    def warm_up(self, bars: pd.DataFrame) -> None:
+        """Reconstruct internal state from bar history after a cold start.
+
+        Called by the pipeline on the first tick when the broker reports an open
+        position for this symbol but the strategy instance is freshly created (e.g.
+        after a process restart). Stateless strategies inherit this no-op; stateful
+        strategies override it to restore their entry-tracking fields from bars.
+        """
+        self._warmed_up = True
 
     def generate(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
         if bars.empty:

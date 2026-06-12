@@ -243,6 +243,14 @@ def _prepare_signal(
             logger.warning("no bar data for %s — skipping stop-loss and signal", symbol)
             return None
 
+        # On first tick after a cold start (process restart), reconstruct any
+        # stateful exit tracking from bar history for symbols we still hold.
+        if not strategy._warmed_up:
+            if symbol in state.positions:
+                strategy.warm_up(bars)
+            else:
+                strategy._warmed_up = True
+
         current_price = float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
         _stop_exempt = state.position_owners.get(symbol) == "DipRecovery"

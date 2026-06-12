@@ -254,13 +254,29 @@ def _refresh_dynamic_universe(
 
     # Union: today's screen + all held positions (held always wins for stop-loss safety).
     all_symbols: list[str] = list(dict.fromkeys(screened + list(held_symbols)))
-    new_strategies = _build_strategies_for(config, all_symbols)
+
+    # Reuse existing instances for symbols already in the universe — preserves
+    # stateful exit tracking (e.g. DonchianBreakout entry timestamps). Only create
+    # fresh instances for symbols entering the universe for the first time today.
+    existing: dict[str, list] = {}
+    for s in current_strategies:
+        existing.setdefault(s.symbol, []).append(s)
+    new_strategies: list = []
+    new_count = 0
+    for sym in all_symbols:
+        if sym in existing:
+            new_strategies.extend(existing[sym])
+        else:
+            new_strategies.extend(_build_strategies_for(config, [sym]))
+            new_count += 1
+
     logger.info(
-        "universe refreshed: %d screened + %d held = %d symbols → %d strategies",
+        "universe refreshed: %d screened + %d held = %d symbols → %d strategies (%d new)",
         len(screened),
         len(held_symbols),
         len(all_symbols),
         len(new_strategies),
+        new_count,
     )
     return new_strategies
 
@@ -331,13 +347,28 @@ def _refresh_dynamic_crypto_universe(
         return current_strategies
 
     all_symbols: list[str] = list(dict.fromkeys(screened + list(held_symbols)))
-    new_strategies = _build_crypto_strategies_for(config, all_symbols)
+
+    # Reuse existing instances for symbols already in the universe — preserves
+    # DonchianBreakout entry state across the daily rebuild.
+    existing: dict[str, list] = {}
+    for s in current_strategies:
+        existing.setdefault(s.symbol, []).append(s)
+    new_strategies: list = []
+    new_count = 0
+    for sym in all_symbols:
+        if sym in existing:
+            new_strategies.extend(existing[sym])
+        else:
+            new_strategies.extend(_build_crypto_strategies_for(config, [sym]))
+            new_count += 1
+
     logger.info(
-        "crypto universe refreshed: %d screened + %d held = %d symbols → %d strategies",
+        "crypto universe refreshed: %d screened + %d held = %d symbols → %d strategies (%d new)",
         len(screened),
         len(held_symbols),
         len(all_symbols),
         len(new_strategies),
+        new_count,
     )
     return new_strategies
 

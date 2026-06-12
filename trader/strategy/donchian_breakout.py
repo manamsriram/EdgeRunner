@@ -50,6 +50,52 @@ class DonchianBreakout(Strategy):
         self._entry_bar_ts = None
         self._entry_bar_low = None
 
+    def warm_up(self, bars: pd.DataFrame) -> None:
+        """Reconstruct entry state by scanning bar history after a cold start.
+
+        Walks backward up to `time_exit` bars looking for the most recent fresh
+        Donchian breakout. If found, restores _entry_bar_ts and _entry_bar_low so
+        time-exit and quick-exit logic resumes correctly rather than treating the
+        position as a new entry opportunity.
+        """
+        if self._entry_bar_ts is not None:
+            self._warmed_up = True
+            return
+
+        min_bars = max(self.channel_n + 1, self.trend_n + 1) + 2
+        if len(bars) < min_bars:
+            self._warmed_up = True
+            return
+
+        close = bars["close"]
+        low = bars["low"]
+        scan_limit = min(self.time_exit, len(bars) - min_bars)
+
+        for lookback in range(1, scan_limit + 1):
+            i = len(bars) - lookback
+            subclose = close.iloc[: i + 1]
+            sublow = low.iloc[: i + 1]
+
+            if len(subclose) < min_bars:
+                break
+
+            curr_close = float(subclose.iloc[-1])
+            prior_high = float(rolling_high(subclose.iloc[:-1], self.channel_n).iloc[-1])
+            if pd.isna(prior_high):
+                continue
+
+            prev_close = float(subclose.iloc[-2])
+            prior_prior_high = float(rolling_high(subclose.iloc[:-2], self.channel_n).iloc[-1])
+            trend_ref = float(subclose.iloc[-(1 + self.trend_n)])
+
+            fresh_breakout = pd.isna(prior_prior_high) or (prev_close <= prior_prior_high)
+            if curr_close > prior_high and curr_close > trend_ref and fresh_breakout:
+                self._entry_bar_ts = bars.index[i]
+                self._entry_bar_low = float(sublow.iloc[-1])
+                break
+
+        self._warmed_up = True
+
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
         if bars.empty:
             return Signal(self.symbol, "hold", 0.0, "no bar data")
