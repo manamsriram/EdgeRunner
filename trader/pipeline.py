@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+
+_ALPACA_MIN_ORDER = 10.0
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
@@ -654,7 +656,8 @@ def _notional_for_side(side: str, symbol: str, state, config, ref_price: float) 
         held = state.positions.get(symbol, 0.0)
         return max(held * ref_price, 1.0)
     free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
-    return config.risk.max_crypto_position_pct * free_cash
+    sized = config.risk.max_crypto_position_pct * free_cash
+    return min(free_cash, max(sized, _ALPACA_MIN_ORDER))
 
 
 def _notional_for(signal, state, config, ref_price: float) -> float:
@@ -662,6 +665,8 @@ def _notional_for(signal, state, config, ref_price: float) -> float:
 
     Buys: take cap_pct of remaining investable cash (cash already committed this
     tick is subtracted so each successive buy gets a smaller slice — geometric decay).
+    When the sized amount falls below Alpaca's minimum order, the full free_cash
+    is used instead (capped at free_cash so we never over-commit).
     Sells: use held value (gate enforces long/flat constraint).
     """
     if signal.side == "sell":
@@ -673,4 +678,5 @@ def _notional_for(signal, state, config, ref_price: float) -> float:
         else config.risk.max_position_pct
     )
     free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
-    return cap_pct * free_cash
+    sized = cap_pct * free_cash
+    return min(free_cash, max(sized, _ALPACA_MIN_ORDER))

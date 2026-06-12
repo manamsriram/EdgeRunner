@@ -23,7 +23,7 @@ Side = str  # "buy" | "sell"
 
 # A buy sized to within this many dollars of the position cap is treated as a no-op
 # rather than a fill — avoids submitting dust orders that just churn commission.
-_NO_OP_EPSILON = 1.0
+_NO_OP_EPSILON = 10.0
 
 
 def is_crypto_symbol(symbol: str) -> bool:
