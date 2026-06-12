@@ -23,10 +23,10 @@ def call_llm(
 ) -> str:
     """Try Gemini → Groq → Claude; return '' if all absent or fail."""
     providers = []
-    if groq_key:
-        providers.append(("groq", lambda: _groq(system_prompt, user_message, max_tokens, groq_key, groq_model)))
     if gemini_key:
         providers.append(("gemini", lambda: _gemini(system_prompt, user_message, max_tokens, gemini_key, gemini_model)))
+    if groq_key:
+        providers.append(("groq", lambda: _groq(system_prompt, user_message, max_tokens, groq_key, groq_model)))
     if claude_key:
         providers.append(("claude", lambda: _claude(system_prompt, user_message, max_tokens, claude_key, claude_model)))
 
