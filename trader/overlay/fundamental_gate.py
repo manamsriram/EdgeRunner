@@ -131,7 +131,7 @@ def check_fundamental_gate(
     claude_model: str,
     date_str: str,
     gemini_key: str | None = None,
-    gemini_model: str = "gemini-2.0-flash-lite",
+    gemini_model: str = "gemini-2.0-flash",
 ) -> bool:
     """Run fundamental + price-trend check for a first-entry equity buy.
 

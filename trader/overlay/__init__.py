@@ -36,7 +36,7 @@ def apply_fundamental_gate(
 
     groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     claude_model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     return check_fundamental_gate(
         symbol, bars, groq_key, groq_model, claude_key, claude_model, date_str,
         gemini_key=gemini_key, gemini_model=gemini_model,
@@ -62,7 +62,7 @@ def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
 
     groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     claude_model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     return apply_claude_overlay(
         signal, bars, groq_key, groq_model, claude_key, claude_model,
         gemini_key=gemini_key, gemini_model=gemini_model,

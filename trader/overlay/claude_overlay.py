@@ -141,7 +141,7 @@ def apply_claude_overlay(
     claude_key: str | None,
     claude_model: str,
     gemini_key: str | None = None,
-    gemini_model: str = "gemini-2.0-flash-lite",
+    gemini_model: str = "gemini-2.0-flash",
 ) -> Signal:
     """Call LLM to review a quant signal. Returns original signal on any failure."""
     try:
