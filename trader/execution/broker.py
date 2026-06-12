@@ -35,7 +35,7 @@ def client_order_id_for(
     """Deterministic id for one logical decision. Keyed on decision identity — NOT on a
     run id — so a retry in a later run reuses the same id and cannot double-fire."""
     key = f"{trade_date.isoformat()}|{symbol.upper()}|{side}|{strategy_name}"
-    return hashlib.sha1(key.encode()).hexdigest()[:32]
+    return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
 class _TradingClient(Protocol):
@@ -134,14 +134,13 @@ class AlpacaBroker:
             return None
 
     def get_account_activities(self, activity_type: str = "FILL") -> list[dict]:
-        """Fetch account activities as plain dicts. Uses urllib (stdlib) because
-        alpaca-py's TradingClient does not consistently expose this endpoint across
-        SDK versions. Returns [] on any error — callers must handle empty list.
+        """Fetch account activities as plain dicts. alpaca-py's TradingClient does not
+        consistently expose this endpoint across SDK versions. Returns [] on any error
+        — callers must handle empty list.
 
         Each returned dict: {"symbol", "side", "qty", "price", "ts"}.
         """
-        import json
-        import urllib.request
+        import requests
 
         try:
             self._config.require_alpaca()
@@ -149,15 +148,16 @@ class AlpacaBroker:
                 f"{self._config.alpaca_base_url}"
                 f"/v2/account/activities/{activity_type}"
             )
-            req = urllib.request.Request(
+            resp = requests.get(
                 url,
                 headers={
                     "APCA-API-KEY-ID": self._config.alpaca_api_key or "",
                     "APCA-API-SECRET-KEY": self._config.alpaca_secret_key or "",
                 },
+                timeout=15,
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                activities = json.loads(resp.read())
+            resp.raise_for_status()
+            activities = resp.json()
 
             result = []
             for a in activities:
