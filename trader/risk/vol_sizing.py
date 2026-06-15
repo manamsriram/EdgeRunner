@@ -22,16 +22,22 @@ def vol_scale(
     bars: pd.DataFrame,
     target_vol: float = DEFAULT_TARGET_VOL,
     floor: float = DEFAULT_FLOOR,
+    annualization: int = 252,
 ) -> float:
     """Entry-size fraction in [floor, 1.0] for the current bars.
 
     Returns 1.0 (full size, today's behavior) whenever realized vol cannot be
     estimated: insufficient history, NaN, or zero vol. Never raises in the hot
     path.
+
+    `annualization` adjusts for assets that trade more than 252 days/year (e.g.
+    crypto uses 365). realized_vol() hardcodes sqrt(252), so we rescale here.
     """
     if len(bars) < REALIZED_VOL_WINDOW + 1:
         return 1.0
     vol = float(realized_vol(bars["close"]).iloc[-1])
     if math.isnan(vol) or vol <= 0.0:
         return 1.0
+    if annualization != 252:
+        vol = vol * math.sqrt(annualization / 252)
     return float(min(1.0, max(floor, target_vol / vol)))

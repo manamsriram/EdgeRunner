@@ -30,6 +30,7 @@ from trader.portfolio.repository import (
     PortfolioRepository,
 )
 from trader.risk.gate import KillSwitch, OrderIntent, RiskDecision, RiskGate, is_crypto_symbol
+from trader.risk.vol_sizing import vol_scale
 
 if TYPE_CHECKING:
     from trader.strategy.base import PairSignal, PairStrategy, Signal, Strategy
@@ -382,7 +383,7 @@ def _execute_signal(
             )
 
         ref_price = float(bars["close"].iloc[-1])
-        notional = _notional_for(signal, state, config, ref_price)
+        notional = _notional_for(signal, state, config, ref_price, bars=bars)
         intent = OrderIntent(
             symbol=symbol, side=signal.side,
             notional=notional, ref_price=ref_price, reason=signal.reason,
@@ -668,23 +669,33 @@ def _notional_for_side(side: str, symbol: str, state, config, ref_price: float) 
     return min(free_cash, max(sized, _ALPACA_MIN_ORDER))
 
 
-def _notional_for(signal, state, config, ref_price: float) -> float:
+def _notional_for(signal, state, config, ref_price: float, bars=None) -> float:
     """Compute the intended notional for an order.
 
     Buys: take cap_pct of remaining investable cash (cash already committed this
-    tick is subtracted so each successive buy gets a smaller slice — geometric decay).
+    tick is subtracted so each successive buy gets a smaller slice — geometric decay),
+    then scale by vol_scale() so high-volatility regimes deploy less capital.
     When the sized amount falls below Alpaca's minimum order, the full free_cash
     is used instead (capped at free_cash so we never over-commit).
     Sells: use held value (gate enforces long/flat constraint).
+
+    Note: _notional_for_side() (pairs pipeline) is a separate function and is
+    intentionally left without vol-scaling for now.
     """
     if signal.side == "sell":
         held = state.positions.get(signal.symbol, 0.0)
         return max(held * ref_price, 1.0)
+    is_crypto = is_crypto_symbol(signal.symbol)
     cap_pct = (
         config.risk.max_crypto_position_pct
-        if is_crypto_symbol(signal.symbol)
+        if is_crypto
         else config.risk.max_position_pct
     )
     free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
-    sized = cap_pct * free_cash
+    if bars is not None:
+        scale = vol_scale(bars, annualization=365 if is_crypto else 252)
+        logger.debug("vol_scale symbol=%s scale=%.3f", signal.symbol, scale)
+    else:
+        scale = 1.0
+    sized = cap_pct * free_cash * scale
     return min(free_cash, max(sized, _ALPACA_MIN_ORDER))
