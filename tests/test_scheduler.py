@@ -14,7 +14,7 @@ from trader.config import Config, RiskLimits
 from trader.execution.broker import AlpacaBroker
 from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import AccountState, KillSwitch
-from trader.scheduler import is_market_open, run_once
+from trader.scheduler import is_market_open, run_nightly_bandit_update, run_once
 from trader.strategy.base import Signal, Strategy
 
 
@@ -148,3 +148,111 @@ def test_run_once_calls_pipeline_when_open(tmp_path):
 
     assert len(results) == 1
     assert results[0].outcome == "hold"
+
+
+# ---- run_nightly_bandit_update ----
+#
+# AlpacaBroker.get_account_activities deliberately bypasses the injected client
+# (raw HTTP — alpaca-py's SDK does not expose the endpoint consistently), so the
+# test seam is the broker method itself, stubbed via a small counter wrapper.
+
+def _stub_activities(broker: AlpacaBroker, fills: list[dict]) -> dict:
+    calls = {"n": 0}
+
+    def _fake(activity_type: str = "FILL"):
+        calls["n"] += 1
+        return fills
+
+    broker.get_account_activities = _fake  # type: ignore[method-assign]
+    return calls
+
+
+def _broker_with_fills(fills: list[dict], tmp_path) -> AlpacaBroker:
+    cfg = _config(
+        ks_path=str(tmp_path / "ks.flag"),
+        db_path=str(tmp_path / "portfolio.db"),
+    )
+    broker = AlpacaBroker(
+        cfg,
+        client=FakeClockClient(),
+        request_builder=lambda **kw: kw,
+        order_filter_builder=lambda today: ("open", "closed"),
+    )
+    _stub_activities(broker, fills)
+    return broker
+
+
+def _seed_round_trips(repo, strategy, regime, symbol, n=20):
+    """Seed n profitable round-trips so update_bandit_weights passes min_samples."""
+    from trader.portfolio.repository import OrderRow
+    fills = []
+    for i in range(n):
+        bid, sid = f"b{i}", f"s{i}"
+        repo.record_order(OrderRow(
+            client_order_id=f"c-b{i}", symbol=symbol, side="buy",
+            notional=1000.0, status="accepted",
+            broker_order_id=bid, strategy_name=strategy, regime=regime,
+        ))
+        repo.record_order(OrderRow(
+            client_order_id=f"c-s{i}", symbol=symbol, side="sell",
+            notional=1000.0, status="accepted",
+            broker_order_id=sid, strategy_name=strategy, regime=regime,
+        ))
+        fills.append({"order_id": bid, "symbol": symbol, "side": "buy", "qty": 10, "price": 100.0})
+        fills.append({"order_id": sid, "symbol": symbol, "side": "sell", "qty": 10, "price": 120.0})
+    return fills
+
+
+def test_nightly_bandit_skips_when_bandit_disabled(tmp_path):
+    """Neither shadow nor live → function returns {} without calling broker."""
+    cfg = _config(ks_path=str(tmp_path / "ks.flag"), db_path=str(tmp_path / "portfolio.db"))
+    broker = AlpacaBroker(
+        cfg, client=FakeClockClient(),
+        request_builder=lambda **kw: kw,
+        order_filter_builder=lambda today: ("open", "closed"),
+    )
+    calls = _stub_activities(broker, [])
+    repo = SQLiteRepository(str(tmp_path / "portfolio.db"))
+
+    result = run_nightly_bandit_update(cfg, broker, repo, cycle_index=0)
+
+    assert result == {}
+    assert calls["n"] == 0
+
+
+def test_nightly_bandit_shadow_calls_broker_and_updates_weights(tmp_path):
+    """Shadow mode: broker fills fetched, weights computed and persisted."""
+    from dataclasses import replace as _replace
+    cfg = _config(ks_path=str(tmp_path / "ks.flag"), db_path=str(tmp_path / "portfolio.db"))
+    cfg = _replace(cfg, risk=_replace(cfg.risk, bandit_weighting_shadow=True))
+
+    repo = SQLiteRepository(str(tmp_path / "portfolio.db"))
+    fills = _seed_round_trips(repo, "SuperTrend", "normal", "AAPL", n=20)
+
+    broker = AlpacaBroker(
+        cfg, client=FakeClockClient(),
+        request_builder=lambda **kw: kw,
+        order_filter_builder=lambda today: ("open", "closed"),
+    )
+    calls = _stub_activities(broker, fills)
+
+    result = run_nightly_bandit_update(cfg, broker, repo, cycle_index=1)
+
+    assert calls["n"] == 1
+    assert ("SuperTrend", "normal") in result
+    assert repo.get_bandit_weight("SuperTrend", "normal") > 1.0  # profitable fills raise weight
+
+
+def test_nightly_bandit_empty_fills_returns_empty(tmp_path):
+    """Broker returns no fills → no weights updated, returns {}."""
+    from dataclasses import replace as _replace
+    cfg = _config(ks_path=str(tmp_path / "ks.flag"), db_path=str(tmp_path / "portfolio.db"))
+    cfg = _replace(cfg, risk=_replace(cfg.risk, bandit_weighting_live=True))
+
+    repo = SQLiteRepository(str(tmp_path / "portfolio.db"))
+    broker = _broker_with_fills([], tmp_path)
+
+    result = run_nightly_bandit_update(cfg, broker, repo, cycle_index=0)
+
+    assert result == {}
+    assert repo.get_all_bandit_weights() == {}

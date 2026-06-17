@@ -74,6 +74,36 @@ def run_once(
     return run_pipeline(config, strategies, broker, repo)
 
 
+def run_nightly_bandit_update(
+    config: Config,
+    broker: AlpacaBroker,
+    repo: PortfolioRepository,
+    cycle_index: int = 0,
+) -> dict[tuple[str, str], float]:
+    """Nightly EWMA bandit-weight refresh from the day's realized fills.
+
+    No-op unless bandit weighting is enabled (shadow or live) — avoids hitting the
+    broker activities API when the feature is off. Fetches FILL activities, joins
+    them to recorded orders for (strategy, regime) context, and updates per-arm
+    weights. Both shadow and live update weights; only the pipeline differs on
+    whether it acts on them.
+    """
+    if not (config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live):
+        return {}
+
+    from trader.learning.update_weights import update_bandit_weights
+
+    try:
+        fills = broker.get_account_activities(activity_type="FILL")
+    except Exception:
+        logger.exception("nightly bandit update: failed to fetch account activities")
+        return {}
+
+    weights = update_bandit_weights(repo, fills=fills, cycle_index=cycle_index)
+    logger.info("nightly bandit update: refreshed %d arm(s)", len(weights))
+    return weights
+
+
 def start_scheduler(
     config: Config,
     strategies: "list[Strategy]",
@@ -98,17 +128,33 @@ def start_scheduler(
     )
     current_strategies = strategies
     universe_date: date | None = None
+    bandit_update_date: date | None = None
+    bandit_enabled = config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live
 
     while True:
         try:
+            market_open = is_market_open(broker)
+
             # Daily universe refresh — runs once per calendar day on the first open tick.
-            if config.risk.dynamic_universe and is_market_open(broker):
+            if config.risk.dynamic_universe and market_open:
                 today = date.today()
                 if universe_date != today:
                     current_strategies = _refresh_dynamic_universe(
                         config, broker, current_strategies
                     )
                     universe_date = today
+
+            # Nightly bandit refresh — runs once per calendar day on the first closed
+            # tick, so the day's fills are settled before the EWMA update.
+            if bandit_enabled and not market_open:
+                today = date.today()
+                if bandit_update_date != today:
+                    cycle_index = 1 + max(
+                        (ci for _, ci in repo.get_all_bandit_weights().values()),
+                        default=0,
+                    )
+                    run_nightly_bandit_update(config, broker, repo, cycle_index=cycle_index)
+                    bandit_update_date = today
 
             results = run_once(config, current_strategies, broker, repo)
             for r in results:

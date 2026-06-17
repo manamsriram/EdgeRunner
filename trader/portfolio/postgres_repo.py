@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS orders (
     side            TEXT NOT NULL,
     notional        REAL NOT NULL,
     status          TEXT NOT NULL,
-    broker_order_id TEXT
+    broker_order_id TEXT,
+    strategy_name   TEXT,
+    regime          TEXT
 );
 CREATE TABLE IF NOT EXISTS trades (
     id     SERIAL PRIMARY KEY,
@@ -73,6 +75,14 @@ CREATE TABLE IF NOT EXISTS position_owners (
     strategy   TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS bandit_weights (
+    strategy_name TEXT NOT NULL,
+    regime        TEXT NOT NULL,
+    weight        REAL NOT NULL,
+    cycle_index   INT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (strategy_name, regime)
+);
 """
 
 
@@ -93,6 +103,8 @@ class PostgresRepository(PortfolioRepository):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(_SCHEMA)
+                cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS strategy_name TEXT")
+                cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS regime TEXT")
 
     # ---- writes ----
 
@@ -122,14 +134,16 @@ class PostgresRepository(PortfolioRepository):
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO orders "
-                    "(client_order_id, ts, symbol, side, notional, status, broker_order_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                    "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
+                    "strategy_name, regime) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (client_order_id) DO UPDATE SET "
                     "status=EXCLUDED.status, "
                     "broker_order_id=COALESCE(EXCLUDED.broker_order_id, orders.broker_order_id) "
                     "RETURNING id",
                     (order.client_order_id, _now(), order.symbol, order.side,
-                     order.notional, order.status, order.broker_order_id),
+                     order.notional, order.status, order.broker_order_id,
+                     order.strategy_name, order.regime),
                 )
                 return int(cur.fetchone()["id"])
 
@@ -225,3 +239,35 @@ class PostgresRepository(PortfolioRepository):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM position_owners WHERE symbol=%s", (symbol,))
+
+    def get_bandit_weight(self, strategy: str, regime: str) -> float:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT weight FROM bandit_weights WHERE strategy_name=%s AND regime=%s",
+                    (strategy, regime),
+                )
+                row = cur.fetchone()
+                return float(row["weight"]) if row else 1.0
+
+    def save_bandit_weight(self, strategy: str, regime: str, weight: float, cycle_index: int) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO bandit_weights (strategy_name, regime, weight, cycle_index, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (strategy_name, regime) DO UPDATE SET "
+                    "weight=EXCLUDED.weight, cycle_index=EXCLUDED.cycle_index, updated_at=EXCLUDED.updated_at",
+                    (strategy, regime, weight, cycle_index, _now()),
+                )
+
+    def get_all_bandit_weights(self) -> dict[tuple[str, str], tuple[float, int]]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT strategy_name, regime, weight, cycle_index FROM bandit_weights"
+                )
+                return {
+                    (r["strategy_name"], r["regime"]): (float(r["weight"]), int(r["cycle_index"]))
+                    for r in cur.fetchall()
+                }

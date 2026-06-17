@@ -138,7 +138,9 @@ class AlpacaBroker:
         consistently expose this endpoint across SDK versions. Returns [] on any error
         — callers must handle empty list.
 
-        Each returned dict: {"symbol", "side", "qty", "price", "ts"}.
+        Each returned dict: {"symbol", "side", "qty", "price", "ts", "order_id"}.
+        "order_id" is Alpaca's own order id — matches our orders.broker_order_id,
+        not client_order_id.
         """
         import requests
 
@@ -170,6 +172,7 @@ class AlpacaBroker:
                         "qty": float(a["qty"]),
                         "price": float(a["price"]),
                         "ts": a.get("transaction_time", ""),
+                        "order_id": a.get("order_id"),
                     })
                 except (KeyError, ValueError, TypeError):
                     continue

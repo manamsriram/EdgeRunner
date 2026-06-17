@@ -31,6 +31,7 @@ from trader.portfolio.repository import (
 )
 from trader.risk.gate import KillSwitch, OrderIntent, RiskDecision, RiskGate, is_crypto_symbol
 from trader.risk.vol_sizing import vol_scale
+from trader.strategy.regime import classify_regime
 
 if TYPE_CHECKING:
     from trader.strategy.base import PairSignal, PairStrategy, Signal, Strategy
@@ -163,9 +164,27 @@ def run_pipeline(
         else:
             pending_buys.append((signal.strength, strategy, signal, bars, run_id))
 
-    # Phase 2: rank buys by signal strength (highest conviction first), execute in order.
-    # Each buy sizes off remaining free cash, so the best signal gets the most capital.
-    pending_buys.sort(key=lambda x: x[0], reverse=True)
+    # Phase 2: rank buys by signal strength; bandit weighting adjusts ranking when enabled.
+    if config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live:
+        _bandit_w = repo.get_all_bandit_weights()
+
+        def _rank_key(item):
+            raw, strat, sig, bars, _ = item
+            regime = classify_regime(bars)
+            arm = (type(strat).__name__, regime)
+            w, _ = _bandit_w.get(arm, (1.0, 0))
+            effective = raw * w
+            if config.risk.bandit_weighting_live:
+                return effective
+            logger.info(
+                "bandit shadow arm=%s effective=%.4f raw=%.4f weight=%.4f",
+                arm, effective, raw, w,
+            )
+            return raw
+
+        pending_buys.sort(key=_rank_key, reverse=True)
+    else:
+        pending_buys.sort(key=lambda x: x[0], reverse=True)
     for _, strategy, signal, bars, run_id in pending_buys:
         result = _execute_signal(
             signal=signal, bars=bars, run_id=run_id, strategy=strategy,
@@ -429,6 +448,8 @@ def _execute_signal(
             client_order_id=client_order_id, symbol=symbol,
             side=signal.side, notional=risk_decision.approved_notional,
             status="submitted", broker_order_id=broker_order_id or None,
+            strategy_name=type(strategy).__name__,
+            regime=classify_regime(bars),
         ))
         _env = "paper" if config.alpaca_paper else "LIVE"
         send_alert(

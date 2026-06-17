@@ -380,3 +380,85 @@ def test_sell_still_blocked_when_owner_strategy_active(tmp_path):
     sell_result = next(r for r in results if r.signal and r.signal.side == "sell")
     assert sell_result.outcome == "blocked"
     assert "ownership conflict" in sell_result.risk_decision.reason
+
+
+# ---- bandit weighting ----
+
+class _StratA(_FixedStrategy):
+    """Distinct class name for bandit tests — AAPL, low raw strength."""
+
+
+class _StratB(_FixedStrategy):
+    """Distinct class name for bandit tests — MSFT, high raw strength."""
+
+
+def _bandit_config(tmp_path, *, shadow: bool = False, live: bool = False) -> Config:
+    from dataclasses import replace as _replace
+    return Config(
+        alpaca_api_key="k",
+        alpaca_secret_key="s",
+        alpaca_paper=True,
+        autonomy="auto",
+        openai_api_key=None,
+        anthropic_api_key=None,
+        portfolio_db_path=str(tmp_path / "portfolio.db"),
+        kill_switch_path=str(tmp_path / "ks.flag"),
+        risk=RiskLimits(
+            max_position_pct=0.10,
+            max_trades_per_day=5,
+            daily_loss_limit_pct=0.03,
+            allowlist=("AAPL", "MSFT"),
+            bandit_weighting_shadow=shadow,
+            bandit_weighting_live=live,
+        ),
+    )
+
+
+def test_bandit_live_mode_reorders_buys_by_effective_strength(tmp_path):
+    """Live bandit: lower-raw-strength strategy with higher weight executes first.
+
+    _StratA AAPL: raw 0.5, weight 1.5 → effective 0.75
+    _StratB MSFT: raw 0.8, weight 0.4 → effective 0.32
+    Without bandit MSFT (0.8) goes first; live mode should put AAPL first.
+    """
+    cfg = _bandit_config(tmp_path, live=True)
+    SQLiteRepository(cfg.portfolio_db_path).save_bandit_weight("_StratA", "normal", 1.5, cycle_index=1)
+    SQLiteRepository(cfg.portfolio_db_path).save_bandit_weight("_StratB", "normal", 0.4, cycle_index=1)
+
+    _, _, broker = _run(
+        [_StratA("AAPL", "buy", strength=0.5), _StratB("MSFT", "buy", strength=0.8)],
+        cfg,
+    )
+
+    assert broker._client.submitted[0].symbol == "AAPL"
+    assert broker._client.submitted[1].symbol == "MSFT"
+
+
+def test_bandit_shadow_mode_does_not_change_ranking(tmp_path):
+    """Shadow mode: weights computed/logged but raw strength still determines order."""
+    cfg = _bandit_config(tmp_path, shadow=True)
+    SQLiteRepository(cfg.portfolio_db_path).save_bandit_weight("_StratA", "normal", 1.5, cycle_index=1)
+    SQLiteRepository(cfg.portfolio_db_path).save_bandit_weight("_StratB", "normal", 0.4, cycle_index=1)
+
+    _, _, broker = _run(
+        [_StratA("AAPL", "buy", strength=0.5), _StratB("MSFT", "buy", strength=0.8)],
+        cfg,
+    )
+
+    assert broker._client.submitted[0].symbol == "MSFT"
+    assert broker._client.submitted[1].symbol == "AAPL"
+
+
+def test_bandit_off_uses_raw_strength_ordering(tmp_path):
+    """Baseline: both flags off → raw strength orders buys regardless of stored weights."""
+    cfg = _bandit_config(tmp_path)
+    SQLiteRepository(cfg.portfolio_db_path).save_bandit_weight("_StratA", "normal", 1.5, cycle_index=1)
+    SQLiteRepository(cfg.portfolio_db_path).save_bandit_weight("_StratB", "normal", 0.4, cycle_index=1)
+
+    _, _, broker = _run(
+        [_StratA("AAPL", "buy", strength=0.5), _StratB("MSFT", "buy", strength=0.8)],
+        cfg,
+    )
+
+    assert broker._client.submitted[0].symbol == "MSFT"
+    assert broker._client.submitted[1].symbol == "AAPL"

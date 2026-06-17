@@ -39,6 +39,23 @@ def test_order_idempotent_on_client_order_id(repo):
     assert len(repo.get_orders()) == 1
 
 
+def test_order_persists_strategy_name_and_regime(repo):
+    repo.record_order(OrderRow(
+        "coid-2", "AAPL", "buy", 1000.0, "accepted",
+        strategy_name="DonchianBreakout", regime="calm",
+    ))
+    orders = repo.get_orders()
+    assert orders[0]["strategy_name"] == "DonchianBreakout"
+    assert orders[0]["regime"] == "calm"
+
+
+def test_order_strategy_name_and_regime_default_to_none(repo):
+    repo.record_order(OrderRow("coid-3", "AAPL", "buy", 1000.0, "accepted"))
+    orders = repo.get_orders()
+    assert orders[0]["strategy_name"] is None
+    assert orders[0]["regime"] is None
+
+
 def test_proposal_queue_lifecycle(repo):
     pid = repo.create_proposal(ProposalRow("MSFT", "buy", 500.0, 400.0, "momentum"))
     pending = repo.list_pending_proposals()
@@ -54,6 +71,35 @@ def test_wal_mode_enabled(repo):
         assert mode.lower() == "wal"
     finally:
         conn.close()
+
+
+def test_bandit_weight_defaults_to_one_when_not_set(repo):
+    assert repo.get_bandit_weight("DonchianBreakout", "calm") == 1.0
+
+
+def test_save_and_retrieve_bandit_weight(repo):
+    repo.save_bandit_weight("DonchianBreakout", "calm", 1.3, cycle_index=5)
+    assert repo.get_bandit_weight("DonchianBreakout", "calm") == 1.3
+
+
+def test_save_bandit_weight_upserts(repo):
+    repo.save_bandit_weight("DonchianBreakout", "calm", 1.3, cycle_index=5)
+    repo.save_bandit_weight("DonchianBreakout", "calm", 1.1, cycle_index=6)
+    assert repo.get_bandit_weight("DonchianBreakout", "calm") == 1.1
+
+
+def test_get_all_bandit_weights_empty(repo):
+    assert repo.get_all_bandit_weights() == {}
+
+
+def test_get_all_bandit_weights_returns_all(repo):
+    repo.save_bandit_weight("DonchianBreakout", "calm", 1.3, cycle_index=1)
+    repo.save_bandit_weight("SuperTrend", "trending", 0.8, cycle_index=2)
+    weights = repo.get_all_bandit_weights()
+    assert weights == {
+        ("DonchianBreakout", "calm"): (1.3, 1),
+        ("SuperTrend", "trending"): (0.8, 2),
+    }
 
 
 def test_coexists_with_app_users_table_no_destruction(tmp_path):

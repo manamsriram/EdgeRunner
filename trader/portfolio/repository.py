@@ -33,6 +33,8 @@ class OrderRow:
     notional: float
     status: str
     broker_order_id: str | None = None
+    strategy_name: str | None = None
+    regime: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,3 +104,15 @@ class PortfolioRepository(ABC):
     @abstractmethod
     def clear_position_owner(self, symbol: str) -> None:
         """Remove ownership for symbol. Called when a sell executes."""
+
+    @abstractmethod
+    def get_bandit_weight(self, strategy: str, regime: str) -> float:
+        """Return stored weight for (strategy, regime); 1.0 if never set."""
+
+    @abstractmethod
+    def save_bandit_weight(self, strategy: str, regime: str, weight: float, cycle_index: int) -> None:
+        """Upsert (strategy, regime) weight from the nightly batch."""
+
+    @abstractmethod
+    def get_all_bandit_weights(self) -> dict[tuple[str, str], tuple[float, int]]:
+        """Return all stored weights as {(strategy, regime): (weight, cycle_index)}."""

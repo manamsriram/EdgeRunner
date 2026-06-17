@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS orders (
     side            TEXT NOT NULL,
     notional        REAL NOT NULL,
     status          TEXT NOT NULL,
-    broker_order_id TEXT
+    broker_order_id TEXT,
+    strategy_name   TEXT,
+    regime          TEXT
 );
 CREATE TABLE IF NOT EXISTS trades (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +76,14 @@ CREATE TABLE IF NOT EXISTS position_owners (
     strategy   TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS bandit_weights (
+    strategy_name TEXT NOT NULL,
+    regime        TEXT NOT NULL,
+    weight        REAL NOT NULL,
+    cycle_index   INTEGER NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (strategy_name, regime)
+);
 """
 
 
@@ -98,6 +108,16 @@ class SQLiteRepository(PortfolioRepository):
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate_orders_columns(conn)
+
+    def _migrate_orders_columns(self, conn: sqlite3.Connection) -> None:
+        # CREATE TABLE IF NOT EXISTS only catches brand-new DBs; an existing
+        # orders table from before strategy_name/regime were added needs ALTER TABLE.
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(orders)")}
+        if "strategy_name" not in existing:
+            conn.execute("ALTER TABLE orders ADD COLUMN strategy_name TEXT")
+        if "regime" not in existing:
+            conn.execute("ALTER TABLE orders ADD COLUMN regime TEXT")
 
     # ---- writes ----
 
@@ -125,13 +145,15 @@ class SQLiteRepository(PortfolioRepository):
             # then we return the existing row's id.
             conn.execute(
                 "INSERT INTO orders "
-                "(client_order_id, ts, symbol, side, notional, status, broker_order_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
+                "strategy_name, regime) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(client_order_id) DO UPDATE SET "
                 "status=excluded.status, "
                 "broker_order_id=COALESCE(excluded.broker_order_id, orders.broker_order_id)",
                 (order.client_order_id, _now(), order.symbol, order.side,
-                 order.notional, order.status, order.broker_order_id),
+                 order.notional, order.status, order.broker_order_id,
+                 order.strategy_name, order.regime),
             )
             row = conn.execute(
                 "SELECT id FROM orders WHERE client_order_id=?",
@@ -220,3 +242,28 @@ class SQLiteRepository(PortfolioRepository):
     def clear_position_owner(self, symbol: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM position_owners WHERE symbol=?", (symbol,))
+
+    def get_bandit_weight(self, strategy: str, regime: str) -> float:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT weight FROM bandit_weights WHERE strategy_name=? AND regime=?",
+                (strategy, regime),
+            ).fetchone()
+            return float(row["weight"]) if row else 1.0
+
+    def save_bandit_weight(self, strategy: str, regime: str, weight: float, cycle_index: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO bandit_weights (strategy_name, regime, weight, cycle_index, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(strategy_name, regime) DO UPDATE SET "
+                "weight=excluded.weight, cycle_index=excluded.cycle_index, updated_at=excluded.updated_at",
+                (strategy, regime, weight, cycle_index, _now()),
+            )
+
+    def get_all_bandit_weights(self) -> dict[tuple[str, str], tuple[float, int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT strategy_name, regime, weight, cycle_index FROM bandit_weights"
+            ).fetchall()
+            return {(r["strategy_name"], r["regime"]): (float(r["weight"]), int(r["cycle_index"])) for r in rows}
