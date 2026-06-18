@@ -122,6 +122,45 @@ def _parse_response(text: str) -> dict:
 
 # ---- Core gate ----
 
+def fetch_fundamentals_finnhub(symbol: str, client) -> str:
+    """Fetch structured fundamentals from Finnhub. Returns '' on any failure."""
+    try:
+        metrics = client.basic_financials(symbol)
+        recs = client.recommendation_trends(symbol)
+        if not metrics:
+            return ""
+
+        lines = [f"Fundamentals ({symbol}, via Finnhub):"]
+
+        pe = metrics.get("peBasicExclExtraTTM") or metrics.get("peTTM")
+        if pe:
+            lines.append(f"- P/E (TTM): {pe:.1f}")
+
+        ev_ebitda = metrics.get("currentEv/freeCashFlowTTM")
+        if ev_ebitda:
+            lines.append(f"- EV/FCF (TTM): {ev_ebitda:.1f}")
+
+        gross_margin = metrics.get("grossMarginTTM")
+        if gross_margin is not None:
+            lines.append(f"- Gross Margin (TTM): {gross_margin:.1f}%")
+
+        rev_growth = metrics.get("revenueGrowthTTMYoy")
+        if rev_growth is not None:
+            lines.append(f"- Revenue Growth YoY: {rev_growth:.1f}%")
+
+        if recs:
+            latest = recs[0]
+            buy = latest.get("buy", 0)
+            hold = latest.get("hold", 0)
+            sell = latest.get("sell", 0)
+            period = latest.get("period", "")
+            lines.append(f"- Analyst consensus ({period}): {buy} buy, {hold} hold, {sell} sell")
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def check_fundamental_gate(
     symbol: str,
     bars: pd.DataFrame,
@@ -132,6 +171,7 @@ def check_fundamental_gate(
     date_str: str,
     gemini_key: str | None = None,
     gemini_model: str = "gemini-3.1-flash-lite",
+    finnhub_client=None,  # optional, used instead of yfinance when set
 ) -> bool:
     """Run fundamental + price-trend check for a first-entry equity buy.
 
@@ -146,7 +186,13 @@ def check_fundamental_gate(
             logger.debug("fundamental gate cache hit symbol=%s date=%s action=%s", symbol, date_str, cached["action"])
             return cached["action"] == "approve"
 
-        financials = fetch_financials(symbol)
+        # Try Finnhub first, fall back to yfinance
+        if finnhub_client is not None:
+            financials = fetch_fundamentals_finnhub(symbol, finnhub_client)
+        else:
+            financials = ""
+        if not financials:
+            financials = fetch_financials(symbol)  # existing yfinance fallback
         if not financials:
             logger.debug("fundamental gate no financials for %s — approving", symbol)
             return True  # not cached — retry fetch next tick

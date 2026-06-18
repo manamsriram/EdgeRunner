@@ -142,6 +142,7 @@ def apply_claude_overlay(
     claude_model: str,
     gemini_key: str | None = None,
     gemini_model: str = "gemini-3.1-flash-lite",
+    config=None,  # optional, enables Finnhub news path
 ) -> Signal:
     """Call LLM to review a quant signal. Returns original signal on any failure."""
     try:
@@ -156,7 +157,9 @@ def apply_claude_overlay(
         is_crypto = "/" in signal.symbol
         system_prompt = _CRYPTO_SYSTEM_PROMPT if is_crypto else _EQUITY_SYSTEM_PROMPT
 
-        news = fetch_news(signal.symbol)
+        # Use Finnhub news if available, else Alpaca news
+        from trader.overlay.news_context import fetch_news_with_fallback
+        news = fetch_news_with_fallback(signal.symbol, config) if config else fetch_news(signal.symbol)
         news_section = news if news else "No recent news available."
 
         user_message = (

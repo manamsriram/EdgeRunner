@@ -98,6 +98,7 @@ class Config:
     ccxt_secret_key: str | None = None
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
+    finnhub_api_key: str | None = None
 
     @property
     def alpaca_base_url(self) -> str:
@@ -171,4 +172,5 @@ def load_config() -> Config:
         ccxt_api_key=os.getenv("CCXT_API_KEY") or None,
         ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+        finnhub_api_key=os.getenv("FINNHUB_API_KEY") or None,
     )

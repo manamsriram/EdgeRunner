@@ -8,6 +8,88 @@ from concurrent.futures import ThreadPoolExecutor
 
 import yfinance as yf
 
+# ---- News classification (FinRobot-inspired) ----
+
+_NEWS_CATEGORIES: dict[str, list[str]] = {
+    "EARNINGS": ["earnings", "revenue", "profit", "eps", "guidance", "beat", "miss", "quarter", "sales"],
+    "REGULATORY": ["sec", "fda", "ftc", "antitrust", "fine", "penalty", "investigation", "ban", "lawsuit"],
+    "M&A": ["acquisition", "merger", "takeover", "buyout", "deal", "acquires", "acquired"],
+    "ANALYST": ["upgrade", "downgrade", "price target", "overweight", "underweight", "outperform", "buy rating"],
+    "PRODUCT": ["launch", "release", "product", "partnership", "contract", "wins", "awarded"],
+}
+
+
+def classify_news(headlines: list[str]) -> dict[str, list[str]]:
+    """Map each headline to matching categories. Returns {CATEGORY: [headlines]}."""
+    result: dict[str, list[str]] = {}
+    for headline in headlines:
+        hl_lower = headline.lower()
+        for category, keywords in _NEWS_CATEGORIES.items():
+            if any(kw in hl_lower for kw in keywords):
+                result.setdefault(category, []).append(headline)
+    return result
+
+
+def format_classified_news(symbol: str, categories: dict[str, list[str]]) -> str:
+    """Format classified news for LLM user message. Returns '' if no categories."""
+    if not categories:
+        return ""
+    parts = [f"Recent news ({symbol}):"]
+    for cat, headlines in categories.items():
+        for h in headlines[:2]:  # max 2 per category
+            parts.append(f"[{cat}] {h}")
+    return "\n".join(parts)
+
+
+# ---- Finnhub-backed news fetch ----
+
+# Module-level singleton (lazy-init)
+_finnhub_client = None
+
+
+def _reset_finnhub_client() -> None:
+    """Test helper — resets the Finnhub client singleton."""
+    global _finnhub_client
+    _finnhub_client = None
+
+
+def _get_finnhub_client(api_key: str):
+    global _finnhub_client
+    if _finnhub_client is None:
+        from trader.data.finnhub_client import FinnhubClient
+        _finnhub_client = FinnhubClient(api_key)
+    return _finnhub_client
+
+
+def fetch_news_finnhub(symbol: str, api_key: str, timeout: float = 5.0) -> str:
+    """Fetch and classify company news from Finnhub. Returns '' on any failure."""
+    try:
+        from datetime import date, timedelta
+        client = _get_finnhub_client(api_key)
+        today = date.today().isoformat()
+        week_ago = (date.today() - timedelta(days=7)).isoformat()
+        articles = client.company_news(symbol, from_date=week_ago, to_date=today, limit=8)
+        headlines = [a.get("headline", "") for a in articles if a.get("headline")]
+        if not headlines:
+            return ""
+        categories = classify_news(headlines)
+        return format_classified_news(symbol, categories)
+    except Exception:
+        return ""
+
+
+def fetch_news_with_fallback(symbol: str, config) -> str:
+    """Try Finnhub first (if FINNHUB_API_KEY set), fall back to fetch_news(). Never raises."""
+    try:
+        api_key = getattr(config, "finnhub_api_key", None)
+        if api_key:
+            result = fetch_news_finnhub(symbol, api_key)
+            if result:
+                return result
+    except Exception:
+        pass
+    return fetch_news(symbol)
+
 
 def fetch_news(
     symbol: str,

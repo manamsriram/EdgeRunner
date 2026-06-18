@@ -12,6 +12,19 @@ import pandas as pd
 
 from trader.strategy.base import Signal
 
+# ---- Finnhub client singleton ----
+
+_finnhub_client = None
+
+
+def _get_finnhub_client(config):
+    global _finnhub_client
+    key = getattr(config, "finnhub_api_key", None)
+    if key and _finnhub_client is None:
+        from trader.data.finnhub_client import FinnhubClient
+        _finnhub_client = FinnhubClient(key)
+    return _finnhub_client if getattr(config, "finnhub_api_key", None) else None
+
 
 def apply_fundamental_gate(
     symbol: str,
@@ -37,9 +50,11 @@ def apply_fundamental_gate(
     groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     claude_model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    finnhub_client = _get_finnhub_client(config)
     return check_fundamental_gate(
         symbol, bars, groq_key, groq_model, claude_key, claude_model, date_str,
         gemini_key=gemini_key, gemini_model=gemini_model,
+        finnhub_client=finnhub_client,
     )
 
 
@@ -66,4 +81,5 @@ def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
     return apply_claude_overlay(
         signal, bars, groq_key, groq_model, claude_key, claude_model,
         gemini_key=gemini_key, gemini_model=gemini_model,
+        config=config,
     )
