@@ -128,24 +128,38 @@ def test_update_with_no_fills_writes_nothing(repo):
     assert repo.get_all_bandit_weights() == {}
 
 
-def test_update_below_min_samples_writes_nothing(repo):
-    # Only 3 round-trips, below min_samples=20
-    fills = _make_profitable_fills(repo, "DonchianBreakout", "calm", "AAPL", n=3)
+def test_update_with_few_fills_still_updates(repo):
+    # Thompson sampling has no min_samples floor — updates even with 1 round-trip
+    fills = _make_profitable_fills(repo, "DonchianBreakout", "calm", "AAPL", n=1)
     weights = update_bandit_weights(repo, fills=fills, cycle_index=1)
-    assert weights == {}
+    assert ("DonchianBreakout", "calm") in weights
 
 
 def test_update_with_profitable_fills_raises_weight(repo):
     fills = _make_profitable_fills(repo, "DonchianBreakout", "calm", "AAPL", n=20)
     weights = update_bandit_weights(repo, fills=fills, cycle_index=1)
-    w = weights[("DonchianBreakout", "calm")]
-    assert w > DEFAULT_WEIGHT
-    assert repo.get_bandit_weight("DonchianBreakout", "calm") == pytest.approx(w)
+    arm = ("DonchianBreakout", "calm")
+    assert arm in weights
+    # After 20 wins, arm should have alpha=21, beta=1 → weight skews high
+    arms = repo.get_all_bandit_arms()
+    assert arms[arm][0] == 21  # alpha_wins
+    assert arms[arm][1] == 1   # beta_losses
 
 
 def test_update_forced_exploration_resets_to_default(repo):
-    # Prime the repo with a high weight, then force a reset at cycle_index=10
-    repo.save_bandit_weight("DonchianBreakout", "calm", 1.4, cycle_index=9)
-    fills = _make_profitable_fills(repo, "DonchianBreakout", "calm", "AAPL", n=20)
+    repo.save_bandit_arm("DonchianBreakout", "calm", 50, 5, 9, 1.45)
+    fills = _make_profitable_fills(repo, "DonchianBreakout", "calm", "AAPL", n=5)
     weights = update_bandit_weights(repo, fills=fills, cycle_index=10, every=10)
     assert weights[("DonchianBreakout", "calm")] == DEFAULT_WEIGHT
+    # Counts reset to (1, 1)
+    arms = repo.get_all_bandit_arms()
+    assert arms[("DonchianBreakout", "calm")] == (1, 1, 10)
+
+
+def test_bandit_arm_persisted_after_update(repo):
+    fills = _make_profitable_fills(repo, "SuperTrend", "normal", "AAPL", n=5)
+    update_bandit_weights(repo, fills=fills, cycle_index=1)
+    arms = repo.get_all_bandit_arms()
+    assert ("SuperTrend", "normal") in arms
+    alpha, beta, _ = arms[("SuperTrend", "normal")]
+    assert alpha >= 1 and beta >= 1

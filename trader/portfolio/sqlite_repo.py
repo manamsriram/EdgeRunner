@@ -109,6 +109,7 @@ class SQLiteRepository(PortfolioRepository):
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             self._migrate_orders_columns(conn)
+            self._migrate_bandit_columns(conn)
 
     def _migrate_orders_columns(self, conn: sqlite3.Connection) -> None:
         # CREATE TABLE IF NOT EXISTS only catches brand-new DBs; an existing
@@ -118,6 +119,13 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute("ALTER TABLE orders ADD COLUMN strategy_name TEXT")
         if "regime" not in existing:
             conn.execute("ALTER TABLE orders ADD COLUMN regime TEXT")
+
+    def _migrate_bandit_columns(self, conn: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(bandit_weights)")}
+        if "alpha_wins" not in existing:
+            conn.execute("ALTER TABLE bandit_weights ADD COLUMN alpha_wins INTEGER NOT NULL DEFAULT 1")
+        if "beta_losses" not in existing:
+            conn.execute("ALTER TABLE bandit_weights ADD COLUMN beta_losses INTEGER NOT NULL DEFAULT 1")
 
     # ---- writes ----
 
@@ -267,3 +275,30 @@ class SQLiteRepository(PortfolioRepository):
                 "SELECT strategy_name, regime, weight, cycle_index FROM bandit_weights"
             ).fetchall()
             return {(r["strategy_name"], r["regime"]): (float(r["weight"]), int(r["cycle_index"])) for r in rows}
+
+    def save_bandit_arm(self, strategy: str, regime: str,
+                        alpha: int, beta: int, cycle_index: int, weight: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO bandit_weights "
+                "(strategy_name, regime, weight, cycle_index, updated_at, alpha_wins, beta_losses) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(strategy_name, regime) DO UPDATE SET "
+                "weight=excluded.weight, cycle_index=excluded.cycle_index, "
+                "updated_at=excluded.updated_at, alpha_wins=excluded.alpha_wins, "
+                "beta_losses=excluded.beta_losses",
+                (strategy, regime, weight, cycle_index, _now(), alpha, beta),
+            )
+
+    def get_all_bandit_arms(self) -> dict[tuple[str, str], tuple[int, int, int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT strategy_name, regime, alpha_wins, beta_losses, cycle_index "
+                "FROM bandit_weights"
+            ).fetchall()
+            return {
+                (r["strategy_name"], r["regime"]): (
+                    int(r["alpha_wins"]), int(r["beta_losses"]), int(r["cycle_index"])
+                )
+                for r in rows
+            }

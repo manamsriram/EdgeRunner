@@ -105,6 +105,8 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute(_SCHEMA)
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS strategy_name TEXT")
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS regime TEXT")
+                cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS alpha_wins INTEGER NOT NULL DEFAULT 1")
+                cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS beta_losses INTEGER NOT NULL DEFAULT 1")
 
     # ---- writes ----
 
@@ -269,5 +271,34 @@ class PostgresRepository(PortfolioRepository):
                 )
                 return {
                     (r["strategy_name"], r["regime"]): (float(r["weight"]), int(r["cycle_index"]))
+                    for r in cur.fetchall()
+                }
+
+    def save_bandit_arm(self, strategy: str, regime: str,
+                        alpha: int, beta: int, cycle_index: int, weight: float) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO bandit_weights "
+                    "(strategy_name, regime, weight, cycle_index, updated_at, alpha_wins, beta_losses) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (strategy_name, regime) DO UPDATE SET "
+                    "weight=EXCLUDED.weight, cycle_index=EXCLUDED.cycle_index, "
+                    "updated_at=EXCLUDED.updated_at, alpha_wins=EXCLUDED.alpha_wins, "
+                    "beta_losses=EXCLUDED.beta_losses",
+                    (strategy, regime, weight, cycle_index, _now(), alpha, beta),
+                )
+
+    def get_all_bandit_arms(self) -> dict[tuple[str, str], tuple[int, int, int]]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT strategy_name, regime, alpha_wins, beta_losses, cycle_index "
+                    "FROM bandit_weights"
+                )
+                return {
+                    (r["strategy_name"], r["regime"]): (
+                        int(r["alpha_wins"]), int(r["beta_losses"]), int(r["cycle_index"])
+                    )
                     for r in cur.fetchall()
                 }

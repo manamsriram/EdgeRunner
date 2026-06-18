@@ -116,3 +116,12 @@ class PortfolioRepository(ABC):
     @abstractmethod
     def get_all_bandit_weights(self) -> dict[tuple[str, str], tuple[float, int]]:
         """Return all stored weights as {(strategy, regime): (weight, cycle_index)}."""
+
+    @abstractmethod
+    def save_bandit_arm(self, strategy: str, regime: str,
+                        alpha: int, beta: int, cycle_index: int, weight: float) -> None:
+        """Upsert (strategy, regime) Thompson arm counts and sampled weight."""
+
+    @abstractmethod
+    def get_all_bandit_arms(self) -> dict[tuple[str, str], tuple[int, int, int]]:
+        """Return {(strategy, regime): (alpha_wins, beta_losses, cycle_index)}."""

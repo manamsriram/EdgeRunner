@@ -3,7 +3,7 @@
 Consumes broker fill dicts (from AlpacaBroker.get_account_activities), joins them
 to the orders table via broker_order_id → order_id to recover (strategy, regime)
 context, computes FIFO realized P&L per (strategy, regime) arm, then runs one
-EWMA update step per arm and persists the result.
+Thompson Sampling update step per arm and persists the result.
 
 Called by the scheduler (nightly, after market close). Shadow-mode is enforced
 upstream via the config flags — this module always writes weights regardless; the
@@ -15,8 +15,9 @@ from collections import defaultdict
 
 from trader.learning.bandit_weights import (
     DEFAULT_WEIGHT,
-    apply_forced_exploration,
-    ewma_weight,
+    should_reset,
+    thompson_sample,
+    update_arm,
 )
 from trader.portfolio.repository import PortfolioRepository
 
@@ -76,14 +77,12 @@ def update_bandit_weights(
     repo: PortfolioRepository,
     fills: list[dict],
     cycle_index: int = 0,
-    alpha: float = 0.3,
-    min_samples: int = 20,
     every: int = 10,
 ) -> dict[tuple[str, str], float]:
-    """Run one nightly EWMA update for all active (strategy, regime) arms.
+    """Run one nightly Thompson Sampling update for all active (strategy, regime) arms.
 
-    Returns the final weight map (empty dict if no arms had enough data).
-    Persists all updated weights to repo.
+    Returns the final weight map (empty dict if no fills produced P&L data).
+    Persists all updated arms to repo.
     """
     if not fills:
         return {}
@@ -94,22 +93,20 @@ def update_bandit_weights(
     if not pnls:
         return {}
 
-    existing = repo.get_all_bandit_weights()
+    existing_arms = repo.get_all_bandit_arms()
     result: dict[tuple[str, str], float] = {}
 
     for arm, arm_pnls in pnls.items():
-        prev_weight, _ = existing.get(arm, (DEFAULT_WEIGHT, 0))
-        new_weight = ewma_weight(
-            prev_weight=prev_weight,
-            pnls=arm_pnls,
-            min_samples=min_samples,
-            alpha=alpha,
-        )
-        if new_weight == DEFAULT_WEIGHT and len(arm_pnls) < min_samples:
-            # ewma_weight returned default due to insufficient samples — don't write
-            continue
-        new_weight = apply_forced_exploration(new_weight, cycle_index=cycle_index, every=every)
-        repo.save_bandit_weight(arm[0], arm[1], new_weight, cycle_index=cycle_index)
-        result[arm] = new_weight
+        alpha, beta, _ = existing_arms.get(arm, (1, 1, 0))
+        new_alpha, new_beta = update_arm(alpha, beta, arm_pnls)
+
+        if should_reset(cycle_index, every):
+            new_alpha, new_beta = 1, 1
+            weight = DEFAULT_WEIGHT
+        else:
+            weight = thompson_sample(new_alpha, new_beta)
+
+        repo.save_bandit_arm(arm[0], arm[1], new_alpha, new_beta, cycle_index, weight=weight)
+        result[arm] = weight
 
     return result
