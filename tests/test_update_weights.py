@@ -144,6 +144,9 @@ def test_update_with_profitable_fills_raises_weight(repo):
     arms = repo.get_all_bandit_arms()
     assert arms[arm][0] == 21  # alpha_wins
     assert arms[arm][1] == 1   # beta_losses
+    # Weight should be > DEFAULT_WEIGHT given 20 wins and 0 losses
+    stored_weight = repo.get_bandit_weight("DonchianBreakout", "calm")
+    assert stored_weight > DEFAULT_WEIGHT
 
 
 def test_update_forced_exploration_resets_to_default(repo):

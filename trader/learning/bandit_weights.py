@@ -44,7 +44,7 @@ def ewma_weight(
 def apply_forced_exploration(weight: float, cycle_index: int, every: int = 10) -> float:
     """Every `every`-th nightly cycle, reset to DEFAULT_WEIGHT so a converged
     low-weight arm still gets full priority and keeps generating fresh data."""
-    if every > 0 and cycle_index % every == 0:
+    if every > 0 and cycle_index > 0 and cycle_index % every == 0:
         return DEFAULT_WEIGHT
     return weight
 
