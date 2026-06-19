@@ -321,6 +321,7 @@ class SQLiteRepository(PortfolioRepository):
             )
 
     def get_ic_series(self, strategy: str, regime: str, limit: int = 60) -> list[float]:
+        # ORDER BY ts works correctly only when ts values are full ISO-8601 UTC strings
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT ic FROM arm_ic_series WHERE strategy_name=? AND regime=? "

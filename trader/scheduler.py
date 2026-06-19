@@ -91,7 +91,8 @@ def run_nightly_bandit_update(
     if not (config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live):
         return {}
 
-    from trader.learning.update_weights import update_bandit_weights
+    from trader.learning.update_weights import record_ic_observations, update_bandit_weights  # noqa: F401 — record_ic_observations wired here when bars_cache available
+    # TODO: wire record_ic_observations after compute_ic_from_broker_fills
 
     try:
         fills = broker.get_account_activities(activity_type="FILL")

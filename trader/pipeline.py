@@ -450,6 +450,7 @@ def _execute_signal(
             status="submitted", broker_order_id=broker_order_id or None,
             strategy_name=type(strategy).__name__,
             regime=classify_regime(bars),
+            signal_strength=signal.strength,
         ))
         _env = "paper" if config.alpaca_paper else "LIVE"
         send_alert(

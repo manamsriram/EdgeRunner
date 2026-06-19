@@ -322,6 +322,7 @@ class PostgresRepository(PortfolioRepository):
                 )
 
     def get_ic_series(self, strategy: str, regime: str, limit: int = 60) -> list[float]:
+        # ORDER BY ts works correctly only when ts values are full ISO-8601 UTC strings
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(

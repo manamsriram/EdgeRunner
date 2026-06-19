@@ -7,6 +7,7 @@ a trade or flips buy↔sell.
 from __future__ import annotations
 
 import os
+import threading
 
 import pandas as pd
 
@@ -15,21 +16,25 @@ from trader.strategy.base import Signal
 # ---- Finnhub client singleton ----
 
 _finnhub_client = None
+_finnhub_lock = threading.Lock()
 
 
 def _reset_finnhub_client() -> None:
     """Test helper — resets the Finnhub client singleton."""
     global _finnhub_client
-    _finnhub_client = None
+    with _finnhub_lock:
+        _finnhub_client = None
 
 
 def _get_finnhub_client(config):
     global _finnhub_client
     key = getattr(config, "finnhub_api_key", None)
     if key and _finnhub_client is None:
-        from trader.data.finnhub_client import FinnhubClient
-        _finnhub_client = FinnhubClient(key)
-    return _finnhub_client if getattr(config, "finnhub_api_key", None) else None
+        with _finnhub_lock:
+            if _finnhub_client is None:
+                from trader.data.finnhub_client import FinnhubClient
+                _finnhub_client = FinnhubClient(key)
+    return _finnhub_client if key else None
 
 
 # ---- Sentiment client singleton ----
