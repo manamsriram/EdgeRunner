@@ -99,6 +99,8 @@ class Config:
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
     finnhub_api_key: str | None = None
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None
 
     @property
     def alpaca_base_url(self) -> str:
@@ -173,4 +175,6 @@ def load_config() -> Config:
         ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         finnhub_api_key=os.getenv("FINNHUB_API_KEY") or None,
+        reddit_client_id=os.getenv("REDDIT_CLIENT_ID") or None,
+        reddit_client_secret=os.getenv("REDDIT_CLIENT_SECRET") or None,
     )

@@ -32,6 +32,31 @@ def _get_finnhub_client(config):
     return _finnhub_client if getattr(config, "finnhub_api_key", None) else None
 
 
+# ---- Sentiment client singleton ----
+
+_sentiment_client = None
+
+
+def _reset_sentiment_client() -> None:
+    """Test helper."""
+    global _sentiment_client
+    _sentiment_client = None
+
+
+def _get_sentiment_client(config, finnhub_client):
+    global _sentiment_client
+    rid = getattr(config, "reddit_client_id", None)
+    rsecret = getattr(config, "reddit_client_secret", None)
+    if _sentiment_client is None and (rid or finnhub_client is not None):
+        from trader.data.sentiment_client import SentimentClient
+        _sentiment_client = SentimentClient(
+            finnhub_client=finnhub_client,
+            reddit_client_id=rid,
+            reddit_client_secret=rsecret,
+        )
+    return _sentiment_client
+
+
 def apply_fundamental_gate(
     symbol: str,
     bars: pd.DataFrame,
@@ -84,8 +109,11 @@ def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
     groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     claude_model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    finnhub_client = _get_finnhub_client(config)
+    sentiment_client = _get_sentiment_client(config, finnhub_client)
     return apply_claude_overlay(
         signal, bars, groq_key, groq_model, claude_key, claude_model,
         gemini_key=gemini_key, gemini_model=gemini_model,
         config=config,
+        sentiment_client=sentiment_client,
     )

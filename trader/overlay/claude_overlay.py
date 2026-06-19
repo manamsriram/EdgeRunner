@@ -143,6 +143,7 @@ def apply_claude_overlay(
     gemini_key: str | None = None,
     gemini_model: str = "gemini-3.1-flash-lite",
     config=None,  # optional, enables Finnhub news path
+    sentiment_client=None,  # NEW — crypto sentiment overlay
 ) -> Signal:
     """Call LLM to review a quant signal. Returns original signal on any failure."""
     try:
@@ -162,12 +163,20 @@ def apply_claude_overlay(
         news = fetch_news_with_fallback(signal.symbol, config) if config else fetch_news(signal.symbol)
         news_section = news if news else "No recent news available."
 
+        sentiment_str = ""
+        is_crypto = "/" in signal.symbol
+        if is_crypto and sentiment_client is not None:
+            snap = sentiment_client.get_sentiment(signal.symbol)
+            sentiment_str = sentiment_client.format_for_overlay(snap)
+
         user_message = (
             f"Signal: {signal.side} {signal.symbol} | "
             f"strength={signal.strength:.2f} | reason: {signal.reason}\n\n"
             f"{_bars_context(signal.symbol, bars)}\n\n"
             f"{news_section}"
         )
+        if sentiment_str:
+            user_message += f"\n\n{sentiment_str}"
 
         logger.info(
             "overlay request symbol=%s side=%s strength=%.2f news_lines=%d",

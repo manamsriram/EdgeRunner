@@ -229,3 +229,35 @@ def test_fetch_financials_error_returns_empty(monkeypatch):
 
     result = news_context.fetch_financials("AAPL")
     assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# Integration 4: Crypto Sentiment Layer
+# ---------------------------------------------------------------------------
+
+def test_apply_overlay_passes_sentiment_to_crypto_signal():
+    """Sentiment client called for crypto symbols, not equity."""
+    from unittest.mock import MagicMock, patch
+    import pandas as pd
+    from trader.strategy.base import Signal
+    from trader.overlay import apply_overlay, _reset_sentiment_client
+
+    _reset_sentiment_client()
+
+    class FakeConfig:
+        groq_api_key = None
+        anthropic_api_key = "test-key"
+        gemini_api_key = None
+        finnhub_api_key = None
+        reddit_client_id = None
+        reddit_client_secret = None
+
+    bars = pd.DataFrame({"open": [100.0], "high": [101.0], "low": [99.0],
+                         "close": [100.0], "volume": [1000.0]})
+    signal = Signal(symbol="BTC/USD", side="buy", strength=0.7, reason="breakout")
+
+    with patch("trader.overlay.claude_overlay.apply_claude_overlay") as mock_overlay:
+        mock_overlay.return_value = signal
+        apply_overlay(signal, bars, config=FakeConfig())
+        call_kwargs = mock_overlay.call_args[1]
+        assert "sentiment_client" in call_kwargs
