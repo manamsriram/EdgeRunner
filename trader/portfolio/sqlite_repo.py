@@ -84,6 +84,14 @@ CREATE TABLE IF NOT EXISTS bandit_weights (
     updated_at    TEXT NOT NULL,
     PRIMARY KEY (strategy_name, regime)
 );
+CREATE TABLE IF NOT EXISTS arm_ic_series (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_name TEXT NOT NULL,
+    regime        TEXT NOT NULL,
+    ic            REAL NOT NULL,
+    ts            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arm_ic ON arm_ic_series(strategy_name, regime, ts DESC);
 """
 
 
@@ -119,6 +127,8 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute("ALTER TABLE orders ADD COLUMN strategy_name TEXT")
         if "regime" not in existing:
             conn.execute("ALTER TABLE orders ADD COLUMN regime TEXT")
+        if "signal_strength" not in existing:
+            conn.execute("ALTER TABLE orders ADD COLUMN signal_strength REAL")
 
     def _migrate_bandit_columns(self, conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(bandit_weights)")}
@@ -154,14 +164,14 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute(
                 "INSERT INTO orders "
                 "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
-                "strategy_name, regime) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "strategy_name, regime, signal_strength) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(client_order_id) DO UPDATE SET "
                 "status=excluded.status, "
                 "broker_order_id=COALESCE(excluded.broker_order_id, orders.broker_order_id)",
                 (order.client_order_id, _now(), order.symbol, order.side,
                  order.notional, order.status, order.broker_order_id,
-                 order.strategy_name, order.regime),
+                 order.strategy_name, order.regime, order.signal_strength),
             )
             row = conn.execute(
                 "SELECT id FROM orders WHERE client_order_id=?",
@@ -302,3 +312,19 @@ class SQLiteRepository(PortfolioRepository):
                 )
                 for r in rows
             }
+
+    def append_ic_observation(self, strategy: str, regime: str, ic: float, ts: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO arm_ic_series (strategy_name, regime, ic, ts) VALUES (?, ?, ?, ?)",
+                (strategy, regime, ic, ts),
+            )
+
+    def get_ic_series(self, strategy: str, regime: str, limit: int = 60) -> list[float]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT ic FROM arm_ic_series WHERE strategy_name=? AND regime=? "
+                "ORDER BY ts DESC LIMIT ?",
+                (strategy, regime, limit),
+            ).fetchall()
+        return [float(r["ic"]) for r in reversed(rows)]  # oldest-first

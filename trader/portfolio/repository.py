@@ -35,6 +35,7 @@ class OrderRow:
     broker_order_id: str | None = None
     strategy_name: str | None = None
     regime: str | None = None
+    signal_strength: float | None = None
 
 
 @dataclass(frozen=True)
@@ -125,3 +126,11 @@ class PortfolioRepository(ABC):
     @abstractmethod
     def get_all_bandit_arms(self) -> dict[tuple[str, str], tuple[int, int, int]]:
         """Return {(strategy, regime): (alpha_wins, beta_losses, cycle_index)}."""
+
+    @abstractmethod
+    def append_ic_observation(self, strategy: str, regime: str, ic: float, ts: str) -> None:
+        """Append one IC data point to arm_ic_series."""
+
+    @abstractmethod
+    def get_ic_series(self, strategy: str, regime: str, limit: int = 60) -> list[float]:
+        """Return the most recent `limit` IC values, oldest-first."""

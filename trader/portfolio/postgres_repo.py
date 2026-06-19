@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS bandit_weights (
     updated_at    TEXT NOT NULL,
     PRIMARY KEY (strategy_name, regime)
 );
+CREATE TABLE IF NOT EXISTS arm_ic_series (
+    id            SERIAL PRIMARY KEY,
+    strategy_name TEXT NOT NULL,
+    regime        TEXT NOT NULL,
+    ic            REAL NOT NULL,
+    ts            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arm_ic ON arm_ic_series(strategy_name, regime, ts DESC);
 """
 
 
@@ -105,6 +113,7 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute(_SCHEMA)
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS strategy_name TEXT")
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS regime TEXT")
+                cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS signal_strength REAL")
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS alpha_wins INTEGER NOT NULL DEFAULT 1")
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS beta_losses INTEGER NOT NULL DEFAULT 1")
 
@@ -137,15 +146,15 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute(
                     "INSERT INTO orders "
                     "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
-                    "strategy_name, regime) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "strategy_name, regime, signal_strength) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (client_order_id) DO UPDATE SET "
                     "status=EXCLUDED.status, "
                     "broker_order_id=COALESCE(EXCLUDED.broker_order_id, orders.broker_order_id) "
                     "RETURNING id",
                     (order.client_order_id, _now(), order.symbol, order.side,
                      order.notional, order.status, order.broker_order_id,
-                     order.strategy_name, order.regime),
+                     order.strategy_name, order.regime, order.signal_strength),
                 )
                 return int(cur.fetchone()["id"])
 
@@ -302,3 +311,23 @@ class PostgresRepository(PortfolioRepository):
                     )
                     for r in cur.fetchall()
                 }
+
+    def append_ic_observation(self, strategy: str, regime: str, ic: float, ts: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO arm_ic_series (strategy_name, regime, ic, ts) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (strategy, regime, ic, ts),
+                )
+
+    def get_ic_series(self, strategy: str, regime: str, limit: int = 60) -> list[float]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ic FROM arm_ic_series WHERE strategy_name=%s AND regime=%s "
+                    "ORDER BY ts DESC LIMIT %s",
+                    (strategy, regime, limit),
+                )
+                rows = cur.fetchall()
+        return [float(r["ic"]) for r in reversed(rows)]

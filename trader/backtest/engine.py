@@ -118,7 +118,8 @@ def run_backtest(
                 cash -= spend
                 open_entry = {"date": fill_date, "price": price, "shares": shares}
                 fills.append({"date": fill_date, "side": "buy", "price": price,
-                              "shares": shares, "reason": signal.reason})
+                              "shares": shares, "reason": signal.reason,
+                              "signal_strength": getattr(signal, "strength", None)})
 
         elif signal.side == "sell" and shares > 0.0:
             price = cost_model.fill_price(next_open, "sell")

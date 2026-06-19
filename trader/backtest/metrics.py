@@ -25,6 +25,8 @@ class Metrics:
     win_rate: float
     turnover: int          # number of round-trip trades
     final_equity: float
+    ic: float | None = None
+    icir: float | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -37,6 +39,8 @@ class Metrics:
             "win_rate": self.win_rate,
             "turnover": self.turnover,
             "final_equity": self.final_equity,
+            "ic": self.ic,
+            "icir": self.icir,
         }
 
 
@@ -136,11 +140,54 @@ def compute_metrics(equity: pd.Series, trades: list) -> Metrics:
     )
 
 
+def compute_ic_from_backtest_fills(
+    fills: list[dict],
+    bars: pd.DataFrame,
+) -> tuple[float | None, float | None]:
+    """Compute (ic, icir) from backtest fills.
+
+    Pairs each buy fill's signal_strength with the next-bar return:
+      next_bar_return = (close[fill_date + 1] / close[fill_date]) - 1
+
+    Returns (None, None) on any error or insufficient data.
+    Uses backtest fill keys: 'date', 'side', 'signal_strength'.
+    """
+    buy_fills = [f for f in fills if f.get("side") == "buy"
+                 and f.get("signal_strength") is not None]
+    if len(buy_fills) < 5:
+        return None, None
+
+    strengths: list[float] = []
+    next_returns: list[float] = []
+
+    closes = bars["close"] if "close" in bars.columns else bars.get("Close")
+    if closes is None:
+        return None, None
+
+    for f in buy_fills:
+        date = f["date"]
+        try:
+            idx = closes.index.get_loc(date)
+        except KeyError:
+            continue
+        if idx + 1 >= len(closes):
+            continue
+        ret = float(closes.iloc[idx + 1] / closes.iloc[idx] - 1)
+        strengths.append(float(f["signal_strength"]))
+        next_returns.append(ret)
+
+    from trader.learning.ic_metrics import compute_ic, compute_icir
+    ic = compute_ic(strengths, next_returns)
+    icir = compute_icir([ic] if ic is not None else [])
+    return ic, icir
+
+
 def format_report(
     result,
     strategy_name: str,
     symbol: str,
     benchmark_equity: Optional[pd.Series] = None,
+    bars: Optional[pd.DataFrame] = None,
 ) -> str:
     """Human-readable report comparing the strategy to buy-and-hold.
 
@@ -150,6 +197,10 @@ def format_report(
     in the docs.
     """
     strat = compute_metrics(result.equity_curve, result.trades)
+    if bars is not None:
+        import dataclasses
+        ic, icir = compute_ic_from_backtest_fills(result.fills, bars)
+        strat = dataclasses.replace(strat, ic=ic, icir=icir)
     bh = compute_metrics(result.buy_hold_curve, [])
     lines = [
         f"Backtest: {strategy_name} on {symbol}",
@@ -165,6 +216,10 @@ def format_report(
         f"{'round trips':<20}{strat.turnover:>16d}{0:>16d}",
         f"{'final equity':<20}{strat.final_equity:>16.0f}{bh.final_equity:>16.0f}",
     ]
+    if strat.ic is not None:
+        lines.append(f"{'IC':<20}{strat.ic:>16.3f}{'':>16}")
+    if strat.icir is not None:
+        lines.append(f"{'ICIR':<20}{strat.icir:>16.3f}{'':>16}")
     if benchmark_equity is not None:
         b = _beta(result.equity_curve, benchmark_equity)
         beta_str = f"{b:.2f}" if not np.isnan(b) else "n/a"

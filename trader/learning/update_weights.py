@@ -13,12 +13,17 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import numpy as np
+
 from trader.learning.bandit_weights import (
     DEFAULT_WEIGHT,
+    WEIGHT_CEIL,
+    WEIGHT_FLOOR,
     should_reset,
     thompson_sample,
     update_arm,
 )
+from trader.learning.ic_metrics import compute_icir, ic_weight_nudge
 from trader.portfolio.repository import PortfolioRepository
 
 
@@ -107,6 +112,25 @@ def update_bandit_weights(
             weight = thompson_sample(new_alpha, new_beta)
 
         repo.save_bandit_arm(arm[0], arm[1], new_alpha, new_beta, cycle_index, weight=weight)
+
+        # Apply IC nudge: fetch stored IC series, compute ICIR, add small delta
+        ic_series = repo.get_ic_series(arm[0], arm[1])
+        icir = compute_icir(ic_series)
+        nudge = ic_weight_nudge(icir)
+        if nudge != 0.0:
+            weight = float(np.clip(weight + nudge, WEIGHT_FLOOR, WEIGHT_CEIL))
+            repo.save_bandit_arm(arm[0], arm[1], new_alpha, new_beta, cycle_index, weight=weight)
         result[arm] = weight
 
     return result
+
+
+def record_ic_observations(
+    repo: PortfolioRepository,
+    ic_by_arm: dict[tuple[str, str], float],
+) -> None:
+    """Persist IC observations. Called from scheduler after computing IC from broker fills."""
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).isoformat()
+    for (strategy, regime), ic in ic_by_arm.items():
+        repo.append_ic_observation(strategy, regime, ic, ts)
