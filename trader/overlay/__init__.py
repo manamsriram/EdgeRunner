@@ -17,6 +17,12 @@ from trader.strategy.base import Signal
 _finnhub_client = None
 
 
+def _reset_finnhub_client() -> None:
+    """Test helper — resets the Finnhub client singleton."""
+    global _finnhub_client
+    _finnhub_client = None
+
+
 def _get_finnhub_client(config):
     global _finnhub_client
     key = getattr(config, "finnhub_api_key", None)

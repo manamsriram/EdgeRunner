@@ -43,25 +43,31 @@ def format_classified_news(symbol: str, categories: dict[str, list[str]]) -> str
 
 # ---- Finnhub-backed news fetch ----
 
-# Module-level singleton (lazy-init)
+import threading
+
+# Module-level singleton (lazy-init, thread-safe)
 _finnhub_client = None
+_finnhub_lock = threading.Lock()
 
 
 def _reset_finnhub_client() -> None:
     """Test helper — resets the Finnhub client singleton."""
     global _finnhub_client
-    _finnhub_client = None
+    with _finnhub_lock:
+        _finnhub_client = None
 
 
 def _get_finnhub_client(api_key: str):
     global _finnhub_client
     if _finnhub_client is None:
-        from trader.data.finnhub_client import FinnhubClient
-        _finnhub_client = FinnhubClient(api_key)
+        with _finnhub_lock:
+            if _finnhub_client is None:
+                from trader.data.finnhub_client import FinnhubClient
+                _finnhub_client = FinnhubClient(api_key)
     return _finnhub_client
 
 
-def fetch_news_finnhub(symbol: str, api_key: str, timeout: float = 5.0) -> str:
+def fetch_news_finnhub(symbol: str, api_key: str) -> str:
     """Fetch and classify company news from Finnhub. Returns '' on any failure."""
     try:
         from datetime import date, timedelta

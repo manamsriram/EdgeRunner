@@ -132,12 +132,14 @@ def fetch_fundamentals_finnhub(symbol: str, client) -> str:
 
         lines = [f"Fundamentals ({symbol}, via Finnhub):"]
 
-        pe = metrics.get("peBasicExclExtraTTM") or metrics.get("peTTM")
-        if pe:
+        pe = metrics.get("peBasicExclExtraTTM")
+        if pe is None:
+            pe = metrics.get("peTTM")
+        if pe is not None:
             lines.append(f"- P/E (TTM): {pe:.1f}")
 
         ev_ebitda = metrics.get("currentEv/freeCashFlowTTM")
-        if ev_ebitda:
+        if ev_ebitda is not None:
             lines.append(f"- EV/FCF (TTM): {ev_ebitda:.1f}")
 
         gross_margin = metrics.get("grossMarginTTM")
