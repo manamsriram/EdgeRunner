@@ -164,7 +164,6 @@ def apply_claude_overlay(
         news_section = news if news else "No recent news available."
 
         sentiment_str = ""
-        is_crypto = "/" in signal.symbol
         if is_crypto and sentiment_client is not None:
             snap = sentiment_client.get_sentiment(signal.symbol)
             sentiment_str = sentiment_client.format_for_overlay(snap)
