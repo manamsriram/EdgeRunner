@@ -60,3 +60,9 @@ def test_ic_weight_nudge_negative_icir_negative_nudge():
 def test_ic_weight_nudge_clamped_at_scale():
     assert ic_weight_nudge(100.0, scale=0.05) == pytest.approx(0.05)
     assert ic_weight_nudge(-100.0, scale=0.05) == pytest.approx(-0.05)
+
+
+def test_compute_ic_returns_none_on_zero_variance():
+    # All strengths identical → np.corrcoef returns nan → must return None
+    ic = compute_ic([0.5, 0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.4, 0.5])
+    assert ic is None

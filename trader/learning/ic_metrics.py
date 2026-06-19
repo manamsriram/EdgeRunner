@@ -7,7 +7,8 @@ def compute_ic(strengths: list[float], returns: list[float]) -> float | None:
     """Pearson corr(strength, return). Returns None when < 5 pairs or if inputs differ in length."""
     if len(strengths) < 5 or len(strengths) != len(returns):
         return None
-    return float(np.corrcoef(strengths, returns)[0, 1])
+    result = float(np.corrcoef(strengths, returns)[0, 1])
+    return None if np.isnan(result) else result
 
 
 def compute_icir(ic_series: list[float], window: int = 20) -> float | None:

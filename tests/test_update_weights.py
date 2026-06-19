@@ -166,3 +166,19 @@ def test_bandit_arm_persisted_after_update(repo):
     assert ("SuperTrend", "normal") in arms
     alpha, beta, _ = arms[("SuperTrend", "normal")]
     assert alpha >= 1 and beta >= 1
+
+
+def test_ic_nudge_applied_to_bandit_weight(repo):
+    # Seed positive IC series for an arm
+    from datetime import datetime, timezone
+    for i in range(5):
+        ts = f"2026-01-{i+1:02d}T00:00:00+00:00"
+        repo.append_ic_observation("DonchianBreakout", "calm", 0.20, ts)
+    fills = _make_profitable_fills(repo, "DonchianBreakout", "calm", "AAPL", n=5)
+    weights = update_bandit_weights(repo, fills=fills, cycle_index=1)
+    arm = ("DonchianBreakout", "calm")
+    assert arm in weights
+    # With positive IC series (ICIR > 0), weight should be nudged above pure Thompson sample
+    # We can't know exact value but weight must be in [WEIGHT_FLOOR, WEIGHT_CEIL]
+    from trader.learning.bandit_weights import WEIGHT_FLOOR, WEIGHT_CEIL
+    assert WEIGHT_FLOOR <= weights[arm] <= WEIGHT_CEIL

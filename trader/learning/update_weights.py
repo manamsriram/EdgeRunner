@@ -111,15 +111,14 @@ def update_bandit_weights(
         else:
             weight = thompson_sample(new_alpha, new_beta)
 
-        repo.save_bandit_arm(arm[0], arm[1], new_alpha, new_beta, cycle_index, weight=weight)
-
-        # Apply IC nudge: fetch stored IC series, compute ICIR, add small delta
+        # Apply IC nudge before writing: fetch stored IC series, compute ICIR, add small delta
         ic_series = repo.get_ic_series(arm[0], arm[1])
         icir = compute_icir(ic_series)
         nudge = ic_weight_nudge(icir)
         if nudge != 0.0:
             weight = float(np.clip(weight + nudge, WEIGHT_FLOOR, WEIGHT_CEIL))
-            repo.save_bandit_arm(arm[0], arm[1], new_alpha, new_beta, cycle_index, weight=weight)
+        # Single write with final weight
+        repo.save_bandit_arm(arm[0], arm[1], new_alpha, new_beta, cycle_index, weight=weight)
         result[arm] = weight
 
     return result
