@@ -2,7 +2,7 @@ pandas
 numpy
 yfinance==0.2.31
 beautifulsoup4==4.12.2
-requests==2.31.0
+requests==2.33.0
 python-dotenv==1.0.0
 # --- trading-agent foundation (Phase 0-2) ---
 alpaca-py==0.43.4
