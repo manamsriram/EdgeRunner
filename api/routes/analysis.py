@@ -42,7 +42,7 @@ async def run_analysis(body: AnalysisRequest, username: str = Depends(get_curren
             yield f"data: {json.dumps({'chunk': result})}\n\n"
         except Exception as exc:
             logger.exception("analysis failed for user %s", username)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            yield f"data: {json.dumps({'error': 'analysis failed'})}\n\n"
         finally:
             yield f"data: {json.dumps({'done': True})}\n\n"
 

@@ -1,7 +1,6 @@
 """Shared FastAPI dependencies — singletons for config, repo, broker, and auth."""
 from __future__ import annotations
 
-import hashlib
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -154,13 +153,7 @@ def verify_and_upgrade(plain: str, username: str) -> bool:
         stored: str = row["password"]
         if stored.startswith("$2"):
             return bcrypt.checkpw(plain.encode(), stored.encode())
-        if hashlib.sha256(plain.encode()).hexdigest() != stored:
-            return False
-        new_hash = bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE users SET password=%s WHERE username=%s", (new_hash, username))
-        return True
+        return False
 
     with _connect() as conn:
         row = conn.execute(
@@ -171,13 +164,7 @@ def verify_and_upgrade(plain: str, username: str) -> bool:
     stored = row["password"]
     if stored.startswith("$2"):
         return bcrypt.checkpw(plain.encode(), stored.encode())
-    if hashlib.sha256(plain.encode()).hexdigest() != stored:
-        return False
-    new_hash = bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
-    with _connect() as conn:
-        conn.execute("UPDATE users SET password=? WHERE username=?", (new_hash, username))
-        conn.commit()
-    return True
+    return False
 
 
 def hash_password(plain: str) -> str:
