@@ -1,7 +1,4 @@
-import { Navigate, NavLink, Outlet } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
-import { useAuth } from '../hooks/useAuth'
-import { logout } from '../lib/api'
+import { NavLink, Outlet } from 'react-router-dom'
 
 const NAV = [
   { to: '/portfolio', label: 'Portfolio' },
@@ -12,27 +9,6 @@ const NAV = [
 ]
 
 export default function ProtectedLayout() {
-  const { user, isLoading, isAuthenticated } = useAuth()
-  const qc = useQueryClient()
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen text-slate-400">
-        Loading…
-      </div>
-    )
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
-  }
-
-  const handleLogout = async () => {
-    await logout()
-    qc.clear()
-    window.location.href = '/login'
-  }
-
   return (
     <div className="flex min-h-screen bg-slate-900">
       {/* Sidebar */}
@@ -53,15 +29,6 @@ export default function ProtectedLayout() {
             {label}
           </NavLink>
         ))}
-        <div className="mt-auto text-xs text-slate-400 px-2">
-          <div className="mb-2">{user?.username}</div>
-          <button
-            onClick={handleLogout}
-            className="text-slate-400 hover:text-white transition-colors"
-          >
-            Logout
-          </button>
-        </div>
       </aside>
 
       {/* Main */}

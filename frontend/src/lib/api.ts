@@ -2,50 +2,7 @@ import axios from 'axios'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/',
-  withCredentials: true,
 })
-
-let _refreshing: Promise<void> | null = null
-
-api.interceptors.response.use(
-  (r) => r,
-  async (err) => {
-    const original = err.config
-    // Never intercept the refresh endpoint itself — prevents circular deadlock
-    if (
-      err.response?.status === 401 &&
-      !original._retry &&
-      !original.url?.includes('/auth/refresh')
-    ) {
-      original._retry = true
-      if (!_refreshing) {
-        _refreshing = api
-          .post('/auth/refresh')
-          .then(() => {})
-          .finally(() => { _refreshing = null })
-      }
-      try {
-        await _refreshing
-        return api.request(original)
-      } catch {
-        _refreshing = null
-        return Promise.reject(err)
-      }
-    }
-    return Promise.reject(err)
-  }
-)
-
-// ---- auth ----
-export const login = (username: string, password: string) =>
-  api.post<{ username: string; full_name: string }>('/auth/login', { username, password })
-
-export const logout = () => api.post('/auth/logout')
-
-export const getMe = () => api.get<{ username: string; email: string; full_name: string }>('/auth/me')
-
-export const getHistory = () =>
-  api.get<Array<{ query: string; response: string; timestamp: string }>>('/auth/history')
 
 // ---- proposals ----
 export const getProposals = () => api.get<Proposal[]>('/api/proposals')
