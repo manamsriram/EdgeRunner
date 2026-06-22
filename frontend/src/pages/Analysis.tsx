@@ -1,6 +1,4 @@
 import { useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getHistory } from '../lib/api'
 
 export default function Analysis() {
   const [query, setQuery] = useState('')
@@ -8,11 +6,6 @@ export default function Analysis() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const abortRef = useRef<AbortController | null>(null)
-
-  const { data: history = [] } = useQuery({
-    queryKey: ['history'],
-    queryFn: () => getHistory().then((r) => r.data),
-  })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -30,10 +23,11 @@ export default function Analysis() {
       const res = await fetch('/api/analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
+
         body: JSON.stringify({ query }),
         signal: ctrl.signal,
       })
+
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
@@ -118,30 +112,7 @@ export default function Analysis() {
         </div>
       )}
 
-      {/* Query History */}
-      {history.length > 0 && (
-        <div>
-          <h3 className="text-lg font-bold text-white mb-3">Your Query History</h3>
-          <div className="flex flex-col gap-3">
-            {history.map((h, i) => (
-              <details
-                key={i}
-                className="bg-slate-800 border border-slate-700 rounded-xl"
-              >
-                <summary className="px-4 py-3 cursor-pointer text-slate-300 text-sm hover:text-white list-none flex justify-between">
-                  <span className="truncate max-w-lg">{h.query}</span>
-                  <span className="text-slate-500 text-xs shrink-0 ml-3">
-                    {new Date(h.timestamp).toLocaleDateString()}
-                  </span>
-                </summary>
-                <div className="px-4 pb-4 text-slate-400 text-sm whitespace-pre-wrap border-t border-slate-700 pt-3 mt-0">
-                  {h.response}
-                </div>
-              </details>
-            ))}
-          </div>
-        </div>
-      )}
+
     </div>
   )
 }
