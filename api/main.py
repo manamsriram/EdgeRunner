@@ -64,7 +64,8 @@ async def _scheduler_loop() -> None:
         logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
 
     strategies = _build_strategies_for(cfg, symbols)
-    universe_date = None
+    from datetime import date as _date
+    universe_date = _date.today() if cfg.risk.dynamic_universe else None
     signal_precomputed_date = None
     while True:
         try:
@@ -143,7 +144,8 @@ async def _crypto_scheduler_loop() -> None:
         strategies = _build_crypto_strategies(cfg)
         logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
 
-    crypto_universe_date = None
+    from datetime import date as _date
+    crypto_universe_date = _date.today() if cfg.risk.dynamic_crypto_universe else None
     while True:
         try:
             if cfg.risk.dynamic_crypto_universe:
