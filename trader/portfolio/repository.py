@@ -83,6 +83,14 @@ class PortfolioRepository(ABC):
     def set_proposal_status(self, proposal_id: int, status: str) -> None: ...
 
     @abstractmethod
+    def try_approve_proposal(self, proposal_id: int) -> dict | None:
+        """Atomically claim a pending proposal for approval.
+
+        Does UPDATE WHERE status='pending'. Returns proposal dict on success, None if
+        already claimed or resolved by a concurrent request (caller should return 409).
+        """
+
+    @abstractmethod
     def get_orders(self) -> list[dict]: ...
 
     @abstractmethod

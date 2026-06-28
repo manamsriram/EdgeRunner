@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Literal
 
 from trader.alerts import send_alert
 from trader.config import Config
-from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch
+from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch, get_live_prices_batch
 from trader.data.crypto_bars import get_crypto_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
 from trader.overlay import apply_fundamental_gate, apply_overlay
@@ -118,10 +118,15 @@ def run_pipeline(
     equity_symbols = list({
         s.symbol for s in strategies if not is_crypto_symbol(s.symbol)
     })
+    live_prices: dict[str, float] = {}
     if equity_symbols:
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
         bars_cache: dict[str, object] = get_daily_bars_batch(equity_symbols, start, end, config)
+        try:
+            live_prices = get_live_prices_batch(equity_symbols, config)
+        except Exception:
+            logger.warning("live quote fetch failed; stop-loss uses yesterday's close")
     else:
         bars_cache = {}
 
@@ -137,6 +142,7 @@ def run_pipeline(
             state=state,
             asof=asof,
             bars_cache=bars_cache,
+            live_prices=live_prices,
         )
         if prep is None:
             continue
@@ -152,7 +158,7 @@ def run_pipeline(
             result = _execute_signal(
                 signal=signal, bars=bars, run_id=run_id, strategy=strategy,
                 config=config, broker=broker, repo=repo, gate=gate,
-                kill_switch=kill_switch, state=state, asof=asof,
+                kill_switch=kill_switch, state=state, asof=asof, live_prices=live_prices,
             )
             results.append(result)
             logger.info(
@@ -189,7 +195,7 @@ def run_pipeline(
         result = _execute_signal(
             signal=signal, bars=bars, run_id=run_id, strategy=strategy,
             config=config, broker=broker, repo=repo, gate=gate,
-            kill_switch=kill_switch, state=state, asof=asof,
+            kill_switch=kill_switch, state=state, asof=asof, live_prices=live_prices,
         )
         results.append(result)
         logger.info(
@@ -240,6 +246,7 @@ def _prepare_signal(
     state,
     asof,
     bars_cache: dict | None = None,
+    live_prices: dict | None = None,
 ):
     """Generate and pre-screen a signal for a strategy.
 
@@ -271,7 +278,7 @@ def _prepare_signal(
             else:
                 strategy._warmed_up = True
 
-        current_price = float(bars["close"].iloc[-1])
+        current_price = (live_prices or {}).get(symbol) or float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
         _stop_exempt = state.position_owners.get(symbol) == "DipRecovery"
         if (
@@ -389,6 +396,7 @@ def _execute_signal(
     kill_switch,
     state,
     asof,
+    live_prices: dict | None = None,
 ):
     """Gate evaluation and order submission for a pre-generated signal."""
     symbol = signal.symbol
@@ -401,7 +409,15 @@ def _execute_signal(
                 outcome="blocked",
             )
 
-        ref_price = float(bars["close"].iloc[-1])
+        ref_price = (live_prices or {}).get(signal.symbol) or float(bars["close"].iloc[-1])
+
+        # For auto-mode sells: cancel broker-side stop before gate evaluation so the
+        # open stop order doesn't appear in open_order_symbols and block the sell.
+        if signal.side == "sell" and config.autonomy == "auto" and not is_crypto_symbol(symbol):
+            broker.cancel_open_stops(symbol)
+            from dataclasses import replace as _replace_for_gate
+            state = _replace_for_gate(state, open_order_symbols=state.open_order_symbols - {symbol})
+
         notional = _notional_for(signal, state, config, ref_price, bars=bars)
         intent = OrderIntent(
             symbol=symbol, side=signal.side,
@@ -452,6 +468,23 @@ def _execute_signal(
             regime=classify_regime(bars),
             signal_strength=signal.strength,
         ))
+
+        # Place a broker-side GTC stop to protect new long positions.
+        if signal.side == "buy" and not is_crypto_symbol(symbol):
+            stop_price = ref_price * (1 - config.risk.stop_loss_pct)
+            stop_qty = round(risk_decision.approved_notional / ref_price, 6)
+            stop_oid = client_order_id_for(
+                today, symbol, "sell", f"stop-{type(strategy).__name__}"
+            )
+            try:
+                broker.place_stop_order(
+                    symbol=symbol, qty=stop_qty,
+                    stop_price=stop_price, client_order_id=stop_oid,
+                )
+                logger.info("placed GTC stop for %s at %.2f", symbol, stop_price)
+            except Exception:
+                logger.exception("stop order failed for %s — software stop remains active", symbol)
+
         _env = "paper" if config.alpaca_paper else "LIVE"
         send_alert(
             f"FILL {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",

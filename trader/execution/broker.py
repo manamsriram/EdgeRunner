@@ -49,6 +49,7 @@ class _TradingClient(Protocol):
     def get_order_by_client_id(self, client_id: str) -> Any: ...
     def get_portfolio_history(self, history_filter: Any = None) -> Any: ...
     def get_account_activities(self, filter: Any = None) -> Any: ...
+    def cancel_order_by_id(self, order_id: str) -> None: ...
 
 
 class AlpacaBroker:
@@ -287,6 +288,62 @@ class AlpacaBroker:
                 notional=None, qty=whole_qty,
             )
             return self._submit_idempotent(client, request, client_order_id)
+
+    def place_stop_order(
+        self,
+        *,
+        symbol: str,
+        qty: float,
+        stop_price: float,
+        client_order_id: str,
+    ) -> Any:
+        """Place a GTC stop-market order to protect a long position.
+
+        Idempotent: a duplicate client_order_id returns the existing order.
+        Only call for equity symbols — crypto uses separate stop logic.
+        """
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.requests import StopOrderRequest
+
+        client = self._ensure_client()
+        request = StopOrderRequest(
+            symbol=symbol,
+            qty=round(qty, 6),
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.GTC,
+            stop_price=round(stop_price, 2),
+            client_order_id=client_order_id,
+        )
+        return self._submit_idempotent(client, request, client_order_id)
+
+    def cancel_open_stops(self, symbol: str) -> None:
+        """Cancel open GTC stop-sell orders for symbol. Best-effort — logs failures."""
+        try:
+            client = self._ensure_client()
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+
+            open_orders = client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            )
+            for order in open_orders:
+                order_type = str(
+                    getattr(order, "order_type", None) or getattr(order, "type", "")
+                ).lower()
+                if (
+                    order.symbol == symbol
+                    and order_type in {"stop", "stop_limit"}
+                    and str(getattr(order, "side", "")).lower() == "sell"
+                ):
+                    try:
+                        client.cancel_order_by_id(str(order.id))
+                        logger.info("cancelled stop order %s for %s", order.id, symbol)
+                    except Exception:
+                        logger.warning(
+                            "failed to cancel stop order %s for %s", order.id, symbol
+                        )
+        except Exception:
+            logger.exception("cancel_open_stops failed for %s", symbol)
 
     def _submit_idempotent(
         self, client: _TradingClient, request: Any, client_order_id: str

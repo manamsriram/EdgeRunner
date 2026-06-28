@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,10 +22,9 @@ router = APIRouter(prefix="/proposals", tags=["proposals"])
 
 
 def _get_pending_proposal(proposal_id: int) -> dict | None:
-    """Fetch a single proposal by id; returns None if not found."""
+    """Fetch a pending proposal by id; used for reject (low race risk)."""
     repo = get_repo()
-    all_pending = repo.list_pending_proposals()
-    for p in all_pending:
+    for p in repo.list_pending_proposals():
         if p["id"] == proposal_id:
             return p
     return None
@@ -41,13 +39,13 @@ def list_proposals(username: str = Depends(get_current_user)):
 def approve(proposal_id: int, username: str = Depends(get_current_user)):
     repo = get_repo()
     broker = get_broker()
+    config = get_config()
 
-    proposal = _get_pending_proposal(proposal_id)
+    # Atomic claim: UPDATE WHERE status='pending' — rejects concurrent duplicates.
+    proposal = repo.try_approve_proposal(proposal_id)
     if proposal is None:
         raise HTTPException(status_code=409, detail="proposal already resolved or not found")
 
-    # Mark approved before submitting to Alpaca — rollback to pending on any failure
-    repo.set_proposal_status(proposal_id, PROPOSAL_APPROVED)
     try:
         created_at = datetime.fromisoformat(str(proposal["created_at"]))
         trade_date = created_at.date()
@@ -60,6 +58,11 @@ def approve(proposal_id: int, username: str = Depends(get_current_user)):
             if not ref_price:
                 repo.set_proposal_status(proposal_id, PROPOSAL_PENDING)
                 raise HTTPException(status_code=422, detail="cannot submit sell: ref_price is zero")
+            # Cancel any broker-side stop order before closing the position.
+            try:
+                broker.cancel_open_stops(proposal["symbol"])
+            except Exception:
+                logger.warning("cancel_open_stops failed for %s; proceeding with sell", proposal["symbol"])
             qty = proposal["notional"] / ref_price
             order = broker.submit(
                 symbol=proposal["symbol"],
@@ -74,6 +77,31 @@ def approve(proposal_id: int, username: str = Depends(get_current_user)):
                 client_order_id=coid,
                 notional=proposal["notional"],
             )
+            # Place a GTC stop order to protect the new long position.
+            ref_price = proposal["ref_price"]
+            if ref_price and ref_price > 0:
+                from trader.risk.gate import is_crypto_symbol
+                if not is_crypto_symbol(proposal["symbol"]):
+                    stop_price = ref_price * (1 - config.risk.stop_loss_pct)
+                    stop_qty = proposal["notional"] / ref_price
+                    stop_coid = client_order_id_for(
+                        trade_date, proposal["symbol"], "sell", f"stop-proposal-{proposal_id}"
+                    )
+                    try:
+                        broker.place_stop_order(
+                            symbol=proposal["symbol"],
+                            qty=stop_qty,
+                            stop_price=stop_price,
+                            client_order_id=stop_coid,
+                        )
+                        logger.info(
+                            "placed GTC stop for %s at %.2f", proposal["symbol"], stop_price
+                        )
+                    except Exception:
+                        logger.warning(
+                            "broker stop order failed for %s — software stop remains active",
+                            proposal["symbol"],
+                        )
 
         repo.record_order(OrderRow(
             client_order_id=coid,

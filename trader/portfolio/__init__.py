@@ -4,9 +4,8 @@ Holds orders, trades, signals, runs, and proposals (the manual-approval queue fo
 Phase 4 decision gate). It deliberately does NOT store positions — those come live from
 `broker.reconcile()`, which is the source of truth.
 
-The `PortfolioRepository` interface comes first so a Supabase/Postgres adapter can drop
-in later untouched; the local `SQLiteRepository` ships now so the order path is testable
-and runnable with zero provisioning.
+Production uses `PostgresRepository` (Supabase). `SQLiteRepository` is kept in
+`trader/portfolio/sqlite_repo.py` for test use only.
 """
 from trader.portfolio.repository import (
     OrderRow,
@@ -15,13 +14,11 @@ from trader.portfolio.repository import (
     SignalRow,
     TradeRow,
 )
-from trader.portfolio.sqlite_repo import SQLiteRepository
 
 __all__ = [
     "OrderRow",
     "PortfolioRepository",
     "ProposalRow",
-    "SQLiteRepository",
     "SignalRow",
     "TradeRow",
 ]

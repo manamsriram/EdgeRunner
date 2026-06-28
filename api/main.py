@@ -33,19 +33,18 @@ async def _scheduler_loop() -> None:
     """
     from trader.config import load_config
     from trader.execution.broker import AlpacaBroker
-    from trader.portfolio.sqlite_repo import SQLiteRepository
+    from trader.portfolio.postgres_repo import PostgresRepository
     from trader.scheduler import _build_strategies_for, run_once
 
     cfg = load_config()
     if not cfg.alpaca_api_key:
         logger.warning("ALPACA_API_KEY not set — scheduler disabled")
         return
+    if not cfg.database_url:
+        logger.error("DATABASE_URL not set — equity scheduler disabled")
+        return
 
-    if cfg.database_url:
-        from trader.portfolio.postgres_repo import PostgresRepository
-        repo = PostgresRepository(cfg.database_url)
-    else:
-        repo = SQLiteRepository(cfg.portfolio_db_path)
+    repo = PostgresRepository(cfg.database_url)
 
     broker = AlpacaBroker(cfg)
 
@@ -89,7 +88,7 @@ async def _crypto_scheduler_loop() -> None:
     """
     from trader.config import load_config
     from trader.execution.broker import AlpacaBroker
-    from trader.portfolio.sqlite_repo import SQLiteRepository
+    from trader.portfolio.postgres_repo import PostgresRepository
     from trader.scheduler import _build_crypto_strategies, _build_crypto_strategies_for, run_once_crypto
 
     cfg = load_config()
@@ -98,12 +97,11 @@ async def _crypto_scheduler_loop() -> None:
     if not cfg.risk.crypto_allowlist and not cfg.risk.dynamic_crypto_universe:
         logger.info("CRYPTO_ALLOWLIST not set and DYNAMIC_CRYPTO_UNIVERSE disabled — crypto scheduler disabled")
         return
+    if not cfg.database_url:
+        logger.error("DATABASE_URL not set — crypto scheduler disabled")
+        return
 
-    if cfg.database_url:
-        from trader.portfolio.postgres_repo import PostgresRepository
-        repo = PostgresRepository(cfg.database_url)
-    else:
-        repo = SQLiteRepository(cfg.portfolio_db_path)
+    repo = PostgresRepository(cfg.database_url)
 
     broker = AlpacaBroker(cfg)
 

@@ -33,14 +33,19 @@ async def run_analysis(body: AnalysisRequest, username: str = Depends(get_curren
         try:
             from tools.fetch_stock_info import Analyze_stock
 
-            result: str = await loop.run_in_executor(None, Analyze_stock, body.query)
-            # Save to query history
+            result: str = await asyncio.wait_for(
+                loop.run_in_executor(None, Analyze_stock, body.query),
+                timeout=120.0,
+            )
             try:
                 save_query(username, body.query, result)
             except Exception:
                 logger.warning("failed to save query for %s", username)
             yield f"data: {json.dumps({'chunk': result})}\n\n"
-        except Exception as exc:
+        except asyncio.TimeoutError:
+            logger.warning("analysis timed out for user %s", username)
+            yield f"data: {json.dumps({'error': 'analysis timed out after 120s'})}\n\n"
+        except Exception:
             logger.exception("analysis failed for user %s", username)
             yield f"data: {json.dumps({'error': 'analysis failed'})}\n\n"
         finally:

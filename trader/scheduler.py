@@ -17,7 +17,7 @@ from trader.config import Config, load_config
 from trader.execution.broker import AlpacaBroker
 from trader.pipeline import PipelineRun, run_pipeline
 from trader.portfolio.repository import PortfolioRepository
-from trader.portfolio.sqlite_repo import SQLiteRepository
+from trader.portfolio.postgres_repo import PostgresRepository
 from trader.risk.gate import KillSwitch, is_crypto_symbol
 
 if TYPE_CHECKING:
@@ -429,8 +429,10 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     cfg.require_alpaca()
+    if not cfg.database_url:
+        raise RuntimeError("DATABASE_URL is required for standalone scheduler")
     _broker = AlpacaBroker(cfg)
-    _repo = SQLiteRepository(cfg.portfolio_db_path)
+    _repo = PostgresRepository(cfg.database_url)
 
     # Launch crypto scheduler in a background thread when crypto trading is enabled.
     # Dynamic mode: start empty — universe built on first tick.

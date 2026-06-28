@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
@@ -35,11 +34,10 @@ def get_config():
 @lru_cache(maxsize=1)
 def get_repo():
     cfg = get_config()
-    if cfg.database_url:
-        from trader.portfolio.postgres_repo import PostgresRepository
-        return PostgresRepository(cfg.database_url)
-    from trader.portfolio.sqlite_repo import SQLiteRepository
-    return SQLiteRepository(cfg.portfolio_db_path)
+    if not cfg.database_url:
+        raise RuntimeError("DATABASE_URL is required — set it to your Supabase pooler URI")
+    from trader.portfolio.postgres_repo import PostgresRepository
+    return PostgresRepository(cfg.database_url)
 
 
 @lru_cache(maxsize=1)
@@ -86,21 +84,7 @@ def get_current_user(request: Request) -> str:
     return decode_token(token)
 
 
-# ---- auth DB: SQLite path ----
-
-def _db_path() -> str:
-    return get_config().portfolio_db_path
-
-
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False, timeout=10.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
-
-
-# ---- auth DB: Postgres path ----
+# ---- auth DB (Postgres / Supabase) ----
 
 _pg_auth_schema_initialized = False
 _PG_AUTH_SCHEMA = """
@@ -137,31 +121,19 @@ def _ensure_pg_auth_schema() -> None:
     _pg_auth_schema_initialized = True
 
 
-# ---- password helpers (backend-agnostic) ----
+# ---- password helpers ----
 
 
 def verify_and_upgrade(plain: str, username: str) -> bool:
-    """Verify password; silently upgrade SHA256 → bcrypt on first successful login."""
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT password FROM users WHERE username=%s", (username,))
-                row = cur.fetchone()
-        if not row:
-            return False
-        stored: str = row["password"]
-        if stored.startswith("$2"):
-            return bcrypt.checkpw(plain.encode(), stored.encode())
-        return False
-
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT password FROM users WHERE username=?", (username,)
-        ).fetchone()
+    """Verify password against bcrypt hash stored in Postgres."""
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password FROM users WHERE username=%s", (username,))
+            row = cur.fetchone()
     if not row:
         return False
-    stored = row["password"]
+    stored: str = row["password"]
     if stored.startswith("$2"):
         return bcrypt.checkpw(plain.encode(), stored.encode())
     return False
@@ -172,110 +144,62 @@ def hash_password(plain: str) -> str:
 
 
 def get_user(username: str) -> dict | None:
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT username, email, full_name FROM users WHERE username=%s", (username,)
-                )
-                row = cur.fetchone()
-        return dict(row) if row else None
-
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT username, email, full_name FROM users WHERE username=?", (username,)
-        ).fetchone()
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT username, email, full_name FROM users WHERE username=%s", (username,)
+            )
+            row = cur.fetchone()
     return dict(row) if row else None
 
 
 def username_exists(username: str) -> bool:
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM users WHERE username=%s", (username,))
-                return cur.fetchone() is not None
-
-    with _connect() as conn:
-        return bool(
-            conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
-        )
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM users WHERE username=%s", (username,))
+            return cur.fetchone() is not None
 
 
 def email_exists(email: str) -> bool:
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM users WHERE email=%s", (email,))
-                return cur.fetchone() is not None
-
-    with _connect() as conn:
-        return bool(
-            conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone()
-        )
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM users WHERE email=%s", (email,))
+            return cur.fetchone() is not None
 
 
 def create_user(username: str, email: str, full_name: str, plain_password: str) -> None:
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO users (username, password, email, full_name, created_at) "
-                    "VALUES (%s, %s, %s, %s, %s)",
-                    (username, hash_password(plain_password), email, full_name,
-                     datetime.now(timezone.utc).isoformat()),
-                )
-        return
-
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO users (username, password, email, full_name, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (username, hash_password(plain_password), email, full_name,
-             datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (username, password, email, full_name, created_at) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (username, hash_password(plain_password), email, full_name,
+                 datetime.now(timezone.utc).isoformat()),
+            )
 
 
 def save_query(username: str, query: str, response: str) -> None:
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO queries (username, query, response, timestamp) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (username, query, response, datetime.now(timezone.utc).isoformat()),
-                )
-        return
-
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO queries (username, query, response, timestamp) VALUES (?, ?, ?, ?)",
-            (username, query, response, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO queries (username, query, response, timestamp) "
+                "VALUES (%s, %s, %s, %s)",
+                (username, query, response, datetime.now(timezone.utc).isoformat()),
+            )
 
 
 def get_user_history(username: str) -> list[dict]:
-    if get_config().database_url:
-        _ensure_pg_auth_schema()
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT query, response, timestamp FROM queries "
-                    "WHERE username=%s ORDER BY timestamp DESC",
-                    (username,),
-                )
-                return [dict(r) for r in cur.fetchall()]
-
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT query, response, timestamp FROM queries "
-            "WHERE username=? ORDER BY timestamp DESC",
-            (username,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    _ensure_pg_auth_schema()
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT query, response, timestamp FROM queries "
+                "WHERE username=%s ORDER BY timestamp DESC",
+                (username,),
+            )
+            return [dict(r) for r in cur.fetchall()]

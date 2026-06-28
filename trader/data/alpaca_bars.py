@@ -10,7 +10,7 @@ Returns a tidy OHLCV DataFrame indexed by a tz-naive daily DatetimeIndex with co
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -19,6 +19,10 @@ from trader.config import Config, load_config
 logger = logging.getLogger(__name__)
 
 BAR_COLUMNS = ["open", "high", "low", "close", "volume"]
+
+# Daily bars don't change intraday — cache per symbol, invalidate at day boundary.
+_bars_cache: dict[str, pd.DataFrame] = {}
+_bars_cache_date: date | None = None
 
 
 def get_daily_bars(
@@ -69,38 +73,98 @@ def get_daily_bars_batch(
     Returns {symbol: DataFrame}. Symbols with no data (halted, recently listed,
     delisted) are logged and omitted from the result rather than raising.
     Uses require_alpaca_credentials (not require_alpaca) — data fetch only, no orders.
-    """
-    from alpaca.data.historical import StockHistoricalDataClient
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
-    from alpaca.data.enums import Adjustment, DataFeed
 
-    config = config or load_config()
-    config.require_alpaca_credentials()
+    Results are cached by symbol for the calendar day — daily bars don't change
+    intraday, so repeated 60s scheduler ticks reuse the same DataFrames.
+    """
+    global _bars_cache, _bars_cache_date
 
     if not symbols:
         return {}
+
+    today = end.date()
+    if _bars_cache_date != today:
+        _bars_cache = {}
+        _bars_cache_date = today
+
+    missing = [s for s in symbols if s not in _bars_cache]
+    if missing:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from alpaca.data.enums import Adjustment, DataFeed
+
+        config = config or load_config()
+        config.require_alpaca_credentials()
+
+        client = StockHistoricalDataClient(
+            api_key=config.alpaca_api_key,
+            secret_key=config.alpaca_secret_key,
+        )
+        request = StockBarsRequest(
+            symbol_or_symbols=missing,
+            timeframe=TimeFrame.Day,
+            start=start,
+            end=end,
+            feed=DataFeed.IEX,
+            adjustment=Adjustment.ALL,
+        )
+        bars = client.get_stock_bars(request)
+        # Strip today's partial bar so only completed trading days are cached.
+        # Intraday partial bars cause stale signals on every subsequent 60s tick.
+        today_ts = pd.Timestamp.today().normalize()
+        for sym in missing:
+            try:
+                df = _to_frame(bars.df, sym)
+                _bars_cache[sym] = df[df.index < today_ts]
+            except Exception:
+                logger.warning("no bar data for %s — skipping", sym)
+        logger.debug("bars cache miss: fetched %d symbols, cache now %d", len(missing), len(_bars_cache))
+
+    return {s: _bars_cache[s] for s in symbols if s in _bars_cache}
+
+
+def get_live_prices_batch(
+    symbols: list[str],
+    config: Config | None = None,
+) -> dict[str, float]:
+    """Fetch latest bid/ask midpoint for equity symbols. No caching — fresh each call.
+
+    Used by the pipeline for intraday stop-loss checks and order sizing. Falls back to
+    ask or bid alone when the spread is one-sided. Symbols with no quote are omitted;
+    callers fall back to bars[-1].close for those.
+    """
+    if not symbols:
+        return {}
+
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockLatestQuoteRequest
+
+    config = config or load_config()
+    config.require_alpaca_credentials()
 
     client = StockHistoricalDataClient(
         api_key=config.alpaca_api_key,
         secret_key=config.alpaca_secret_key,
     )
-    request = StockBarsRequest(
-        symbol_or_symbols=symbols,
-        timeframe=TimeFrame.Day,
-        start=start,
-        end=end,
-        feed=DataFeed.IEX,
-        adjustment=Adjustment.ALL,
-    )
-    bars = client.get_stock_bars(request)
+    try:
+        quotes = client.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=symbols)
+        )
+    except Exception:
+        logger.warning("live quote fetch failed for %d symbols", len(symbols))
+        return {}
 
-    result: dict[str, pd.DataFrame] = {}
-    for sym in symbols:
-        try:
-            result[sym] = _to_frame(bars.df, sym)
-        except Exception:
-            logger.warning("no bar data for %s — skipping", sym)
+    result: dict[str, float] = {}
+    for sym, q in quotes.items():
+        bid = float(getattr(q, "bid_price", 0) or 0)
+        ask = float(getattr(q, "ask_price", 0) or 0)
+        if bid > 0 and ask > 0:
+            result[sym] = (bid + ask) / 2
+        elif ask > 0:
+            result[sym] = ask
+        elif bid > 0:
+            result[sym] = bid
     return result
 
 
