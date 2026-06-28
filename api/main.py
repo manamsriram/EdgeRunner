@@ -174,13 +174,20 @@ def _run_migrations() -> None:
     ini_path = Path(__file__).parent.parent / "alembic.ini"
     cfg = AlembicConfig(str(ini_path))
     cfg.set_main_option("sqlalchemy.url", db_url)
-    alembic_command.upgrade(cfg, "head")
-    logger.info("database migrations applied")
+    try:
+        alembic_command.upgrade(cfg, "head")
+        logger.info("database migrations applied")
+    except Exception:
+        logger.exception("alembic upgrade failed")
+        raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await asyncio.get_event_loop().run_in_executor(None, _run_migrations)
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, _run_migrations)
+    except Exception:
+        logger.exception("migrations failed — continuing startup")
     asyncio.create_task(proposal_poller())
     asyncio.create_task(_scheduler_loop())
     asyncio.create_task(_crypto_scheduler_loop())
