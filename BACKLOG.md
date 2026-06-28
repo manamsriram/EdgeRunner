@@ -38,35 +38,25 @@ Today's partial bar stripped from cache. Daily strategies now always evaluate ag
 ### ~~[HIGH] Bars Cache — Option A~~ ✅ DONE
 Only completed bars cached (`end < today`). Live price fetched separately per tick via `get_live_prices_batch` (bid/ask midpoint). Cache keyed by calendar day; resets at midnight.
 
-### [HIGH] Limit Orders Instead of Market Orders
-- **Risk:** Market orders on Alpaca IEX feed guarantee slippage, compounds at scale.
-- **Fix:** DAY limit at bid/ask mid for buys (`ORDER_TYPE=limit` env flag). Sells stay market — reliability > price improvement for exits. If limit doesn't fill, cancels at EOD; next tick retries with fresh mid price. No IOC/fallback complexity.
-- **Effort:** ~2 hr
+### ~~[HIGH] Limit Orders Instead of Market Orders~~ ✅ DONE
+DAY limit at bid/ask mid for buys (`ORDER_TYPE=limit` env). Sells stay market. No fill by EOD → cancels; next tick retries.
 
 ### [HIGH] Event-Driven Reconciliation
 - **Risk:** `broker.reconcile()` hits Alpaca positions API every 60s. Account state between fills is identical — polling wastes API calls.
 - **Fix:** Subscribe to Alpaca trade update WebSocket. Update local state on fill/cancel. Full reconcile only on startup or after a gap.
 - **Effort:** ~5 hr
 
-### [MEDIUM] Universe Stability — Weekly Rescreen
-- **Risk:** Daily universe rebuilds cause turnover (dropped symbols = orphan positions, new symbols = cold-start strategies with no warm-up).
-- **Fix:** Rescreen weekly (Monday pre-market). Mid-week changes only for positions losing eligibility.
-- **Effort:** ~2 hr
+### ~~[MEDIUM] Universe Stability — Weekly Rescreen~~ ✅ DONE
+Rescreen on Monday's first open tick. First run always rescreens. Held positions always retained even if screener drops them.
 
-### [MEDIUM] Transaction Cost Model in Position Sizing
-- **Risk:** `vol_scale` sizes on volatility alone — ignores spread cost, meaningful for low-liquidity screened symbols.
-- **Fix:** Estimate round-trip cost (spread + 2× slippage). Reduce size or skip if expected cost > X% of expected edge.
-- **Effort:** ~3 hr
+### ~~[MEDIUM] Transaction Cost Model in Position Sizing~~ ✅ DONE
+`get_live_prices_batch` now returns (mids, spread_pcts). Gate check 0b rejects buys when 2×spread_pct > MAX_SPREAD_PCT (default 1%, env: MAX_SPREAD_PCT). `OrderIntent.spread_pct=0` → check skipped.
 
-### [MEDIUM] Pre-Market Signal Computation
-- **Risk:** First tick at market open computes signals + fetches bars + places orders simultaneously — latency spike when execution matters most.
-- **Fix:** Run signal-only pipeline pass at 4:15 PM ET on previous close data. Cache decisions. Market-open tick only executes pre-computed decisions + checks exits.
-- **Effort:** ~3 hr
+### ~~[MEDIUM] Pre-Market Signal Computation~~ ✅ DONE
+`precompute_signals()` called on first post-close tick. `_prepare_signal` checks `_premarket_signals` cache before calling `strategy.generate()`. Cache keyed by (strategy_class, symbol, date). Crypto excluded.
 
-### [LOW] Correlation-Aware Sizing
-- **Risk:** Two highly correlated symbols (e.g. NVDA + AMD) each get full vol-targeted size — effective concentration doubles without the risk gate knowing.
-- **Fix:** At buy-ranking time, reduce size for symbols with >0.7 rolling correlation to an already-held position.
-- **Effort:** ~4 hr
+### ~~[LOW] Correlation-Aware Sizing~~ ✅ DONE
+`_correlation_factor()` computes 60-day rolling correlation vs all held positions. Buys in symbols with >0.7 corr to a held name get 0.5× size. Wired through Phase 2 pending_buys loop.
 
 ---
 
