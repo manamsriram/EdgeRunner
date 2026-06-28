@@ -186,3 +186,80 @@ def _to_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
     df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
     df.index.name = "date"
     return df.sort_index()
+
+
+def _to_intraday_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Normalise alpaca-py MultiIndex frame for intraday bars.
+
+    Unlike _to_frame, does NOT normalize to daily dates — minute timestamps preserved.
+    """
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=BAR_COLUMNS)
+    df = raw
+    if isinstance(df.index, pd.MultiIndex):
+        df = df.xs(symbol, level="symbol")
+    df = df.rename(columns=str.lower)[BAR_COLUMNS].copy()
+    df.index = pd.to_datetime(df.index).tz_localize(None)
+    df.index.name = "timestamp"
+    return df.sort_index()
+
+
+def get_intraday_bars_batch(
+    symbols: list[str],
+    timeframe: str,
+    lookback_minutes: int = 390,
+    config: "Config | None" = None,
+) -> dict[str, pd.DataFrame]:
+    """Fetch intraday bars for many symbols in one API call. No cache.
+
+    timeframe: "1min" → TimeFrame.Minute; "5min" → TimeFrame(5, TimeFrameUnit.Minute)
+    lookback_minutes: bars fetched from (now - lookback_minutes); 390 = full trading day.
+    Returns {symbol: DataFrame} with minute-level DatetimeIndex.
+    """
+    from datetime import timezone as _tz
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
+    from datetime import timedelta
+
+    if not symbols:
+        return {}
+
+    config = config or load_config()
+    config.require_alpaca_credentials()
+
+    if timeframe == "1min":
+        tf = TimeFrame.Minute
+    elif timeframe == "5min":
+        tf = TimeFrame(5, TimeFrameUnit.Minute)
+    else:
+        raise ValueError(f"unsupported intraday timeframe: {timeframe!r}")
+
+    now = datetime.now(_tz.utc)
+    start = now - timedelta(minutes=lookback_minutes + 10)
+
+    client = StockHistoricalDataClient(
+        api_key=config.alpaca_api_key,
+        secret_key=config.alpaca_secret_key,
+    )
+    request = StockBarsRequest(
+        symbol_or_symbols=symbols,
+        timeframe=tf,
+        start=start,
+        end=now,
+        feed=DataFeed.IEX,
+    )
+    try:
+        bars = client.get_stock_bars(request)
+    except Exception:
+        logger.warning("intraday bar fetch failed for %d symbols", len(symbols))
+        return {}
+
+    result: dict[str, pd.DataFrame] = {}
+    for sym in symbols:
+        try:
+            result[sym] = _to_intraday_frame(bars.df, sym)
+        except Exception:
+            logger.warning("no intraday bar data for %s — skipping", sym)
+    return result

@@ -109,6 +109,16 @@ class Strategy(ABC):
         raise NotImplementedError
 
 
+class IntradayStrategy(Strategy):
+    """Base for intraday strategies. Pipeline routes via isinstance check."""
+    pool: str = "intraday"
+    eod_exit: bool = True
+    skip_fundamental_gate: bool = True
+    skip_overlay: bool = True
+    bar_timeframe: str = "5min"
+    lookback_minutes: int = 390
+
+
 class PairStrategy(ABC):
     """Base class for two-symbol pairs strategies (stat arb, pairs trading).
 
