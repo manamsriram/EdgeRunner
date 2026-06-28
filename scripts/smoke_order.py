@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from trader.config import load_config
 from trader.data.alpaca_bars import get_daily_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
+from trader.portfolio.postgres_repo import PostgresRepository
 from trader.portfolio.repository import OrderRow
-from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import KillSwitch, OrderIntent, RiskGate
 
 
@@ -34,7 +34,9 @@ def main() -> None:
     broker = AlpacaBroker(config)
     gate = RiskGate(config.risk)
     kill_switch = KillSwitch(config.kill_switch_path)
-    repo = SQLiteRepository(config.portfolio_db_path)
+    if not config.database_url:
+        raise RuntimeError("DATABASE_URL required")
+    repo = PostgresRepository(config.database_url)
 
     print(f"Order path smoke ({'PAPER' if config.alpaca_paper else 'LIVE'}): "
           f"{symbol} ${notional:.2f}")

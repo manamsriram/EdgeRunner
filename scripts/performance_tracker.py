@@ -41,12 +41,8 @@ def main() -> int:
         from trader.execution.broker import AlpacaBroker
         broker = AlpacaBroker(config)
 
-        if config.database_url:
-            from trader.portfolio.postgres_repo import PostgresRepository
-            repo = PostgresRepository(config.database_url)
-        else:
-            from trader.portfolio.sqlite_repo import SQLiteRepository
-            repo = SQLiteRepository(config.portfolio_db_path)
+        from trader.portfolio.postgres_repo import PostgresRepository
+        repo = PostgresRepository(config.database_url)
 
         from trader.performance.metrics import (
             MAX_DRAWDOWN, MIN_DAYS, MIN_PROFIT_FACTOR, MIN_SHARPE,

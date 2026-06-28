@@ -27,23 +27,20 @@ def main() -> int:
         print(f"ERROR: could not load config — {exc}")
         return 2
 
-    db_path = config.portfolio_db_path
+    if not config.database_url:
+        print("ERROR: DATABASE_URL not set — cannot generate report")
+        return 2
 
-    # Fail gracefully if no DB exists yet.
-    if not os.path.exists(db_path):
-        print(
-            f"No paper trading data found at {db_path!r}.\n"
-            "Run the scheduler in AUTONOMY=auto on paper first, then re-run this report."
-        )
-        return 1
-
-    from trader.portfolio.sqlite_repo import SQLiteRepository
-    repo = SQLiteRepository(db_path)
+    from trader.portfolio.postgres_repo import PostgresRepository
+    repo = PostgresRepository(config.database_url)
 
     # ---- runs ----
     with repo._connect() as conn:
-        runs = [dict(r) for r in conn.execute("SELECT * FROM runs ORDER BY id").fetchall()]
-        signals = [dict(r) for r in conn.execute("SELECT * FROM signals ORDER BY id").fetchall()]
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM runs ORDER BY id")
+            runs = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT * FROM signals ORDER BY id")
+            signals = [dict(r) for r in cur.fetchall()]
 
     auto_runs = [r for r in runs if r.get("mode") == "auto"]
     manual_runs = [r for r in runs if r.get("mode") != "auto"]
@@ -62,9 +59,9 @@ def main() -> int:
     # ---- proposals ----
     proposals = repo.list_pending_proposals()
     with repo._connect() as conn:
-        all_proposals = [
-            dict(r) for r in conn.execute("SELECT * FROM proposals ORDER BY id").fetchall()
-        ]
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM proposals ORDER BY id")
+            all_proposals = [dict(r) for r in cur.fetchall()]
     approved = [p for p in all_proposals if p.get("status") == "approved"]
     rejected = [p for p in all_proposals if p.get("status") == "rejected"]
 
@@ -90,7 +87,9 @@ def main() -> int:
 
     # ---- trades ----
     with repo._connect() as conn:
-        trades = [dict(r) for r in conn.execute("SELECT * FROM trades ORDER BY id").fetchall()]
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM trades ORDER BY id")
+            trades = [dict(r) for r in cur.fetchall()]
 
     print(f"\nTrades recorded     : {len(trades)}")
 
