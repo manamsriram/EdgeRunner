@@ -20,10 +20,8 @@ All production paths (api, scheduler, scripts) now require `DATABASE_URL` (Supab
 ### ~~Backend Auth Removal~~ ✅ DONE
 Single-user app — `get_current_user()` returns `"admin"` unconditionally. Auth router and JWT removed.
 
-### Database Migrations (Alembic)
-- **Risk:** Schema changes require manual SQL; new deploys break silently if schema is stale.
-- **Fix:** Add `alembic`; capture current Postgres schema as baseline migration; run `alembic upgrade head` at startup.
-- **Effort:** ~4 hr
+### ~~Database Migrations (Alembic)~~ ✅ DONE
+`alembic>=1.13` added. `migrations/versions/001_baseline.py` captures full schema (idempotent). Live DB stamped at `001`. `_run_migrations()` in FastAPI lifespan runs `alembic upgrade head` before schedulers start. Future schema changes: `alembic revision -m "desc"` + `op.execute("ALTER TABLE ...")` in the migration file.
 
 ---
 
@@ -41,10 +39,8 @@ Only completed bars cached (`end < today`). Live price fetched separately per ti
 ### ~~[HIGH] Limit Orders Instead of Market Orders~~ ✅ DONE
 DAY limit at bid/ask mid for buys (`ORDER_TYPE=limit` env). Sells stay market. No fill by EOD → cancels; next tick retries.
 
-### [HIGH] Event-Driven Reconciliation
-- **Risk:** `broker.reconcile()` hits Alpaca positions API every 60s. Account state between fills is identical — polling wastes API calls.
-- **Fix:** Subscribe to Alpaca trade update WebSocket. Update local state on fill/cancel. Full reconcile only on startup or after a gap.
-- **Effort:** ~5 hr
+### ~~[HIGH] Event-Driven Reconciliation~~ ✅ DONE
+`AlpacaBroker.start_trade_stream()` runs `TradingStream` in a daemon thread. Every fill/cancel event invalidates a 5-minute `AccountState` cache. Between events, `reconcile()` returns cached state (0 API calls). After an event, next `reconcile()` does full API refresh. Stream started automatically in `_scheduler_loop`.
 
 ### ~~[MEDIUM] Universe Stability — Weekly Rescreen~~ ✅ DONE
 Rescreen on Monday's first open tick. First run always rescreens. Held positions always retained even if screener drops them.

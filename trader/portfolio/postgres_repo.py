@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS orders (
     status          TEXT NOT NULL,
     broker_order_id TEXT,
     strategy_name   TEXT,
-    regime          TEXT
+    regime          TEXT,
+    signal_strength REAL
 );
 CREATE TABLE IF NOT EXISTS trades (
     id     SERIAL PRIMARY KEY,
@@ -81,6 +82,8 @@ CREATE TABLE IF NOT EXISTS bandit_weights (
     weight        REAL NOT NULL,
     cycle_index   INT NOT NULL,
     updated_at    TEXT NOT NULL,
+    alpha_wins    INT NOT NULL DEFAULT 1,
+    beta_losses   INT NOT NULL DEFAULT 1,
     PRIMARY KEY (strategy_name, regime)
 );
 CREATE TABLE IF NOT EXISTS arm_ic_series (

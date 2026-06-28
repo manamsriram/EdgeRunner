@@ -46,6 +46,7 @@ async def _scheduler_loop() -> None:
     repo = PostgresRepository(cfg.database_url)
 
     broker = AlpacaBroker(cfg)
+    broker.start_trade_stream()
 
     if cfg.risk.dynamic_universe:
         from trader.universe.screener import fetch_dynamic_universe
@@ -157,8 +158,25 @@ async def _crypto_scheduler_loop() -> None:
         await asyncio.sleep(240)
 
 
+def _run_migrations() -> None:
+    """Apply pending Alembic migrations. Skipped if DATABASE_URL is not set."""
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.warning("DATABASE_URL not set — skipping migrations")
+        return
+    from pathlib import Path
+    from alembic.config import Config as AlembicConfig
+    from alembic import command as alembic_command
+    ini_path = Path(__file__).parent.parent / "alembic.ini"
+    cfg = AlembicConfig(str(ini_path))
+    cfg.set_main_option("sqlalchemy.url", db_url)
+    alembic_command.upgrade(cfg, "head")
+    logger.info("database migrations applied")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.get_event_loop().run_in_executor(None, _run_migrations)
     asyncio.create_task(proposal_poller())
     asyncio.create_task(_scheduler_loop())
     asyncio.create_task(_crypto_scheduler_loop())

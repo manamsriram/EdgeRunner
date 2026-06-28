@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
+import time
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Protocol
 
@@ -25,6 +27,9 @@ from trader.config import Config, load_config
 from trader.risk.gate import AccountState
 
 logger = logging.getLogger(__name__)
+
+# ponytail: full reconcile at most every 5 min when trade stream is running
+_RECONCILE_CACHE_TTL = 300.0
 
 Side = str  # "buy" | "sell"
 
@@ -68,6 +73,53 @@ class AlpacaBroker:
         self._client = client
         self._request_builder = request_builder or _build_market_order_request
         self._order_filter_builder = order_filter_builder or _build_order_filters
+        self._cached_state: AccountState | None = None
+        self._cache_ts: float = 0.0
+        self._state_lock = threading.Lock()
+        self._stream_started = False
+
+    # ---- trade stream (event-driven cache invalidation) ----
+
+    def start_trade_stream(self) -> None:
+        """Start Alpaca WebSocket trade-update stream in a daemon thread.
+
+        On fill/cancel events the reconcile cache is invalidated so the next
+        tick does a fresh API pull instead of waiting up to 5 minutes.
+        No-op if already started or if Alpaca keys are not configured.
+        """
+        if self._stream_started or not self._config.alpaca_api_key:
+            return
+        self._stream_started = True
+        t = threading.Thread(target=self._run_stream, daemon=True, name="alpaca-trade-stream")
+        t.start()
+        logger.info("trade stream started")
+
+    def _run_stream(self) -> None:
+        try:
+            from alpaca.trading.stream import TradingStream
+            self._config.require_alpaca()
+            ts = TradingStream(
+                api_key=self._config.alpaca_api_key,
+                secret_key=self._config.alpaca_secret_key,
+                paper=self._config.alpaca_paper,
+            )
+            broker = self
+
+            @ts.subscribe_trade_updates
+            async def _on_update(data: Any) -> None:
+                event = str(getattr(data, "event", "")).lower()
+                symbol = str(getattr(getattr(data, "order", None), "symbol", "?"))
+                logger.info("trade stream: event=%s symbol=%s — invalidating cache", event, symbol)
+                broker._invalidate_cache()
+
+            ts.run()
+        except Exception:
+            logger.exception("trade stream exited — falling back to polling reconcile")
+            self._stream_started = False
+
+    def _invalidate_cache(self) -> None:
+        with self._state_lock:
+            self._cache_ts = 0.0
 
     # ---- client lifecycle ----
 
@@ -185,7 +237,23 @@ class AlpacaBroker:
     # ---- reconciliation (source of truth) ----
 
     def reconcile(self, *, trades_today_override: int | None = None) -> AccountState:
-        """Read live account state into the gate's input shape. Fails closed on error."""
+        """Return live account state. Uses a 5-minute cache when the trade stream is
+        running; the stream invalidates the cache on every fill/cancel so the next
+        tick always sees fresh state after a trade event."""
+        if trades_today_override is None and self._stream_started:
+            with self._state_lock:
+                if self._cached_state is not None and time.monotonic() - self._cache_ts < _RECONCILE_CACHE_TTL:
+                    return self._cached_state
+
+        state = self._full_reconcile(trades_today_override=trades_today_override)
+        if self._stream_started:
+            with self._state_lock:
+                self._cached_state = state
+                self._cache_ts = time.monotonic()
+        return state
+
+    def _full_reconcile(self, *, trades_today_override: int | None = None) -> AccountState:
+        """Full Alpaca API reconciliation. Fails closed on any error."""
         try:
             client = self._ensure_client()
             account = client.get_account()
