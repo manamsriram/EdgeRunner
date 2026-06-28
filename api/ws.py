@@ -11,7 +11,7 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.deps import decode_token, get_repo
+from api.deps import get_repo
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,6 @@ async def ws_handler(websocket: WebSocket) -> None:
     """WebSocket endpoint — auth-gated, auto-reconnect friendly."""
     token = websocket.cookies.get("access_token")
     if not token:
-        await websocket.close(code=1008)
-        return
-    try:
-        decode_token(token)
-    except Exception:
         await websocket.close(code=1008)
         return
 
