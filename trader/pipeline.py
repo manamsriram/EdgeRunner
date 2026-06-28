@@ -119,12 +119,13 @@ def run_pipeline(
         s.symbol for s in strategies if not is_crypto_symbol(s.symbol)
     })
     live_prices: dict[str, float] = {}
+    live_spread_pcts: dict[str, float] = {}
     if equity_symbols:
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
         bars_cache: dict[str, object] = get_daily_bars_batch(equity_symbols, start, end, config)
         try:
-            live_prices = get_live_prices_batch(equity_symbols, config)
+            live_prices, live_spread_pcts = get_live_prices_batch(equity_symbols, config)
         except Exception:
             logger.warning("live quote fetch failed; stop-loss uses yesterday's close")
     else:
@@ -158,7 +159,8 @@ def run_pipeline(
             result = _execute_signal(
                 signal=signal, bars=bars, run_id=run_id, strategy=strategy,
                 config=config, broker=broker, repo=repo, gate=gate,
-                kill_switch=kill_switch, state=state, asof=asof, live_prices=live_prices,
+                kill_switch=kill_switch, state=state, asof=asof,
+                live_prices=live_prices, live_spread_pcts=live_spread_pcts,
             )
             results.append(result)
             logger.info(
@@ -195,7 +197,8 @@ def run_pipeline(
         result = _execute_signal(
             signal=signal, bars=bars, run_id=run_id, strategy=strategy,
             config=config, broker=broker, repo=repo, gate=gate,
-            kill_switch=kill_switch, state=state, asof=asof, live_prices=live_prices,
+            kill_switch=kill_switch, state=state, asof=asof,
+            live_prices=live_prices, live_spread_pcts=live_spread_pcts,
         )
         results.append(result)
         logger.info(
@@ -397,6 +400,7 @@ def _execute_signal(
     state,
     asof,
     live_prices: dict | None = None,
+    live_spread_pcts: dict | None = None,
 ):
     """Gate evaluation and order submission for a pre-generated signal."""
     symbol = signal.symbol
@@ -419,9 +423,11 @@ def _execute_signal(
             state = _replace_for_gate(state, open_order_symbols=state.open_order_symbols - {symbol})
 
         notional = _notional_for(signal, state, config, ref_price, bars=bars)
+        spread_pct = (live_spread_pcts or {}).get(signal.symbol, 0.0)
         intent = OrderIntent(
             symbol=symbol, side=signal.side,
             notional=notional, ref_price=ref_price, reason=signal.reason,
+            spread_pct=spread_pct,
         )
 
         risk_decision = gate.evaluate(intent, state, kill_switch)

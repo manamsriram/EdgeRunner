@@ -69,6 +69,7 @@ class RiskLimits:
     dynamic_crypto_universe: bool = False   # True → use crypto screener (env: DYNAMIC_CRYPTO_UNIVERSE)
     crypto_universe_size: int = 10          # max crypto pairs per day (env: CRYPTO_UNIVERSE_SIZE)
     min_cash_reserve: float = 500.0         # floor kept liquid — never deployed (env: MIN_CASH_RESERVE)
+    max_spread_pct: float = 0.01             # reject buys if round-trip spread cost exceeds this (env: MAX_SPREAD_PCT)
     # Contextual-bandit strategy/regime weighting — shadow mode logs only; live mode
     # also reweights buy-signal ranking priority. Stays off until shadow logs validate it.
     bandit_weighting_shadow: bool = False   # env: BANDIT_WEIGHTING_SHADOW
@@ -164,6 +165,7 @@ def load_config() -> Config:
             bandit_weighting_live=_env_bool("BANDIT_WEIGHTING_LIVE", False),
             crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
             min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "500.0")),
+            max_spread_pct=float(os.getenv("MAX_SPREAD_PCT", "0.01")),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),

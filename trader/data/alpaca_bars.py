@@ -127,15 +127,15 @@ def get_daily_bars_batch(
 def get_live_prices_batch(
     symbols: list[str],
     config: Config | None = None,
-) -> dict[str, float]:
-    """Fetch latest bid/ask midpoint for equity symbols. No caching — fresh each call.
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Fetch latest bid/ask midpoint and spread for equity symbols. No caching.
 
-    Used by the pipeline for intraday stop-loss checks and order sizing. Falls back to
-    ask or bid alone when the spread is one-sided. Symbols with no quote are omitted;
-    callers fall back to bars[-1].close for those.
+    Returns (mid_prices, spread_pcts). Both dicts keyed by symbol; symbols with no
+    quote are omitted — callers fall back to bars[-1].close / spread_pct=0 for those.
+    spread_pct = (ask - bid) / mid, useful for transaction cost filtering in the gate.
     """
     if not symbols:
-        return {}
+        return {}, {}
 
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockLatestQuoteRequest
@@ -153,19 +153,22 @@ def get_live_prices_batch(
         )
     except Exception:
         logger.warning("live quote fetch failed for %d symbols", len(symbols))
-        return {}
+        return {}, {}
 
-    result: dict[str, float] = {}
+    mids: dict[str, float] = {}
+    spread_pcts: dict[str, float] = {}
     for sym, q in quotes.items():
         bid = float(getattr(q, "bid_price", 0) or 0)
         ask = float(getattr(q, "ask_price", 0) or 0)
         if bid > 0 and ask > 0:
-            result[sym] = (bid + ask) / 2
+            mid = (bid + ask) / 2
+            mids[sym] = mid
+            spread_pcts[sym] = (ask - bid) / mid if mid > 0 else 0.0
         elif ask > 0:
-            result[sym] = ask
+            mids[sym] = ask
         elif bid > 0:
-            result[sym] = bid
-    return result
+            mids[sym] = bid
+    return mids, spread_pcts
 
 
 def _to_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:

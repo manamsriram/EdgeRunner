@@ -62,6 +62,7 @@ class OrderIntent:
     notional: float
     ref_price: float
     reason: str = ""
+    spread_pct: float = 0.0  # bid-ask spread as fraction of mid; 0 = unknown
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "symbol", self.symbol.strip().upper())
@@ -132,6 +133,16 @@ class RiskGate:
             return RiskDecision.reject("kill switch engaged")
         if state.stale:
             return RiskDecision.reject("account state stale (reconciliation failed)")
+
+        # 0b. Transaction cost check (buys only) — skip if spread exceeds threshold.
+        #     Round-trip cost ≈ 2 × spread_pct. Only fires when spread data is available.
+        if intent.side == "buy" and intent.spread_pct > 0:
+            round_trip_cost = 2.0 * intent.spread_pct
+            if round_trip_cost > limits.max_spread_pct:
+                return RiskDecision.reject(
+                    f"spread too wide: round-trip cost {round_trip_cost:.3%} "
+                    f"> max {limits.max_spread_pct:.3%}"
+                )
 
         # 1. Allowlist — route by asset type.
         # None means dynamic/open universe; skip the check entirely.
