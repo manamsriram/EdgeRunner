@@ -163,11 +163,27 @@ async def _crypto_scheduler_loop() -> None:
 
 
 def _run_migrations() -> None:
-    """Apply pending Alembic migrations. Skipped if DATABASE_URL is not set."""
-    db_url = os.getenv("DATABASE_URL")
+    """Apply pending Alembic migrations. Skipped if DATABASE_URL is not set.
+
+    Uses MIGRATION_DATABASE_URL if set (direct connection, port 5432 — required
+    for Alembic DDL transactions which PgBouncer/pooler port 6543 does not support).
+    Falls back to DATABASE_URL with pooler port rewritten to 5432 automatically.
+    """
+    db_url = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
     if not db_url:
         logger.warning("DATABASE_URL not set — skipping migrations")
         return
+    # Rewrite pooler URL → direct connection for Alembic DDL transactions.
+    # PgBouncer (port 6543) does not support transactional DDL; port 5432 does.
+    # Supabase pooler: postgresql://postgres.<ref>:[pw]@aws-1-*.pooler.supabase.com:6543/postgres
+    # Direct:          postgresql://postgres:[pw]@db.<ref>.supabase.co:5432/postgres
+    import re
+    m = re.match(
+        r"(postgresql://postgres)\.([^:]+)(:[^@]+@)[^/]+(\/.+)",
+        db_url,
+    )
+    if m:
+        db_url = f"{m.group(1)}{m.group(3)}db.{m.group(2)}.supabase.co:5432{m.group(4)}"
     from pathlib import Path
     from alembic.config import Config as AlembicConfig
     from alembic import command as alembic_command
