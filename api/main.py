@@ -43,7 +43,8 @@ async def _scheduler_loop() -> None:
         logger.error("DATABASE_URL not set — equity scheduler disabled")
         return
 
-    repo = PostgresRepository(cfg.database_url)
+    loop = asyncio.get_event_loop()
+    repo = await loop.run_in_executor(None, PostgresRepository, cfg.database_url)
 
     broker = AlpacaBroker(cfg)
     broker.start_trade_stream()
@@ -51,7 +52,9 @@ async def _scheduler_loop() -> None:
     if cfg.risk.dynamic_universe:
         from trader.universe.screener import fetch_dynamic_universe
         try:
-            symbols = fetch_dynamic_universe(cfg, cfg.risk.universe_size)
+            symbols = await loop.run_in_executor(
+                None, fetch_dynamic_universe, cfg, cfg.risk.universe_size
+            )
         except Exception:
             logger.exception("initial equity screener failed — scheduler disabled")
             return
@@ -61,7 +64,6 @@ async def _scheduler_loop() -> None:
         logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
 
     strategies = _build_strategies_for(cfg, symbols)
-    loop = asyncio.get_event_loop()
     universe_date = None
     signal_precomputed_date = None
     while True:
@@ -113,7 +115,8 @@ async def _crypto_scheduler_loop() -> None:
         logger.error("DATABASE_URL not set — crypto scheduler disabled")
         return
 
-    repo = PostgresRepository(cfg.database_url)
+    loop = asyncio.get_event_loop()
+    repo = await loop.run_in_executor(None, PostgresRepository, cfg.database_url)
 
     broker = AlpacaBroker(cfg)
 
@@ -122,7 +125,9 @@ async def _crypto_scheduler_loop() -> None:
         symbols = None
         for attempt in range(1, 4):
             try:
-                symbols = fetch_dynamic_crypto_universe(cfg, cfg.risk.crypto_universe_size)
+                symbols = await loop.run_in_executor(
+                    None, fetch_dynamic_crypto_universe, cfg, cfg.risk.crypto_universe_size
+                )
                 break
             except Exception:
                 logger.warning("crypto screener attempt %d/3 failed", attempt, exc_info=True)
@@ -138,7 +143,6 @@ async def _crypto_scheduler_loop() -> None:
         strategies = _build_crypto_strategies(cfg)
         logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
 
-    loop = asyncio.get_event_loop()
     crypto_universe_date = None
     while True:
         try:

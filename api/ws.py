@@ -44,7 +44,8 @@ manager = _ConnectionManager()
 
 async def proposal_poller() -> None:
     """Background task: polls DB every 3s; broadcasts newly created pending proposals."""
-    repo = get_repo()
+    loop = asyncio.get_event_loop()
+    repo = await loop.run_in_executor(None, get_repo)
     seen_ids: set[int] = set()
     while True:
         try:
