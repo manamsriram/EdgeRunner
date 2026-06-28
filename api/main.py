@@ -68,7 +68,8 @@ async def _scheduler_loop() -> None:
                 from datetime import date as _date
                 from trader.scheduler import _refresh_dynamic_universe
                 today = _date.today()
-                if universe_date != today:
+                first_run = universe_date is None
+                if universe_date != today and (first_run or today.weekday() == 0):
                     strategies = await loop.run_in_executor(
                         None, _refresh_dynamic_universe, cfg, broker, strategies
                     )
@@ -133,7 +134,8 @@ async def _crypto_scheduler_loop() -> None:
                 from datetime import date as _date
                 from trader.scheduler import _refresh_dynamic_crypto_universe
                 today = _date.today()
-                if crypto_universe_date != today:
+                first_run = crypto_universe_date is None
+                if crypto_universe_date != today and (first_run or today.weekday() == 0):
                     strategies = await loop.run_in_executor(
                         None, _refresh_dynamic_crypto_universe, cfg, broker, strategies
                     )

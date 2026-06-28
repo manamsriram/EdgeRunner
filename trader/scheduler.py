@@ -136,10 +136,12 @@ def start_scheduler(
         try:
             market_open = is_market_open(broker)
 
-            # Daily universe refresh — runs once per calendar day on the first open tick.
+            # Weekly universe refresh — runs once per week on Monday's first open tick.
+            # First run (universe_date is None) always refreshes regardless of day.
             if config.risk.dynamic_universe and market_open:
                 today = date.today()
-                if universe_date != today:
+                first_run = universe_date is None
+                if universe_date != today and (first_run or today.weekday() == 0):
                     current_strategies = _refresh_dynamic_universe(
                         config, broker, current_strategies
                     )
@@ -220,7 +222,8 @@ def start_crypto_scheduler(
         try:
             if config.risk.dynamic_crypto_universe:
                 today = date.today()
-                if crypto_universe_date != today:
+                first_run = crypto_universe_date is None
+                if crypto_universe_date != today and (first_run or today.weekday() == 0):
                     current_strategies = _refresh_dynamic_crypto_universe(
                         config, broker, current_strategies
                     )
