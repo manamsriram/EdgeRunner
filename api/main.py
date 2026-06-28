@@ -173,6 +173,10 @@ def _run_migrations() -> None:
     if not db_url:
         logger.warning("DATABASE_URL not set — skipping migrations")
         return
+    # Add connect_timeout so a blocked/slow DB doesn't hang startup indefinitely.
+    if "connect_timeout" not in db_url:
+        sep = "&" if "?" in db_url else "?"
+        db_url = f"{db_url}{sep}connect_timeout=10"
     from pathlib import Path
     from alembic.config import Config as AlembicConfig
     from alembic import command as alembic_command
@@ -197,7 +201,12 @@ async def _guarded(coro, name: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        await asyncio.get_event_loop().run_in_executor(None, _run_migrations)
+        await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _run_migrations),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("migrations timed out after 30s — continuing startup without migrations")
     except Exception:
         logger.exception("migrations failed — continuing startup")
     asyncio.create_task(_guarded(proposal_poller(), "proposal_poller"))

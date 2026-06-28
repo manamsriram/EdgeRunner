@@ -457,19 +457,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("""
-        ALTER TABLE position_owners ADD COLUMN IF NOT EXISTS pool VARCHAR(10) NOT NULL DEFAULT 'daily';
-        ALTER TABLE position_owners DROP CONSTRAINT IF EXISTS position_owners_pkey;
-        ALTER TABLE position_owners ADD PRIMARY KEY (symbol, pool);
-    """)
+    # Split into separate execute calls — multi-statement op.execute can silently skip later statements
+    # in some SQLAlchemy/psycopg2 versions.
+    op.execute("ALTER TABLE position_owners ADD COLUMN IF NOT EXISTS pool VARCHAR(10) NOT NULL DEFAULT 'daily'")
+    op.execute("ALTER TABLE position_owners DROP CONSTRAINT IF EXISTS position_owners_pkey")
+    op.execute("ALTER TABLE position_owners ADD PRIMARY KEY (symbol, pool)")
 
 
 def downgrade() -> None:
-    op.execute("""
-        ALTER TABLE position_owners DROP CONSTRAINT IF EXISTS position_owners_pkey;
-        ALTER TABLE position_owners ADD PRIMARY KEY (symbol);
-        ALTER TABLE position_owners DROP COLUMN IF EXISTS pool;
-    """)
+    op.execute("ALTER TABLE position_owners DROP CONSTRAINT IF EXISTS position_owners_pkey")
+    op.execute("ALTER TABLE position_owners ADD PRIMARY KEY (symbol)")
+    op.execute("ALTER TABLE position_owners DROP COLUMN IF EXISTS pool")
 ```
 
 - [ ] **Step 2: Update abstract signatures in `trader/portfolio/repository.py`**
@@ -521,7 +519,20 @@ Replace the three methods (lines 250-268):
 
 - [ ] **Step 4: Update `trader/portfolio/sqlite_repo.py`**
 
-Replace the three methods (lines 260-275):
+First update `_init_schema` — find the `CREATE TABLE IF NOT EXISTS position_owners` block and add the
+`pool` column and composite PK so test runs using SQLite don't fail:
+
+```sql
+CREATE TABLE IF NOT EXISTS position_owners (
+    symbol     TEXT NOT NULL,
+    pool       TEXT NOT NULL DEFAULT 'daily',
+    strategy   TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, pool)
+);
+```
+
+Then replace the three methods (lines 260-275):
 
 ```python
     def get_position_owners(self) -> dict[tuple[str, str], str]:
@@ -720,11 +731,10 @@ Inside the `try` block, replace the `bars = _fetch_bars(...)` line with:
         if _is_intraday:
             _tf = strategy.bar_timeframe
             bars = (intraday_caches or {}).get(_tf, {}).get(symbol)
-            if bars is None or (hasattr(bars, "empty") and bars.empty):
+            if bars is None or bars.empty:
                 logger.warning("no intraday bar data for %s — skipping", symbol)
                 return None
         else:
-            import pandas as pd as _pd  # noqa — already imported above
             bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
 ```
 
@@ -751,22 +761,33 @@ Wait — `pd` is already imported via `import pandas as pd` inside the try block
 
 - [ ] **Step 5: Add EOD exit check inside `_prepare_signal`**
 
-After the `warm_up` / cold-start block and before the stop-loss check, insert:
+Place this block AFTER the warm_up/cold-start block and BEFORE the stop-loss block. When it fires,
+**early-return** the signal tuple directly — do not fall through to the precomputed-signal or
+overlay logic.
 
 ```python
         # EOD exit: force-sell intraday positions 15 min before market close.
-        # Bypasses overlay and ownership conflict — same pattern as stop-loss.
+        # Early-return so overlay/gate/ownership checks are bypassed — same as stop-loss path.
         if _is_intraday and strategy.eod_exit and symbol in state.positions and state.positions[symbol] > 0:
             from zoneinfo import ZoneInfo as _ZI
+            from datetime import timezone as _timezone
             _ny = _ZI("America/New_York")
-            _asof_ny = asof.astimezone(_ny) if asof.tzinfo else asof.replace(tzinfo=timezone.utc).astimezone(_ny)
+            _asof_ny = asof.astimezone(_ny) if asof.tzinfo else asof.replace(tzinfo=_timezone.utc).astimezone(_ny)
             _close_ny = _asof_ny.replace(hour=16, minute=0, second=0, microsecond=0)
             if _asof_ny >= _close_ny - timedelta(minutes=_EOD_EXIT_MINUTES):
                 signal = Signal(
                     symbol, "sell", 1.0,
                     f"eod-exit: intraday flat at {_asof_ny.strftime('%H:%M')} ET",
                 )
+                repo.record_signal(SignalRow(
+                    run_id=run_id, symbol=symbol,
+                    side=signal.side, strength=signal.strength, reason=signal.reason,
+                ))
+                return signal, bars, run_id, _pool
 ```
+
+> **Why early-return:** Setting `signal =` without returning would let the precomputed-signal
+> block overwrite the EOD exit signal on the very next line.
 
 - [ ] **Step 6: Update stop-loss exemption check to use pool key**
 
@@ -779,7 +800,7 @@ Replace line 332:
 With:
 
 ```python
-        _stop_exempt = state.position_owners.get((symbol, "daily")) == "DipRecovery"
+        _stop_exempt = state.position_owners.get((symbol, _pool)) == "DipRecovery"
 ```
 
 - [ ] **Step 7: Update ownership conflict check to use pool key**
@@ -816,35 +837,51 @@ Replace the overlay call:
 
 In `run_pipeline`, every call to `_execute_signal` needs `pool=_pool`. However `_pool` is computed inside `_prepare_signal`. The cleanest fix: `_prepare_signal` returns `(signal, bars, run_id, pool)` for the non-terminal case. Update the function return and all callers:
 
-Inside `_prepare_signal`, change the final return:
+Inside `_prepare_signal`, change the final return (line 431 in current code):
 
 ```python
         return signal, bars, run_id, _pool
 ```
 
-In `run_pipeline`, unpack the extra value:
+In `run_pipeline`, update ALL 5 sites that touch this tuple:
 
+**1. Unpack site (line 163):**
 ```python
         signal, bars, run_id, pool = prep
-        if signal.side == "sell":
+```
+
+**2. Sell path (line 165):**
+```python
             result = _execute_signal(
                 signal=signal, bars=bars, run_id=run_id, strategy=strategy,
-                pool=pool, ...
+                config=config, broker=broker, repo=repo, gate=gate,
+                kill_switch=kill_switch, state=state, asof=asof,
+                live_prices=live_prices, live_spread_pcts=live_spread_pcts,
+                pool=pool,
             )
 ```
 
-And for buys:
-
+**3. Buy stash (line 179):** — 6-tuple now:
 ```python
             pending_buys.append((signal.strength, strategy, signal, bars, run_id, pool))
 ```
 
-Then unpack in the Phase 2 loop:
+**4. Bandit `_rank_key` (line 185):** — unpack pool from item:
+```python
+            raw, strat, sig, bars, _, pool = item
+```
 
+**5. Phase 2 loop (line 202):** — unpack pool:
 ```python
     for _, strategy, signal, bars, run_id, pool in pending_buys:
-        ...
-        result = _execute_signal(..., pool=pool, ...)
+        corr_factor = _correlation_factor(signal.symbol, state, bars_cache)
+        result = _execute_signal(
+            signal=signal, bars=bars, run_id=run_id, strategy=strategy,
+            config=config, broker=broker, repo=repo, gate=gate,
+            kill_switch=kill_switch, state=state, asof=asof,
+            live_prices=live_prices, live_spread_pcts=live_spread_pcts,
+            corr_factor=corr_factor, pool=pool,
+        )
 ```
 
 - [ ] **Step 10: Update `_execute_signal` signature and `OrderIntent` creation**
@@ -1510,6 +1547,7 @@ class GapAndGo(IntradayStrategy):
 
     def warm_up(self, bars: pd.DataFrame) -> None:
         self._entered = True
+        self._entry_bar_open = float(bars["close"].iloc[-1])  # prevents sell-never bug (0.0 < any price)
         self._warmed_up = True
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
@@ -1837,24 +1875,36 @@ def _build_intraday_strategies_for(config: Config, symbols: "list[str]") -> "lis
     return strategies
 ```
 
-- [ ] **Step 3: Load `INTRADAY_ALLOWLIST` and register intraday strategies**
+- [ ] **Step 3: Load `INTRADAY_ALLOWLIST` and register intraday strategies in `api/main.py`**
 
-Find where `current_strategies` is built from `_build_strategies_for` in the main scheduler loop (look for calls to `_build_strategies_for`). After that call, append intraday strategies:
+The strategy list is assembled in `api/main.py`'s `_scheduler_loop`. Modify it at line 66 where
+`strategies = _build_strategies_for(cfg, symbols)` is called. Also update the dynamic-universe
+refresh path so intraday strategies survive universe refreshes.
 
 ```python
-# Near top of start_scheduler or _scheduler_loop, where current_strategies is built:
+# In api/main.py, after line 66:
+#   strategies = _build_strategies_for(cfg, symbols)
+# Add:
+from trader.scheduler import _build_intraday_strategies_for
 _raw_intraday = os.getenv("INTRADAY_ALLOWLIST", "").strip()
 _intraday_symbols = (
     [s.strip().upper() for s in _raw_intraday.split(",") if s.strip()]
     if _raw_intraday
-    else list(equity_symbols)  # falls back to same universe as daily
+    else list(symbols)   # falls back to same universe as daily; variable is `symbols`, not `equity_symbols`
 )
-
-intraday_strategies = _build_intraday_strategies_for(config, _intraday_symbols)
-current_strategies = daily_strategies + intraday_strategies
+_intraday_strategies = _build_intraday_strategies_for(cfg, _intraday_symbols)
+strategies = strategies + _intraday_strategies
 ```
 
-The exact insertion point depends on where `current_strategies` is assembled. The pattern to follow: find the line `current_strategies = _build_strategies_for(config, symbols)` and extend it.
+Also update the dynamic universe refresh block (lines 77-80) so intraday strategies are not lost:
+
+```python
+                    strategies = await loop.run_in_executor(
+                        None, _refresh_dynamic_universe, cfg, broker, strategies
+                    )
+                    strategies = strategies + _intraday_strategies  # re-append after refresh
+                    universe_date = today
+```
 
 - [ ] **Step 4: Run existing scheduler tests**
 
@@ -1887,9 +1937,14 @@ After implementing all tasks, verify:
 - [ ] `position_owners` key is `(symbol, pool)` everywhere — grep: `position_owners.get(symbol)` should return 0 results
 - [ ] `max_trades_per_day` absent from codebase — grep: `max_trades_per_day` should return 0 results
 - [ ] `AccountState.intraday_deployed` tracked separately from `deployed_notional`
-- [ ] EOD exit reason starts with `"eod-exit:"` — bypasses overlay and ownership conflict
+- [ ] EOD exit early-returns `(signal, bars, run_id, "intraday")` — does NOT fall through to precomputed-signal or overlay blocks
+- [ ] EOD exit reason `"eod-exit:"` bypasses ownership conflict check AND overlay — grep: `startswith("stop-loss:")` should also include `startswith("eod-exit:")`
 - [ ] `precompute_signals` skips `IntradayStrategy` instances
 - [ ] `get_intraday_bars_batch` does NOT normalize index to daily dates
 - [ ] GapAndGo's `prev_close` is injected by pipeline (not fetched inside `_decide`)
-- [ ] Migration `002` chains `down_revision = "001"`
-- [ ] `sqlite_repo.py` conflict target is `(symbol, pool)` not `(symbol)`
+- [ ] GapAndGo `warm_up` sets `_entry_bar_open = float(bars["close"].iloc[-1])` — not left at 0.0
+- [ ] `pending_buys` is a 6-tuple everywhere — grep: `raw, strat, sig, bars, _` should not appear (needs `pool` too)
+- [ ] `_rank_key` unpacks 6-tuple: `raw, strat, sig, bars, _, pool = item`
+- [ ] Migration `002` chains `down_revision = "001"`; each `op.execute` is a separate call
+- [ ] `sqlite_repo.py` `_init_schema` has `PRIMARY KEY (symbol, pool)` on `position_owners`
+- [ ] Intraday strategies re-appended after dynamic universe refresh in `api/main.py`

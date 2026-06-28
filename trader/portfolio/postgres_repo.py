@@ -107,7 +107,7 @@ class PostgresRepository(PortfolioRepository):
         self._init_schema()
 
     def _connect(self) -> psycopg2.extensions.connection:
-        conn = psycopg2.connect(self._url, cursor_factory=psycopg2.extras.RealDictCursor)
+        conn = psycopg2.connect(self._url, cursor_factory=psycopg2.extras.RealDictCursor, connect_timeout=10)
         return conn
 
     def _init_schema(self) -> None:
