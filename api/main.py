@@ -185,10 +185,15 @@ def _run_migrations() -> None:
     cfg.set_main_option("sqlalchemy.url", db_url)
     try:
         alembic_command.upgrade(cfg, "head")
-        logger.info("database migrations applied")
     except Exception:
+        logging.getLogger().setLevel(logging.INFO)
         logger.exception("alembic upgrade failed")
         raise
+    finally:
+        # env.py calls fileConfig(alembic.ini) which resets root logger to WARNING.
+        # Restore so all subsequent app INFO logs are visible.
+        logging.getLogger().setLevel(logging.INFO)
+    logger.info("database migrations applied")
 
 
 async def _guarded(coro, name: str):
