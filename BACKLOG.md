@@ -4,57 +4,53 @@
 
 ## Correctness
 
-### Proposal Approval Race Condition
-- **Risk:** Two simultaneous approve clicks could submit duplicate orders (window between `_get_pending_proposal()` and `set_proposal_status()`)
-- **Fix:** Single atomic `UPDATE proposals SET status='approved' WHERE id=? AND status='pending'`; check `cursor.rowcount == 1`, reject 409 if 0
-- **Effort:** ~1 hr
+### ~~Proposal Approval Race Condition~~ ✅ DONE
+Atomic `UPDATE proposals SET status='approved' WHERE id=? AND status='pending'` via `try_approve_proposal()`.
 
-### Analysis Timeout
-- **Risk:** LangChain agent hangs → SSE stream open indefinitely (zombie connection)
-- **Fix:** Wrap `loop.run_in_executor(None, Analyze_stock, body.query)` with `asyncio.wait_for(..., timeout=120)`; yield error SSE event on `asyncio.TimeoutError`
-- **Effort:** ~20 min
+### ~~Analysis Timeout~~ ✅ DONE
+`asyncio.wait_for(..., timeout=120)` on LangChain call; yields error SSE event on timeout.
 
 ---
 
 ## Infrastructure
 
+### ~~SQLite removal~~ ✅ DONE
+All production paths (api, scheduler, scripts) now require `DATABASE_URL` (Supabase). SQLite kept in `sqlite_repo.py` for tests only.
+
+### ~~Backend Auth Removal~~ ✅ DONE
+Single-user app — `get_current_user()` returns `"admin"` unconditionally. Auth router and JWT removed.
+
 ### Database Migrations (Alembic)
-- **Risk:** New deployments fail silently if schema hasn't been pre-created; schema changes require manual SQL
-- **Fix:** Add `alembic`; convert inline `CREATE TABLE` in `SQLiteRepository` to migration scripts; run `alembic upgrade head` at startup
+- **Risk:** Schema changes require manual SQL; new deploys break silently if schema is stale.
+- **Fix:** Add `alembic`; capture current Postgres schema as baseline migration; run `alembic upgrade head` at startup.
 - **Effort:** ~4 hr
 
 ---
 
 ## Trading Architecture
 
-### [CRITICAL] Broker-Side Stop-Loss Orders
-- **Risk:** Stops live entirely in software. Render OOM kill, deploy restart, or any process crash between ticks = stop-loss coverage gone. Position can gap down 20% overnight with no protection.
-- **Fix:** On every buy fill, immediately place a GTC stop-limit order at Alpaca at the entry bar low. On sell fill or time-exit, cancel the GTC stop. App-level quick-exit becomes secondary check, not primary safety net.
-- **Effort:** ~3 hr
+### ~~[CRITICAL] Broker-Side Stop-Loss Orders~~ ✅ DONE
+GTC stop-market orders placed at Alpaca on every buy fill (`place_stop_order`). Cancelled before sell evaluation (`cancel_open_stops`). Stop price = `ref_price * (1 - stop_loss_pct)`.
 
-### [CRITICAL] Signal Timing Mismatch (Daily Strategies on 60s Loop)
-- **Risk:** SuperTrend, DipRecovery, DonchianBreakout are daily-close strategies. Re-evaluating every 60s against a partial intraday bar = acting on noise the strategies weren't designed for.
-- **Fix:** Compute daily signals once per day against the previous confirmed close (`end = yesterday 4:00 PM ET`). Cache the decision for the day. 60s loop only re-checks exit conditions against live price — not entry signals.
-- **Effort:** ~4 hr
+### ~~[CRITICAL] Signal Timing Mismatch~~ ✅ DONE
+Today's partial bar stripped from cache. Daily strategies now always evaluate against the previous confirmed close. Signal is stable across all 60s ticks within a day.
 
-### [HIGH] Bars Cache — Complete Option A
-- **Risk:** Current cache freezes today's partial bar at first-tick time. Exit quick-check uses `bars.iloc[-1].close` as live price — stale after first tick.
-- **Fix:** Cache completed bars only (`end = yesterday`). Fetch today's single bar (or live quote) fresh each tick for exit checks. Eliminates 99% of allocation cost while keeping live price awareness.
-- **Effort:** ~2 hr
+### ~~[HIGH] Bars Cache — Option A~~ ✅ DONE
+Only completed bars cached (`end < today`). Live price fetched separately per tick via `get_live_prices_batch` (bid/ask midpoint). Cache keyed by calendar day; resets at midnight.
 
 ### [HIGH] Limit Orders Instead of Market Orders
 - **Risk:** Market orders on Alpaca IEX feed guarantee slippage, compounds at scale.
-- **Fix:** Limit orders at mid-price (bid+ask)/2 with short IOC timeout, fall back to market if unfilled. Add `ORDER_TYPE` config flag — paper trading stays market until ready.
-- **Effort:** ~3 hr
+- **Fix:** DAY limit at bid/ask mid for buys (`ORDER_TYPE=limit` env flag). Sells stay market — reliability > price improvement for exits. If limit doesn't fill, cancels at EOD; next tick retries with fresh mid price. No IOC/fallback complexity.
+- **Effort:** ~2 hr
 
 ### [HIGH] Event-Driven Reconciliation
-- **Risk:** `broker.reconcile()` hits Alpaca positions API every 60s. Account state between fills is identical — polling wastes API calls and memory.
-- **Fix:** Subscribe to Alpaca trade update WebSocket. Update local state on fill/cancel events. Full reconcile only on startup or after a gap.
+- **Risk:** `broker.reconcile()` hits Alpaca positions API every 60s. Account state between fills is identical — polling wastes API calls.
+- **Fix:** Subscribe to Alpaca trade update WebSocket. Update local state on fill/cancel. Full reconcile only on startup or after a gap.
 - **Effort:** ~5 hr
 
 ### [MEDIUM] Universe Stability — Weekly Rescreen
-- **Risk:** Daily universe rebuilds cause turnover (dropped symbols = orphan positions, new symbols = cold-start strategies with no warm-up). Live behavior diverges from backtests.
-- **Fix:** Rescreen weekly (Monday pre-market). Mid-week additions only for held positions losing eligibility.
+- **Risk:** Daily universe rebuilds cause turnover (dropped symbols = orphan positions, new symbols = cold-start strategies with no warm-up).
+- **Fix:** Rescreen weekly (Monday pre-market). Mid-week changes only for positions losing eligibility.
 - **Effort:** ~2 hr
 
 ### [MEDIUM] Transaction Cost Model in Position Sizing
@@ -63,13 +59,13 @@
 - **Effort:** ~3 hr
 
 ### [MEDIUM] Pre-Market Signal Computation
-- **Risk:** First tick at market open computes signals + fetches bars + places orders simultaneously — latency spike right when execution matters most.
+- **Risk:** First tick at market open computes signals + fetches bars + places orders simultaneously — latency spike when execution matters most.
 - **Fix:** Run signal-only pipeline pass at 4:15 PM ET on previous close data. Cache decisions. Market-open tick only executes pre-computed decisions + checks exits.
 - **Effort:** ~3 hr
 
 ### [LOW] Correlation-Aware Sizing
 - **Risk:** Two highly correlated symbols (e.g. NVDA + AMD) each get full vol-targeted size — effective concentration doubles without the risk gate knowing.
-- **Fix:** At Phase 2 buy-ranking time, reduce size for symbols with >0.7 rolling correlation to an already-held position.
+- **Fix:** At buy-ranking time, reduce size for symbols with >0.7 rolling correlation to an already-held position.
 - **Effort:** ~4 hr
 
 ---

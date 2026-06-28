@@ -93,6 +93,7 @@ class Config:
     smtp_user: str | None = None               # Gmail sender address
     smtp_password: str | None = None           # Gmail app password
     # Crypto execution config
+    order_type: str = "market"                 # "market" | "limit" — limit=DAY buys at mid, sells stay market
     crypto_exchange: str = "alpaca"            # "alpaca" | "binance" | "coinbase" | "kraken"
     ccxt_api_key: str | None = None
     ccxt_secret_key: str | None = None
@@ -170,6 +171,7 @@ def load_config() -> Config:
         alert_email=os.getenv("ALERT_EMAIL") or None,
         smtp_user=os.getenv("SMTP_USER") or None,
         smtp_password=os.getenv("SMTP_PASSWORD") or None,
+        order_type=os.getenv("ORDER_TYPE", "market").strip().lower(),
         crypto_exchange=os.getenv("CRYPTO_EXCHANGE", "alpaca").strip().lower(),
         ccxt_api_key=os.getenv("CCXT_API_KEY") or None,
         ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,

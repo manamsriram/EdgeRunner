@@ -249,26 +249,42 @@ class AlpacaBroker:
         qty: float | None = None,
         ref_price: float | None = None,
     ) -> Any:
-        """Place a market order, exactly one of `notional` (dollars) or `qty` (shares).
+        """Place an order, exactly one of `notional` (dollars) or `qty` (shares).
 
         Buys use notional (Alpaca's fractional path). Sells/exits use `qty` — Alpaca
-        restricts *notional* sells, and a long/flat exit closes the held quantity. Idem-
-        potent: a duplicate `client_order_id` is swallowed and the existing order returned.
+        restricts notional sells. Idempotent: a duplicate client_order_id is swallowed.
+
+        When ORDER_TYPE=limit and ref_price is supplied, buy orders are placed as DAY
+        limit orders at the bid/ask mid. Sells always use market orders for reliable exits.
+        If a limit buy doesn't fill by EOD it cancels; the next tick retries.
 
         Non-fractionable assets reject notional orders (Alpaca code 40310000). When
-        `ref_price` is supplied, such a rejection retries once as a whole-share qty
-        order (floor(notional / ref_price)), reusing the same client_order_id. If even
-        one share exceeds the notional, the original rejection propagates.
+        ref_price is supplied, such rejections retry once as whole-share qty orders.
         """
         if side not in {"buy", "sell"}:
             raise ValueError(f"invalid side: {side!r}")
         if (notional is None) == (qty is None):
             raise ValueError("pass exactly one of notional or qty")
         client = self._ensure_client()
-        request = self._request_builder(
-            symbol=symbol, side=side, client_order_id=client_order_id,
-            notional=notional, qty=qty,
+
+        use_limit = (
+            side == "buy"
+            and self._config.order_type == "limit"
+            and ref_price is not None
+            and ref_price > 0
+            and "/" not in symbol  # crypto only supports market on Alpaca
         )
+        if use_limit:
+            request = _build_limit_order_request(
+                symbol=symbol, side=side, client_order_id=client_order_id,
+                notional=notional, qty=qty, limit_price=ref_price,
+            )
+        else:
+            request = self._request_builder(
+                symbol=symbol, side=side, client_order_id=client_order_id,
+                notional=notional, qty=qty,
+            )
+
         try:
             return self._submit_idempotent(client, request, client_order_id)
         except Exception as exc:  # noqa: BLE001 - inspect for the non-fractionable case only
@@ -380,6 +396,30 @@ def _is_not_fractionable(exc: Exception) -> bool:
     """True when Alpaca rejected a notional order on a non-fractionable asset
     (code 40310000, message 'asset "X" is not fractionable')."""
     return "not fractionable" in str(exc).lower()
+
+
+def _build_limit_order_request(
+    *,
+    symbol: str,
+    side: Side,
+    client_order_id: str,
+    notional: float | None = None,
+    qty: float | None = None,
+    limit_price: float,
+) -> Any:
+    """Build a DAY limit order at `limit_price` (bid/ask mid). Equity buys only."""
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    from alpaca.trading.requests import LimitOrderRequest
+
+    return LimitOrderRequest(
+        symbol=symbol,
+        notional=round(notional, 2) if notional is not None else None,
+        qty=qty,
+        side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+        limit_price=round(limit_price, 2),
+        client_order_id=client_order_id,
+    )
 
 
 def _build_market_order_request(
