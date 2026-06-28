@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from api.auth import router as auth_router
 from api.routes.analysis import router as analysis_router
 from api.routes.performance import router as performance_router
 from api.routes.controls import router as controls_router
@@ -179,7 +178,6 @@ app.add_middleware(
 )
 
 # ---- API routers ----
-app.include_router(auth_router)
 app.include_router(proposals_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")
 app.include_router(controls_router, prefix="/api")
