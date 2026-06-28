@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 # Rolling history window fed to each strategy. 200 days gives SMA(200) a full warm-up.
 _BARS_LOOKBACK_DAYS = 200
 
+# Signal cache populated by precompute_signals() after market close.
+# Keyed by (strategy_class_name, symbol) → (cache_date, Signal).
+# Market-open ticks read from here to avoid re-running strategy.generate() at the
+# exact moment execution matters most. Crypto excluded (24/7, not daily-bar based).
+_premarket_signals: dict[tuple[str, str], tuple] = {}
+
 
 @dataclass
 class PipelineRun:
@@ -241,6 +247,44 @@ def _advance_state(state, result, strategy, repo):
     )
 
 
+def precompute_signals(
+    config: Config,
+    strategies: list,
+    asof: datetime,
+    bars_cache: dict | None = None,
+) -> int:
+    """Compute and cache buy/sell signals for all equity strategies after market close.
+
+    Safe to call from the scheduler's post-close tick. Returns count of signals cached.
+    Crypto strategies are skipped — they run 24/7 and aren't daily-bar based.
+    """
+    import pandas as pd
+    from datetime import date as _date
+    today = asof.date() if hasattr(asof, "date") else asof
+    end = asof
+    start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
+    cached = 0
+    for strategy in strategies:
+        symbol = strategy.symbol
+        if is_crypto_symbol(symbol):
+            continue
+        key = (type(strategy).__name__, symbol)
+        try:
+            bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
+            if bars.empty:
+                continue
+            signal = strategy.generate(bars, pd.Timestamp(asof))
+            _premarket_signals[key] = (today, signal)
+            cached += 1
+        except Exception:
+            logger.warning(
+                "precompute_signals failed for %s/%s", type(strategy).__name__, symbol,
+                exc_info=True,
+            )
+    logger.info("pre-market signal precompute: %d signals cached for %s", cached, today)
+    return cached
+
+
 def _prepare_signal(
     *,
     config,
@@ -306,7 +350,14 @@ def _prepare_signal(
                 (current_price - entry_price) / entry_price * 100,
             )
         else:
-            signal = strategy.generate(bars, pd.Timestamp(asof))
+            _cache_key = (type(strategy).__name__, symbol)
+            _today = asof.date() if hasattr(asof, "date") else asof
+            _cached = _premarket_signals.get(_cache_key)
+            if _cached is not None and _cached[0] == _today and not is_crypto_symbol(symbol):
+                signal = _cached[1]
+                logger.debug("using precomputed signal for %s/%s", type(strategy).__name__, symbol)
+            else:
+                signal = strategy.generate(bars, pd.Timestamp(asof))
 
         if signal.side == "hold":
             repo.record_signal(SignalRow(

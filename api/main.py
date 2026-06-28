@@ -62,6 +62,7 @@ async def _scheduler_loop() -> None:
     strategies = _build_strategies_for(cfg, symbols)
     loop = asyncio.get_event_loop()
     universe_date = None
+    signal_precomputed_date = None
     while True:
         try:
             if cfg.risk.dynamic_universe:
@@ -74,6 +75,16 @@ async def _scheduler_loop() -> None:
                         None, _refresh_dynamic_universe, cfg, broker, strategies
                     )
                     universe_date = today
+            from trader.scheduler import is_market_open as _is_open
+            if not await loop.run_in_executor(None, _is_open, broker):
+                from datetime import date as _date, datetime as _dt, timezone as _tz
+                today = _date.today()
+                if signal_precomputed_date != today:
+                    from trader.pipeline import precompute_signals
+                    await loop.run_in_executor(
+                        None, precompute_signals, cfg, strategies, _dt.now(_tz.utc)
+                    )
+                    signal_precomputed_date = today
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
         except Exception:
             logger.exception("scheduler tick error")

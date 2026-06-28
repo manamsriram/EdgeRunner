@@ -130,6 +130,7 @@ def start_scheduler(
     current_strategies = strategies
     universe_date: date | None = None
     bandit_update_date: date | None = None
+    signal_precomputed_date: date | None = None
     bandit_enabled = config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live
 
     while True:
@@ -146,6 +147,15 @@ def start_scheduler(
                         config, broker, current_strategies
                     )
                     universe_date = today
+
+            # Post-close signal precompute — runs once per day on the first closed tick.
+            # Caches strategy.generate() output so market-open tick skips recomputation.
+            if not market_open:
+                today = date.today()
+                if signal_precomputed_date != today:
+                    from trader.pipeline import precompute_signals
+                    precompute_signals(config, current_strategies, datetime.now(timezone.utc))
+                    signal_precomputed_date = today
 
             # Nightly bandit refresh — runs once per calendar day on the first closed
             # tick, so the day's fills are settled before the EWMA update.
