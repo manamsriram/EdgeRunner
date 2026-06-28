@@ -256,10 +256,11 @@ def get_intraday_bars_batch(
         logger.warning("intraday bar fetch failed for %d symbols", len(symbols))
         return {}
 
+    raw_df = bars.df
     result: dict[str, pd.DataFrame] = {}
     for sym in symbols:
         try:
-            result[sym] = _to_intraday_frame(bars.df, sym)
+            result[sym] = _to_intraday_frame(raw_df, sym)
         except Exception:
             logger.warning("no intraday bar data for %s — skipping", sym)
     return result

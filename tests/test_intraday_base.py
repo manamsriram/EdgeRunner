@@ -1,6 +1,5 @@
 from __future__ import annotations
 import pandas as pd
-import pytest
 from trader.strategy.base import IntradayStrategy, Signal
 
 
