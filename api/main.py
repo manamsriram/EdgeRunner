@@ -187,15 +187,22 @@ def _run_migrations() -> None:
         raise
 
 
+async def _guarded(coro, name: str):
+    try:
+        await coro
+    except Exception:
+        logger.exception("%s crashed", name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         await asyncio.get_event_loop().run_in_executor(None, _run_migrations)
     except Exception:
         logger.exception("migrations failed — continuing startup")
-    asyncio.create_task(proposal_poller())
-    asyncio.create_task(_scheduler_loop())
-    asyncio.create_task(_crypto_scheduler_loop())
+    asyncio.create_task(_guarded(proposal_poller(), "proposal_poller"))
+    asyncio.create_task(_guarded(_scheduler_loop(), "equity_scheduler"))
+    asyncio.create_task(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
     logger.info("proposal poller, equity scheduler, and crypto scheduler started")
     yield
 
