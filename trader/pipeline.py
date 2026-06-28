@@ -200,11 +200,13 @@ def run_pipeline(
     else:
         pending_buys.sort(key=lambda x: x[0], reverse=True)
     for _, strategy, signal, bars, run_id in pending_buys:
+        corr_factor = _correlation_factor(signal.symbol, state, bars_cache)
         result = _execute_signal(
             signal=signal, bars=bars, run_id=run_id, strategy=strategy,
             config=config, broker=broker, repo=repo, gate=gate,
             kill_switch=kill_switch, state=state, asof=asof,
             live_prices=live_prices, live_spread_pcts=live_spread_pcts,
+            corr_factor=corr_factor,
         )
         results.append(result)
         logger.info(
@@ -452,6 +454,7 @@ def _execute_signal(
     asof,
     live_prices: dict | None = None,
     live_spread_pcts: dict | None = None,
+    corr_factor: float = 1.0,
 ):
     """Gate evaluation and order submission for a pre-generated signal."""
     symbol = signal.symbol
@@ -473,7 +476,7 @@ def _execute_signal(
             from dataclasses import replace as _replace_for_gate
             state = _replace_for_gate(state, open_order_symbols=state.open_order_symbols - {symbol})
 
-        notional = _notional_for(signal, state, config, ref_price, bars=bars)
+        notional = _notional_for(signal, state, config, ref_price, bars=bars, corr_factor=corr_factor)
         spread_pct = (live_spread_pcts or {}).get(signal.symbol, 0.0)
         intent = OrderIntent(
             symbol=symbol, side=signal.side,
@@ -781,7 +784,30 @@ def _notional_for_side(side: str, symbol: str, state, config, ref_price: float) 
     return min(free_cash, max(sized, _ALPACA_MIN_ORDER))
 
 
-def _notional_for(signal, state, config, ref_price: float, bars=None) -> float:
+def _correlation_factor(symbol: str, state, bars_cache: dict) -> float:
+    """Return 0.5 if symbol has >0.7 rolling-60d correlation with a held position, else 1.0.
+
+    Prevents double-concentration when two correlated names both get buy signals.
+    Only fires when bars are available for both sides; defaults to 1.0 when unknown.
+    """
+    if symbol not in bars_cache:
+        return 1.0
+    held = [s for s in state.positions if s in bars_cache and state.positions.get(s, 0.0) > 0]
+    if not held:
+        return 1.0
+    sym_ret = bars_cache[symbol]["close"].pct_change().dropna().tail(60)
+    for h in held:
+        h_ret = bars_cache[h]["close"].pct_change().dropna().tail(60)
+        a, b = sym_ret.align(h_ret, join="inner")
+        if len(a) >= 20 and a.corr(b) > 0.7:
+            logger.info(
+                "corr-aware sizing: %s ↔ %s corr>0.7 → halving size", symbol, h
+            )
+            return 0.5
+    return 1.0
+
+
+def _notional_for(signal, state, config, ref_price: float, bars=None, corr_factor: float = 1.0) -> float:
     """Compute the intended notional for an order.
 
     Buys: take cap_pct of remaining investable cash (cash already committed this
@@ -809,5 +835,5 @@ def _notional_for(signal, state, config, ref_price: float, bars=None) -> float:
         logger.debug("vol_scale symbol=%s scale=%.3f", signal.symbol, scale)
     else:
         scale = 1.0
-    sized = cap_pct * free_cash * scale
+    sized = cap_pct * free_cash * scale * corr_factor
     return min(free_cash, max(sized, _ALPACA_MIN_ORDER))
