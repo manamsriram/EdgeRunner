@@ -645,6 +645,11 @@ def _execute_signal(
         if signal.side == "buy" and not is_crypto_symbol(symbol):
             stop_price = ref_price * (1 - config.risk.stop_loss_pct)
             stop_qty = round(risk_decision.approved_notional / ref_price, 6)
+            # Cap to currently-held shares so we never stop more than we own.
+            # New positions (no state entry) keep the computed qty.
+            held = state.positions.get(symbol, 0.0)
+            if held > 0:
+                stop_qty = min(stop_qty, held)
             stop_oid = client_order_id_for(
                 today, symbol, "sell", f"stop-{type(strategy).__name__}"
             )

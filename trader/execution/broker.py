@@ -468,6 +468,8 @@ class AlpacaBroker:
                     client.cancel_order_by_id(conflicting_id)
                 except Exception:
                     logger.warning("failed to cancel conflicting order %s", conflicting_id)
+                import time as _time
+                _time.sleep(1.0)  # Alpaca cancel is async; wait for shares to release
                 return client.submit_order(order_data=request)
             raise
 

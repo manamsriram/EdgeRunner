@@ -91,8 +91,8 @@ class Config:
     log_level: str = "INFO"                    # passed to logging.basicConfig
     slack_webhook_url: str | None = None       # Slack-compatible webhook for alerts
     alert_email: str | None = None             # destination address for trade emails
-    smtp_user: str | None = None               # Gmail sender address
-    smtp_password: str | None = None           # Gmail app password
+    smtp_user: str | None = None               # verified sender address (SendGrid)
+    smtp_password: str | None = None           # SendGrid API key (starts with SG.)
     # Crypto execution config
     order_type: str = "market"                 # "market" | "limit" — limit=DAY buys at mid, sells stay market
     crypto_exchange: str = "alpaca"            # "alpaca" | "binance" | "coinbase" | "kraken"
