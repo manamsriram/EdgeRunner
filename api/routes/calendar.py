@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
-_CACHE_TTL = 300
+_CACHE_TTL = 60
 _cache: dict = {}
 
 

@@ -70,6 +70,8 @@ def _fifo_trades_by_date(fills: list[dict], order_map: dict[str, str]) -> dict[s
 
 def compute_calendar_data(broker, repo) -> list[dict]:
     """Return sorted list of CalendarDay dicts for all available history."""
+    from datetime import date as _date
+
     history = broker.get_portfolio_history(period="1A") or {}
     timestamps = history.get("timestamp", [])
     equities = history.get("equity", [])
@@ -86,6 +88,21 @@ def compute_calendar_data(broker, repo) -> list[dict]:
             )
         else:
             equity_by_date[date_str] = (None, None)
+
+    # Inject today's live intraday P&L — daily history bar won't exist until EOD.
+    today_str = _date.today().isoformat()
+    if today_str not in equity_by_date:
+        try:
+            state = broker.reconcile()
+            if state.daily_pnl_pct is not None and state.equity > 0:
+                last_eq = state.equity / (1 + state.daily_pnl_pct)
+                pnl_amount = state.equity - last_eq
+                equity_by_date[today_str] = (
+                    round(state.daily_pnl_pct, 6),
+                    round(pnl_amount, 4),
+                )
+        except Exception:
+            pass
 
     fills = broker.get_account_activities(activity_type="FILL")
     orders = repo.get_orders()

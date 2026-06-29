@@ -114,7 +114,7 @@ export default function Calendar() {
   const { data = [], isLoading } = useQuery({
     queryKey: ['calendar'],
     queryFn: () => getCalendar().then(r => r.data),
-    staleTime: 300_000,
+    staleTime: 60_000,
   })
 
   const dayMap = new Map<string, CalendarDay>()
