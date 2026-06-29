@@ -56,34 +56,18 @@ Rescreen on Monday's first open tick. First run always rescreens. Held positions
 
 ---
 
-## Intraday Strategies (make use of 60s poll)
+## ~~Intraday Strategies (make use of 60s poll)~~ ✅ DONE
 
-Current daily-bar strategies fire once meaningfully per day — the 60s scheduler is wasted on them. These strategies are designed for intraday bars and benefit from frequent re-evaluation.
+All four intraday strategies implemented and wired. Enable via `INTRADAY_ALLOWLIST` env var (comma-separated symbols; keep **disjoint** from the daily equity universe). 60/40 capital split (daily/intraday). EOD force-exit ≥15 min before 4 PM ET. Per-day session-state reset. Broker positions are per-symbol so overlapping allowlists are unsupported.
 
-### Opening Range Breakout (ORB)
-- **How it works:** First 30 minutes (9:30–10:00 AM ET) establishes the day's opening range (high/low). Buy when price breaks above range high with volume confirmation; sell at close or if price returns into range.
-- **Why 60s poll:** Range forms over 30min; break needs to be caught within minutes. 60s tick is right granularity.
-- **Data needed:** 1-min or 5-min intraday bars from Alpaca (already available via crypto bars path, needs equity equivalent)
-- **Complements:** Existing daily strategies (ORB is intraday only, flat by close — no overnight risk)
-- **Effort:** ~5 hr
+### ~~Opening Range Breakout (ORB)~~ ✅ DONE
+`trader/strategy/orb.py` — 1-min bars, 30-bar opening range, volume confirmation (1.5×), no re-entry after exit.
 
-### VWAP Mean Reversion
-- **How it works:** When price deviates >2σ from VWAP, fade the move expecting reversion. Exit at VWAP or end of day. Works best on high-volume liquid names.
-- **Why 60s poll:** VWAP and σ bands update every tick — signal is only valid in real-time.
-- **Data needed:** Intraday bars + rolling VWAP computation (no external data source needed, computed from bars)
-- **Complements:** ORB (ORB is trend-following; VWAP reversion fades overextended moves — opposite regimes)
-- **Effort:** ~4 hr
+### ~~VWAP Mean Reversion~~ ✅ DONE
+`trader/strategy/vwap_reversion.py` — 1-min bars, 2σ entry band, 20-bar std window.
 
-### Gap and Go
-- **How it works:** Pre-market gap >2% on volume. At 9:35 AM, confirm gap is holding (price above prior close + volume). Enter long, ride momentum for first 30–60 min, exit before 11 AM.
-- **Why 60s poll:** Entry window is narrow (9:30–9:45 AM). Miss it = bad fill. 60s is the right frequency.
-- **Data needed:** Pre-market quote (Alpaca supports this) + first few 1-min bars at open
-- **Complements:** ORB (gap-and-go is a special case of ORB where the range is already set pre-market)
-- **Effort:** ~4 hr
+### ~~Gap and Go~~ ✅ DONE
+`trader/strategy/gap_and_go.py` — 1-min bars, entry window bars 5–9, gap ≥2%, volume ≥1.5×.
 
-### Intraday Trend (5-min Bars)
-- **How it works:** Identify trend direction from first hour (EMA or SuperTrend on 5-min bars). Ride in trend direction, stop out on reversal signal. Exit by 3:30 PM to avoid closing auction noise.
-- **Why 60s poll:** 5-min bar closes every 5 ticks — scheduler naturally aligns. Signal updates as new bars print.
-- **Data needed:** 5-min intraday bars from Alpaca (same API, different `TimeFrame`)
-- **Complements:** Reuses existing `SuperTrend` logic — just needs a 5-min bar feed wired in instead of daily
-- **Effort:** ~3 hr (SuperTrend already exists, mainly wiring)
+### ~~Intraday Trend (5-min Bars)~~ ✅ DONE
+`trader/strategy/intraday_trend.py` — 5-min bars, SuperTrend (ATR=14, mult=3.0) with ADX≥20 regime filter.
