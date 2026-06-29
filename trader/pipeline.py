@@ -165,7 +165,7 @@ def run_pipeline(
                 if _gap_sym not in bars_cache:
                     _gap_daily = get_daily_bars_batch([_gap_sym], start, end, config)
                     bars_cache.update(_gap_daily)
-                if _gap_sym in bars_cache:
+                if _gap_sym in bars_cache and not bars_cache[_gap_sym].empty:
                     _s.prev_close = float(bars_cache[_gap_sym]["close"].iloc[-1])
     except ImportError:
         pass
