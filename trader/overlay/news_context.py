@@ -80,7 +80,9 @@ def fetch_news_finnhub(symbol: str, api_key: str) -> str:
             return ""
         categories = classify_news(headlines)
         return format_classified_news(symbol, categories)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("fetch_news_finnhub failed for %s: %s", symbol, exc)
         return ""
 
 
@@ -135,7 +137,9 @@ def fetch_news(
         with ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(_fetch)
             return future.result(timeout=timeout + 1)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("fetch_news failed for %s: %s", symbol, exc)
         return ""
 
 
