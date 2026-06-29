@@ -95,27 +95,34 @@ class AlpacaBroker:
         logger.info("trade stream started")
 
     def _run_stream(self) -> None:
-        try:
-            from alpaca.trading.stream import TradingStream
-            self._config.require_alpaca()
-            ts = TradingStream(
-                api_key=self._config.alpaca_api_key,
-                secret_key=self._config.alpaca_secret_key,
-                paper=self._config.alpaca_paper,
-            )
-            broker = self
+        # Reconnect loop: Alpaca paper-trading WebSocket drops after ~1 hour.
+        # Restart immediately on clean exit; back off 30 s on error.
+        while True:
+            try:
+                from alpaca.trading.stream import TradingStream
+                self._config.require_alpaca()
+                ts = TradingStream(
+                    api_key=self._config.alpaca_api_key,
+                    secret_key=self._config.alpaca_secret_key,
+                    paper=self._config.alpaca_paper,
+                )
+                broker = self
 
-            @ts.subscribe_trade_updates
-            async def _on_update(data: Any) -> None:
-                event = str(getattr(data, "event", "")).lower()
-                symbol = str(getattr(getattr(data, "order", None), "symbol", "?"))
-                logger.info("trade stream: event=%s symbol=%s — invalidating cache", event, symbol)
-                broker._invalidate_cache()
+                @ts.subscribe_trade_updates
+                async def _on_update(data: Any) -> None:
+                    event = str(getattr(data, "event", "")).lower()
+                    symbol = str(getattr(getattr(data, "order", None), "symbol", "?"))
+                    logger.info("trade stream: event=%s symbol=%s — invalidating cache", event, symbol)
+                    broker._invalidate_cache()
 
-            ts.run()
-        except Exception:
-            logger.exception("trade stream exited — falling back to polling reconcile")
-            self._stream_started = False
+                ts.run()
+                logger.info("trade stream exited cleanly — reconnecting in 5s")
+                time.sleep(5)
+            except Exception:
+                logger.exception("trade stream error — reconnecting in 30s")
+                self._stream_started = False
+                time.sleep(30)
+                self._stream_started = True
 
     def _invalidate_cache(self) -> None:
         with self._state_lock:

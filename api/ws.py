@@ -44,12 +44,14 @@ manager = _ConnectionManager()
 
 async def proposal_poller() -> None:
     """Background task: polls DB every 3s; broadcasts newly created pending proposals."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     repo = await loop.run_in_executor(None, get_repo)
     seen_ids: set[int] = set()
     while True:
         try:
-            proposals = repo.list_pending_proposals()
+            # Run via executor — psycopg2.connect() is blocking; calling it directly
+            # on the event loop stalls health-check responses and causes Render restarts.
+            proposals = await loop.run_in_executor(None, repo.list_pending_proposals)
             new = [p for p in proposals if p["id"] not in seen_ids]
             for p in new:
                 seen_ids.add(p["id"])

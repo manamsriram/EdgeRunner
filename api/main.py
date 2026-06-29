@@ -43,7 +43,7 @@ async def _scheduler_loop() -> None:
         logger.error("DATABASE_URL not set — equity scheduler disabled")
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     repo = await loop.run_in_executor(None, PostgresRepository, cfg.database_url)
 
     broker = AlpacaBroker(cfg)
@@ -127,7 +127,7 @@ async def _crypto_scheduler_loop() -> None:
         logger.error("DATABASE_URL not set — crypto scheduler disabled")
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     repo = await loop.run_in_executor(None, PostgresRepository, cfg.database_url)
 
     broker = AlpacaBroker(cfg)
@@ -220,7 +220,7 @@ async def _guarded(coro, name: str):
 async def lifespan(app: FastAPI):
     try:
         await asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(None, _run_migrations),
+            asyncio.get_running_loop().run_in_executor(None, _run_migrations),
             timeout=30.0,
         )
     except asyncio.TimeoutError:
