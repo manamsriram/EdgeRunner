@@ -50,7 +50,7 @@ class RiskLimits:
     them. Defaults are conservative placeholders; real tuning is walk-forward, later."""
 
     max_position_pct: float = 0.10          # max fraction of equity in one symbol
-    max_trades_per_day: int = 5             # circuit breaker on churn (env: RISK_MAX_TRADES_PER_DAY)
+    intraday_pool_pct: float = 0.40         # fraction of equity reserved for intraday (env: INTRADAY_POOL_PCT)
     daily_loss_limit_pct: float = 0.03      # halt trading after this daily drawdown
     # None = open universe (dynamic mode); tuple = hard restriction (static mode)
     allowlist: tuple[str, ...] | None = DEFAULT_ALLOWLIST
@@ -151,7 +151,7 @@ def load_config() -> Config:
             # Static mode: allowlist populated from RISK_ALLOWLIST or the DEFAULT_ALLOWLIST.
             allowlist=None if _env_bool("DYNAMIC_UNIVERSE", False)
                       else _env_allowlist("RISK_ALLOWLIST", DEFAULT_ALLOWLIST),
-            max_trades_per_day=int(os.getenv("RISK_MAX_TRADES_PER_DAY", "5")),
+            intraday_pool_pct=float(os.getenv("INTRADAY_POOL_PCT", "0.40")),
             pdt_equity_threshold=float(os.getenv("PDT_EQUITY_THRESHOLD", "25000")),
             pdt_day_trade_limit=int(os.getenv("PDT_DAY_TRADE_LIMIT", "3")),
             crypto_allowlist=None if _env_bool("DYNAMIC_CRYPTO_UNIVERSE", False)

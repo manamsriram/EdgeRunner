@@ -40,7 +40,6 @@ def _config(tmp_path, autonomy: str = "manual", ks_name: str = "ks.flag") -> Con
         kill_switch_path=str(tmp_path / ks_name),
         risk=RiskLimits(
             max_position_pct=0.10,
-            max_trades_per_day=5,
             daily_loss_limit_pct=0.03,
             allowlist=_ALLOWLIST,
         ),
@@ -317,7 +316,6 @@ def test_pipeline_working_state_updated_between_symbols(tmp_path):
         kill_switch_path=str(tmp_path / "ks.flag"),
         risk=RiskLimits(
             max_position_pct=0.10,
-            max_trades_per_day=1,
             daily_loss_limit_pct=0.03,
             allowlist=("AAPL", "MSFT"),
         ),
@@ -405,7 +403,6 @@ def _bandit_config(tmp_path, *, shadow: bool = False, live: bool = False) -> Con
         kill_switch_path=str(tmp_path / "ks.flag"),
         risk=RiskLimits(
             max_position_pct=0.10,
-            max_trades_per_day=5,
             daily_loss_limit_pct=0.03,
             allowlist=("AAPL", "MSFT"),
             bandit_weighting_shadow=shadow,

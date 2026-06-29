@@ -12,7 +12,6 @@ from trader.risk.gate import AccountState, KillSwitch, OrderIntent, RiskDecision
 
 LIMITS = RiskLimits(
     max_position_pct=0.10,
-    max_trades_per_day=5,
     daily_loss_limit_pct=0.03,
     allowlist=("AAPL", "MSFT"),
 )
@@ -51,10 +50,10 @@ def test_clean_buy_approved(gate):
 # ---- max position size ----
 
 def test_oversize_buy_sized_down_to_cap(gate):
-    # cap = 10% of 100k = $10k, nothing held => a $25k buy is trimmed to $10k.
+    # cap = 10% * 100k * (1 - 0.40 daily pool) = $6,000; a $25k buy is trimmed to $6k.
     decision = gate.evaluate(_buy(notional=25_000.0), _state())
     assert decision.approved
-    assert decision.approved_notional == pytest.approx(10_000.0)
+    assert decision.approved_notional == pytest.approx(6_000.0)
 
 
 def test_buy_at_cap_with_existing_position_rejected_as_noop(gate):
@@ -178,7 +177,6 @@ def test_allowlist_env_parsed_upper_stripped(monkeypatch):
 
 PDT_LIMITS = RiskLimits(
     max_position_pct=0.10,
-    max_trades_per_day=10,
     daily_loss_limit_pct=0.03,
     allowlist=("AAPL", "MSFT"),
     pdt_equity_threshold=25_000.0,

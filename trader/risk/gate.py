@@ -49,7 +49,8 @@ class AccountState:
     cash: float = 0.0                      # uninvested cash available for new buys (defaults to 0 for compat)
     avg_entry_prices: dict[str, float] = field(default_factory=dict)  # symbol -> avg cost basis
     position_owners: dict[str, str] = field(default_factory=dict)     # symbol -> owning strategy class name
-    deployed_notional: float = 0.0         # cumulative buy notional approved this tick
+    deployed_notional: float = 0.0         # cumulative buy notional approved this tick (daily pool)
+    intraday_deployed: float = 0.0         # cumulative buy notional approved this tick (intraday pool)
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class OrderIntent:
     ref_price: float
     reason: str = ""
     spread_pct: float = 0.0  # bid-ask spread as fraction of mid; 0 = unknown
+    pool: str = "daily"                    # "daily" or "intraday" — determines capital pool cap
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "symbol", self.symbol.strip().upper())
@@ -167,12 +169,6 @@ class RiskGate:
         #             f"-{limits.daily_loss_limit_pct:.2%}"
         #         )
 
-        # DISABLED: max trades/day cap — monitoring uncapped performance.
-        # if state.trades_today >= limits.max_trades_per_day:
-        #     return RiskDecision.reject(
-        #         f"max trades/day reached ({state.trades_today}/{limits.max_trades_per_day})"
-        #     )
-
         # 4b. PDT guard — US equity FINRA rule only; does not apply to crypto.
         #     trades_today counts individual fills; a day-trade is a buy+sell pair, so
         #     trades_today // 2 gives completed round-trips. Blocking at >= limit prevents
@@ -201,10 +197,14 @@ class RiskGate:
                 return RiskDecision.reject("approved notional below minimum")
             return RiskDecision.approve(approved, "sell approved")
 
-        # 6. Max position size (buys only) — size down to the cap, or reject as a no-op.
-        #    Crypto uses a tighter cap (more volatile; default 5% vs 10% for equities).
+        # 6. Max position size (buys only) — cap is a fraction of pool equity, not total equity.
         _cap_pct = limits.max_crypto_position_pct if _is_crypto else limits.max_position_pct
-        cap = _cap_pct * state.equity
+        _pool_fraction = (
+            limits.intraday_pool_pct
+            if intent.pool == "intraday"
+            else (1.0 - limits.intraday_pool_pct)
+        )
+        cap = _cap_pct * state.equity * _pool_fraction
         existing_value = held * intent.ref_price
         headroom = cap - existing_value
         if headroom <= _NO_OP_EPSILON:
