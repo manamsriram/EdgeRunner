@@ -401,15 +401,27 @@ class AlpacaBroker:
             logger.warning("place_stop_order skipped for %s — qty %.4f rounds to 0", symbol, qty)
             return None
         client = self._ensure_client()
-        request = StopOrderRequest(
-            symbol=symbol,
-            qty=whole_qty,  # GTC stops must be whole shares on Alpaca
-            side=OrderSide.SELL,
-            time_in_force=TimeInForce.GTC,
-            stop_price=round(stop_price, 2),
-            client_order_id=client_order_id,
-        )
-        return self._submit_idempotent(client, request, client_order_id)
+        def _build_request(q: int) -> StopOrderRequest:
+            return StopOrderRequest(
+                symbol=symbol,
+                qty=q,  # GTC stops must be whole shares on Alpaca
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,
+                stop_price=round(stop_price, 2),
+                client_order_id=client_order_id,
+            )
+
+        try:
+            return self._submit_idempotent(client, _build_request(whole_qty), client_order_id)
+        except Exception as exc:
+            avail = _insufficient_qty_available(exc)
+            if avail and avail >= 1:
+                logger.warning(
+                    "stop qty %d exceeds available %d for %s; retrying with available",
+                    whole_qty, avail, symbol,
+                )
+                return self._submit_idempotent(client, _build_request(avail), client_order_id)
+            raise
 
     def cancel_open_stops(self, symbol: str) -> None:
         """Cancel open GTC stop-sell orders for symbol. Best-effort — logs failures."""
@@ -445,33 +457,35 @@ class AlpacaBroker:
     ) -> Any:
         """Submit, treating a duplicate client_order_id as success (return existing).
 
-        Also handles Alpaca wash-trade rejection (40310000): cancels the conflicting
-        opposite-side order identified in the error payload, then retries once.
+        Handles Alpaca wash-trade rejection (40310000): cancels the conflicting order
+        identified in the error payload and retries up to 3 times (multiple conflicting
+        orders can exist if cancel_open_stops raced with a new placement).
         """
-        try:
-            return client.submit_order(order_data=request)
-        except Exception as exc:  # noqa: BLE001 - inspect for known recoverable cases
-            if _is_duplicate_order(exc):
-                logger.info(
-                    "duplicate client_order_id %s; returning existing order",
-                    client_order_id,
-                )
-                return client.get_order_by_client_id(client_order_id)
-            conflicting_id = _wash_trade_order_id(exc)
-            if conflicting_id:
-                logger.warning(
-                    "wash-trade rejection for %s — cancelling conflicting order %s and retrying",
-                    client_order_id,
-                    conflicting_id,
-                )
-                try:
-                    client.cancel_order_by_id(conflicting_id)
-                except Exception:
-                    logger.warning("failed to cancel conflicting order %s", conflicting_id)
-                import time as _time
-                _time.sleep(1.0)  # Alpaca cancel is async; wait for shares to release
+        import time as _time
+        for attempt in range(3):
+            try:
                 return client.submit_order(order_data=request)
-            raise
+            except Exception as exc:  # noqa: BLE001 - inspect for known recoverable cases
+                if _is_duplicate_order(exc):
+                    logger.info(
+                        "duplicate client_order_id %s; returning existing order",
+                        client_order_id,
+                    )
+                    return client.get_order_by_client_id(client_order_id)
+                conflicting_id = _wash_trade_order_id(exc)
+                if conflicting_id:
+                    logger.warning(
+                        "wash-trade rejection for %s (attempt %d) — cancelling %s",
+                        client_order_id, attempt + 1, conflicting_id,
+                    )
+                    try:
+                        client.cancel_order_by_id(conflicting_id)
+                    except Exception:
+                        logger.warning("failed to cancel conflicting order %s", conflicting_id)
+                    _time.sleep(1.0)  # Alpaca cancel is async; wait for shares to release
+                    continue
+                raise
+        raise RuntimeError(f"wash-trade retry exhausted for {client_order_id}")
 
 
 def _is_filled(order: Any) -> bool:
@@ -497,10 +511,24 @@ def _wash_trade_order_id(exc: Exception) -> str | None:
         return None
     # The APIError string contains the raw JSON payload; extract existing_order_id.
     try:
-        # Find the JSON blob inside the exception message.
         start = text.index("{")
         payload = json.loads(text[start:])
         return payload.get("existing_order_id")
+    except (ValueError, KeyError):
+        return None
+
+
+def _insufficient_qty_available(exc: Exception) -> int | None:
+    """Return available int qty from Alpaca 'insufficient qty' error payload, or None."""
+    import json
+    text = str(exc)
+    if "insufficient qty" not in text.lower():
+        return None
+    try:
+        start = text.index("{")
+        payload = json.loads(text[start:])
+        val = payload.get("available")
+        return int(val) if val is not None else None
     except (ValueError, KeyError):
         return None
 
