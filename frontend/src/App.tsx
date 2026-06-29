@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Analysis from './pages/Analysis'
 import Approvals from './pages/Approvals'
+import Calendar from './pages/Calendar'
 import Portfolio from './pages/Portfolio'
 import Controls from './pages/Controls'
 import Performance from './pages/Performance'
@@ -20,6 +21,7 @@ export default function App() {
           <Route element={<ProtectedLayout />}>
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="/calendar" element={<Calendar />} />
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/analysis" element={<Analysis />} />
             <Route path="/controls" element={<Controls />} />

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routes.analysis import router as analysis_router
+from api.routes.calendar import router as calendar_router
 from api.routes.performance import router as performance_router
 from api.routes.controls import router as controls_router
 from api.routes.portfolio import router as portfolio_router
@@ -258,6 +259,7 @@ app.include_router(portfolio_router, prefix="/api")
 app.include_router(controls_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
 app.include_router(performance_router, prefix="/api")
+app.include_router(calendar_router, prefix="/api")
 
 
 # ---- WebSocket ----

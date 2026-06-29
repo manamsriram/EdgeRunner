@@ -18,6 +18,9 @@ export const getPortfolioHistory = () =>
 // ---- performance ----
 export const getPerformance = () => api.get<PerformanceMetrics>('/api/performance')
 
+// ---- calendar ----
+export const getCalendar = () => api.get<CalendarDay[]>('/api/calendar')
+
 // ---- controls ----
 export const getKillSwitch = () => api.get<{ engaged: boolean }>('/api/controls/kill-switch')
 export const engageKillSwitch = () => api.post('/api/controls/kill-switch/engage')
@@ -71,6 +74,25 @@ export interface PerformanceMetrics {
   verdict: 'PASS' | 'FAIL' | 'INSUFFICIENT_DATA'
   failing_checks: string[]
   strategy_signals: Record<string, number>
+}
+
+export interface CalendarTrade {
+  symbol: string
+  strategy: string | null
+  pnl: number
+  pnl_pct: number
+  qty: number
+  open_price: number
+  close_price: number
+  open_date: string
+  close_date: string
+}
+
+export interface CalendarDay {
+  date: string
+  pnl_pct: number | null
+  pnl_amount: number | null
+  trades: CalendarTrade[]
 }
 
 export interface RunEntry {
