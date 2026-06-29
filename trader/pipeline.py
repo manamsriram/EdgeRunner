@@ -10,6 +10,7 @@ AUTONOMY is safe and produces no behaviour change in any other component.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 
 _ALPACA_MIN_ORDER = 10.0
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING, Literal
 
 from trader.alerts import send_alert
 from trader.config import Config
-from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch, get_live_prices_batch
+from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch, get_live_prices_batch, get_intraday_bars_batch
 from trader.data.crypto_bars import get_crypto_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
 from trader.overlay import apply_fundamental_gate, apply_overlay
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 # Rolling history window fed to each strategy. 200 days gives SMA(200) a full warm-up.
 _BARS_LOOKBACK_DAYS = 200
+
+# How many minutes before 4 PM ET to force-exit intraday positions.
+_EOD_EXIT_MINUTES = int(os.getenv("EOD_EXIT_MINUTES", "15"))
 
 # Signal cache populated by precompute_signals() after market close.
 # Keyed by (strategy_class_name, symbol) → (cache_date, Signal).
@@ -86,12 +90,10 @@ def run_pipeline(
     # by a retired strategy could only ever exit via stop-loss.
     try:
         active_strategy_names = {type(s).__name__ for s in strategies}
-        loaded_owners = repo.get_position_owners()
-        # get_position_owners returns {(symbol, pool): strategy}; flatten to {symbol: strategy}
-        # for the in-memory runtime state (which is keyed by symbol string only).
+        loaded_owners = repo.get_position_owners()  # dict[tuple[str,str], str]
         loaded_owners = {
-            sym: o for (sym, _pool), o in loaded_owners.items()
-            if sym in state.positions and o in active_strategy_names
+            key: o for key, o in loaded_owners.items()
+            if key[0] in state.positions and o in active_strategy_names
         }
         if loaded_owners:
             from dataclasses import replace as _replace_init
@@ -121,10 +123,13 @@ def run_pipeline(
     #     )
     #     run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
 
-    # Pre-fetch bars for all equity symbols in one batch call.
-    # Crypto symbols are excluded — they use a separate data path.
+    from trader.strategy.base import IntradayStrategy
+
+    # Pre-fetch daily bars for all non-intraday equity symbols in one batch call.
+    # Crypto and intraday symbols are excluded — they use separate data paths.
     equity_symbols = list({
-        s.symbol for s in strategies if not is_crypto_symbol(s.symbol)
+        s.symbol for s in strategies
+        if not is_crypto_symbol(s.symbol) and not isinstance(s, IntradayStrategy)
     })
     live_prices: dict[str, float] = {}
     live_spread_pcts: dict[str, float] = {}
@@ -137,10 +142,48 @@ def run_pipeline(
         except Exception:
             logger.warning("live quote fetch failed; stop-loss uses yesterday's close")
     else:
+        end = asof
+        start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
         bars_cache = {}
 
+    # Intraday bars — fetched per timeframe, no cache (small payload).
+    intraday_caches: dict[str, dict[str, object]] = {}
+    for _tf in ("1min", "5min"):
+        _tf_syms = list({
+            s.symbol for s in strategies
+            if isinstance(s, IntradayStrategy) and s.bar_timeframe == _tf
+        })
+        if _tf_syms:
+            intraday_caches[_tf] = get_intraday_bars_batch(_tf_syms, _tf, 390, config)
+
+    # GapAndGo needs yesterday's close — reuse daily bars cache already fetched above.
+    try:
+        from trader.strategy.gap_and_go import GapAndGo
+        for _s in strategies:
+            if isinstance(_s, GapAndGo):
+                _gap_sym = _s.symbol
+                if _gap_sym not in bars_cache:
+                    _gap_daily = get_daily_bars_batch([_gap_sym], start, end, config)
+                    bars_cache.update(_gap_daily)
+                if _gap_sym in bars_cache:
+                    _s.prev_close = float(bars_cache[_gap_sym]["close"].iloc[-1])
+    except ImportError:
+        pass
+
+    # Also fetch live prices for intraday symbols.
+    intraday_syms = list({
+        s.symbol for s in strategies if isinstance(s, IntradayStrategy)
+    })
+    if intraday_syms:
+        try:
+            _iday_prices, _iday_spreads = get_live_prices_batch(intraday_syms, config)
+            live_prices.update(_iday_prices)
+            live_spread_pcts.update(_iday_spreads)
+        except Exception:
+            logger.warning("intraday live quote fetch failed")
+
     results: list[PipelineRun] = []
-    pending_buys: list[tuple] = []  # (strength, strategy, signal, bars, run_id)
+    pending_buys: list[tuple] = []  # (strength, strategy, signal, bars, run_id, pool)
 
     # Phase 1: generate signals; execute sells immediately, stash buys for ranking.
     for strategy in strategies:
@@ -151,6 +194,7 @@ def run_pipeline(
             state=state,
             asof=asof,
             bars_cache=bars_cache,
+            intraday_caches=intraday_caches,
             live_prices=live_prices,
         )
         if prep is None:
@@ -162,13 +206,14 @@ def run_pipeline(
                 prep.symbol, prep.outcome, prep.risk_decision.reason,
             )
             continue
-        signal, bars, run_id = prep
+        signal, bars, run_id, pool = prep
         if signal.side == "sell":
             result = _execute_signal(
                 signal=signal, bars=bars, run_id=run_id, strategy=strategy,
                 config=config, broker=broker, repo=repo, gate=gate,
                 kill_switch=kill_switch, state=state, asof=asof,
                 live_prices=live_prices, live_spread_pcts=live_spread_pcts,
+                pool=pool,
             )
             results.append(result)
             logger.info(
@@ -178,14 +223,14 @@ def run_pipeline(
             if result.outcome in ("executed", "queued") and result.risk_decision.approved:
                 state = _advance_state(state, result, strategy, repo)
         else:
-            pending_buys.append((signal.strength, strategy, signal, bars, run_id))
+            pending_buys.append((signal.strength, strategy, signal, bars, run_id, pool))
 
     # Phase 2: rank buys by signal strength; bandit weighting adjusts ranking when enabled.
     if config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live:
         _bandit_w = repo.get_all_bandit_weights()
 
         def _rank_key(item):
-            raw, strat, sig, bars, _ = item
+            raw, strat, sig, bars, _, pool = item
             regime = classify_regime(bars)
             arm = (type(strat).__name__, regime)
             w, _ = _bandit_w.get(arm, (1.0, 0))
@@ -201,14 +246,14 @@ def run_pipeline(
         pending_buys.sort(key=_rank_key, reverse=True)
     else:
         pending_buys.sort(key=lambda x: x[0], reverse=True)
-    for _, strategy, signal, bars, run_id in pending_buys:
+    for _, strategy, signal, bars, run_id, pool in pending_buys:
         corr_factor = _correlation_factor(signal.symbol, state, bars_cache)
         result = _execute_signal(
             signal=signal, bars=bars, run_id=run_id, strategy=strategy,
             config=config, broker=broker, repo=repo, gate=gate,
             kill_switch=kill_switch, state=state, asof=asof,
             live_prices=live_prices, live_spread_pcts=live_spread_pcts,
-            corr_factor=corr_factor,
+            corr_factor=corr_factor, pool=pool,
         )
         results.append(result)
         logger.info(
@@ -224,31 +269,46 @@ def run_pipeline(
 def _advance_state(state, result, strategy, repo):
     """Return updated AccountState after an approved trade within a tick."""
     from dataclasses import replace as _replace
+    from trader.strategy.base import IntradayStrategy
+    pool = "intraday" if isinstance(strategy, IntradayStrategy) else "daily"
     approved_notional = result.risk_decision.approved_notional or 0.0
     new_owners = dict(state.position_owners)
+    owner_key = (result.symbol, pool)
     if result.signal is not None:
-        if result.signal.side == "buy" and result.symbol not in new_owners:
-            new_owners[result.symbol] = type(strategy).__name__
+        if result.signal.side == "buy" and owner_key not in new_owners:
+            new_owners[owner_key] = type(strategy).__name__
             try:
-                repo.set_position_owner(result.symbol, type(strategy).__name__)
+                repo.set_position_owner(result.symbol, type(strategy).__name__, pool)
             except Exception:
-                logger.warning("failed to persist owner for %s", result.symbol)
+                logger.warning("failed to persist owner for %s/%s", result.symbol, pool)
         elif result.signal.side == "sell":
-            new_owners.pop(result.symbol, None)
+            new_owners.pop(owner_key, None)
             try:
-                repo.clear_position_owner(result.symbol)
+                repo.clear_position_owner(result.symbol, pool)
             except Exception:
-                logger.warning("failed to clear owner for %s", result.symbol)
-    new_deployed = state.deployed_notional + (
-        approved_notional if result.signal and result.signal.side == "buy" else 0.0
-    )
-    return _replace(
-        state,
-        trades_today=state.trades_today + 1,
-        open_order_symbols=state.open_order_symbols | {result.symbol},
-        position_owners=new_owners,
-        deployed_notional=new_deployed,
-    )
+                logger.warning("failed to clear owner for %s/%s", result.symbol, pool)
+    if pool == "intraday":
+        new_intraday = state.intraday_deployed + (
+            approved_notional if result.signal and result.signal.side == "buy" else 0.0
+        )
+        return _replace(
+            state,
+            trades_today=state.trades_today + 1,
+            open_order_symbols=state.open_order_symbols | {result.symbol},
+            position_owners=new_owners,
+            intraday_deployed=new_intraday,
+        )
+    else:
+        new_deployed = state.deployed_notional + (
+            approved_notional if result.signal and result.signal.side == "buy" else 0.0
+        )
+        return _replace(
+            state,
+            trades_today=state.trades_today + 1,
+            open_order_symbols=state.open_order_symbols | {result.symbol},
+            position_owners=new_owners,
+            deployed_notional=new_deployed,
+        )
 
 
 def precompute_signals(
@@ -260,7 +320,7 @@ def precompute_signals(
     """Compute and cache buy/sell signals for all equity strategies after market close.
 
     Safe to call from the scheduler's post-close tick. Returns count of signals cached.
-    Crypto strategies are skipped — they run 24/7 and aren't daily-bar based.
+    Crypto and intraday strategies are skipped — they run on live bars, not daily bars.
     """
     import pandas as pd
     from datetime import date as _date
@@ -270,7 +330,8 @@ def precompute_signals(
     cached = 0
     for strategy in strategies:
         symbol = strategy.symbol
-        if is_crypto_symbol(symbol):
+        from trader.strategy.base import IntradayStrategy
+        if is_crypto_symbol(symbol) or isinstance(strategy, IntradayStrategy):
             continue
         key = (type(strategy).__name__, symbol)
         try:
@@ -297,13 +358,14 @@ def _prepare_signal(
     state,
     asof,
     bars_cache: dict | None = None,
+    intraday_caches: dict | None = None,
     live_prices: dict | None = None,
 ):
     """Generate and pre-screen a signal for a strategy.
 
     Returns None if bars are unavailable.
     Returns PipelineRun for terminal cases (hold, blocked, vetoed).
-    Returns (signal, bars, run_id) when the signal is ready for gate evaluation.
+    Returns (signal, bars, run_id, pool) when the signal is ready for gate evaluation.
     """
     from trader.strategy.base import Signal
 
@@ -312,10 +374,22 @@ def _prepare_signal(
     signal = None
 
     try:
+        from trader.strategy.base import IntradayStrategy
+        _is_intraday = isinstance(strategy, IntradayStrategy)
+        _pool = "intraday" if _is_intraday else "daily"
+
         import pandas as pd
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
-        bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
+
+        if _is_intraday:
+            _tf = strategy.bar_timeframe
+            bars = (intraday_caches or {}).get(_tf, {}).get(symbol)
+            if bars is None or bars.empty:
+                logger.warning("no intraday bar data for %s — skipping", symbol)
+                return None
+        else:
+            bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
 
         if bars.empty:
             logger.warning("no bar data for %s — skipping stop-loss and signal", symbol)
@@ -331,7 +405,7 @@ def _prepare_signal(
 
         current_price = (live_prices or {}).get(symbol) or float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
-        _stop_exempt = state.position_owners.get(symbol) == "DipRecovery"
+        _stop_exempt = state.position_owners.get((symbol, _pool)) == "DipRecovery"
         if (
             not _stop_exempt
             and entry_price > 0
@@ -354,6 +428,25 @@ def _prepare_signal(
                 (current_price - entry_price) / entry_price * 100,
             )
         else:
+            # EOD exit: force-sell intraday positions 15 min before market close.
+            # Early-return so overlay/gate/ownership checks are bypassed — same as stop-loss path.
+            if _is_intraday and strategy.eod_exit and symbol in state.positions and state.positions[symbol] > 0:
+                from zoneinfo import ZoneInfo as _ZI
+                from datetime import timezone as _timezone
+                _ny = _ZI("America/New_York")
+                _asof_ny = asof.astimezone(_ny) if asof.tzinfo else asof.replace(tzinfo=_timezone.utc).astimezone(_ny)
+                _close_ny = _asof_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+                if _asof_ny >= _close_ny - timedelta(minutes=_EOD_EXIT_MINUTES):
+                    signal = Signal(
+                        symbol, "sell", 1.0,
+                        f"eod-exit: intraday flat at {_asof_ny.strftime('%H:%M')} ET",
+                    )
+                    repo.record_signal(SignalRow(
+                        run_id=run_id, symbol=symbol,
+                        side=signal.side, strength=signal.strength, reason=signal.reason,
+                    ))
+                    return signal, bars, run_id, _pool
+
             _cache_key = (type(strategy).__name__, symbol)
             _today = asof.date() if hasattr(asof, "date") else asof
             _cached = _premarket_signals.get(_cache_key)
@@ -383,8 +476,8 @@ def _prepare_signal(
                 risk_decision=RiskDecision.reject("no position to sell"), outcome="blocked",
             )
 
-        if signal.side == "sell" and not signal.reason.startswith("stop-loss:"):
-            owner = state.position_owners.get(symbol)
+        if signal.side == "sell" and not signal.reason.startswith("stop-loss:") and not signal.reason.startswith("eod-exit:"):
+            owner = state.position_owners.get((symbol, _pool))
             if owner is not None and owner != type(strategy).__name__:
                 repo.record_signal(SignalRow(
                     run_id=run_id, symbol=symbol,
@@ -400,7 +493,7 @@ def _prepare_signal(
                 )
 
         is_first_entry = symbol not in state.positions or state.positions.get(symbol, 0.0) == 0.0
-        if signal.side == "buy" and is_first_entry and not is_crypto_symbol(symbol):
+        if signal.side == "buy" and is_first_entry and not is_crypto_symbol(symbol) and not _is_intraday:
             date_str = asof.strftime("%Y-%m-%d")
             if not apply_fundamental_gate(symbol, bars, config, date_str):
                 veto_signal = Signal(
@@ -416,7 +509,7 @@ def _prepare_signal(
                     risk_decision=RiskDecision.reject("fundamental gate veto"), outcome="hold",
                 )
 
-        if not signal.reason.startswith("stop-loss:"):
+        if not signal.reason.startswith("stop-loss:") and not signal.reason.startswith("eod-exit:") and not _is_intraday:
             signal = apply_overlay(signal, bars, config)
 
         repo.record_signal(SignalRow(
@@ -430,7 +523,7 @@ def _prepare_signal(
                 risk_decision=RiskDecision.reject("overlay veto"), outcome="hold",
             )
 
-        return signal, bars, run_id
+        return signal, bars, run_id, _pool
 
     except Exception:
         logger.exception("pipeline error for %s", symbol)
@@ -457,6 +550,7 @@ def _execute_signal(
     live_prices: dict | None = None,
     live_spread_pcts: dict | None = None,
     corr_factor: float = 1.0,
+    pool: str = "daily",
 ):
     """Gate evaluation and order submission for a pre-generated signal."""
     symbol = signal.symbol
@@ -478,12 +572,12 @@ def _execute_signal(
             from dataclasses import replace as _replace_for_gate
             state = _replace_for_gate(state, open_order_symbols=state.open_order_symbols - {symbol})
 
-        notional = _notional_for(signal, state, config, ref_price, bars=bars, corr_factor=corr_factor)
+        notional = _notional_for(signal, state, config, ref_price, bars=bars, corr_factor=corr_factor, pool=pool)
         spread_pct = (live_spread_pcts or {}).get(signal.symbol, 0.0)
         intent = OrderIntent(
             symbol=symbol, side=signal.side,
             notional=notional, ref_price=ref_price, reason=signal.reason,
-            spread_pct=spread_pct,
+            spread_pct=spread_pct, pool=pool,
         )
 
         risk_decision = gate.evaluate(intent, state, kill_switch)
@@ -809,7 +903,7 @@ def _correlation_factor(symbol: str, state, bars_cache: dict) -> float:
     return 1.0
 
 
-def _notional_for(signal, state, config, ref_price: float, bars=None, corr_factor: float = 1.0) -> float:
+def _notional_for(signal, state, config, ref_price: float, bars=None, corr_factor: float = 1.0, pool: str = "daily") -> float:
     """Compute the intended notional for an order.
 
     Buys: take cap_pct of remaining investable cash (cash already committed this
@@ -818,6 +912,9 @@ def _notional_for(signal, state, config, ref_price: float, bars=None, corr_facto
     When the sized amount falls below Alpaca's minimum order, the full free_cash
     is used instead (capped at free_cash so we never over-commit).
     Sells: use held value (gate enforces long/flat constraint).
+
+    Pool routing: intraday pool uses 40% of cash (intraday_pool_pct); daily pool uses
+    the remaining 60% minus min_cash_reserve.
 
     Note: _notional_for_side() (pairs pipeline) is a separate function and is
     intentionally left without vol-scaling for now.
@@ -831,7 +928,12 @@ def _notional_for(signal, state, config, ref_price: float, bars=None, corr_facto
         if is_crypto
         else config.risk.max_position_pct
     )
-    free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
+    if pool == "intraday":
+        pool_cash = state.cash * config.risk.intraday_pool_pct
+        free_cash = max(pool_cash - state.intraday_deployed, 0.0)
+    else:
+        pool_cash = state.cash * (1.0 - config.risk.intraday_pool_pct)
+        free_cash = max(pool_cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
     if bars is not None:
         scale = vol_scale(bars, annualization=365 if is_crypto else 252)
         logger.debug("vol_scale symbol=%s scale=%.3f", signal.symbol, scale)
