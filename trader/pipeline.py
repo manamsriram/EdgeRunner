@@ -136,7 +136,11 @@ def run_pipeline(
     if equity_symbols:
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
-        bars_cache: dict[str, object] = get_daily_bars_batch(equity_symbols, start, end, config)
+        try:
+            bars_cache: dict[str, object] = get_daily_bars_batch(equity_symbols, start, end, config)
+        except Exception:
+            logger.exception("equity bars batch fetch failed — all equity symbols skipped this tick")
+            bars_cache = {}
         try:
             live_prices, live_spread_pcts = get_live_prices_batch(equity_symbols, config)
         except Exception:
