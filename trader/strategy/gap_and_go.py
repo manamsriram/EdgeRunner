@@ -26,6 +26,7 @@ class GapAndGo(IntradayStrategy):
         self._entered = False
         self._entry_bar_open: float = 0.0
         self._entry_attempted = False
+        self._last_session_date = None
 
     def warm_up(self, bars: pd.DataFrame) -> None:
         self._entered = True
@@ -33,6 +34,12 @@ class GapAndGo(IntradayStrategy):
         self._warmed_up = True
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        _today = asof.date() if hasattr(asof, "date") else bars.index[-1].date()
+        if self._last_session_date != _today:
+            self._entry_attempted = False
+            self._entered = False
+            self._last_session_date = _today
+
         if self.prev_close <= 0.0:
             return Signal(self.symbol, "hold", 0.0, "prev_close not set")
 

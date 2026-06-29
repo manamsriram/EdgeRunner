@@ -63,9 +63,11 @@ def test_hold_when_near_vwap():
 
 def test_sell_when_at_or_above_vwap_with_position():
     """Strategy emits sell when price returns to VWAP (state tracked via _entered)."""
+    from datetime import date
     strat = VWAPReversion("AAPL")
     # Simulate entered state
     strat._entered = True
+    strat._last_session_date = date(2024, 1, 15)
     closes = [100.0] * 60  # price == vwap (all same close, volume uniform → vwap == close)
     bars = _make_bars(closes)
     sig = strat.generate(bars, bars.index[-1])

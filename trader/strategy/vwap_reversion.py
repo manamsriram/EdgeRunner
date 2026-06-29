@@ -21,12 +21,18 @@ class VWAPReversion(IntradayStrategy):
         self.sigma_entry = sigma_entry
         self.std_window = std_window
         self._entered = False
+        self._last_session_date = None
 
     def warm_up(self, bars: pd.DataFrame) -> None:
         self._entered = True
         self._warmed_up = True
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        _today = asof.date() if hasattr(asof, "date") else bars.index[-1].date()
+        if self._last_session_date != _today:
+            self._entered = False
+            self._last_session_date = _today
+
         if len(bars) < self.std_window:
             return Signal(self.symbol, "hold", 0.0, f"warm-up: need {self.std_window} bars")
 

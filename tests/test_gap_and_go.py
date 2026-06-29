@@ -80,10 +80,12 @@ def test_hold_when_gap_insufficient():
 
 def test_sell_when_momentum_fades():
     """After entry, close < entry_bar_open → sell."""
+    from datetime import date
     strat = GapAndGo("AAPL")
     strat.prev_close = 100.0
     strat._entered = True
     strat._entry_bar_open = 103.0
+    strat._last_session_date = date(2024, 1, 15)
     volumes = [2_000_000] * 6
     opens = [103.0] * 6
     closes = [103.5] * 5 + [102.5]  # last bar: close < entry_bar_open

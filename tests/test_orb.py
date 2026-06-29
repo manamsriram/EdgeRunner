@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import date
 import pandas as pd
 import pytest
 from trader.strategy.base import IntradayStrategy
@@ -63,6 +64,7 @@ def test_sell_when_close_drops_below_orl():
     strat._orh = 105.0
     strat._orl = 95.0
     strat._entered = True
+    strat._last_session_date = date(2024, 1, 15)
     closes = [100.0] * _RANGE_BARS + [94.0]  # below ORL
     bars = _make_bars(closes)
     sig = strat.generate(bars, bars.index[-1])
@@ -77,6 +79,7 @@ def test_no_reentry_after_exit():
     strat._orl = 95.0
     strat._entered = False
     strat._exited = True
+    strat._last_session_date = date(2024, 1, 15)
     bars = _range_bars_with_breakout(range_high=105.0, breakout_close=106.0)
     sig = strat.generate(bars, bars.index[-1])
     assert sig.side == "hold"

@@ -65,11 +65,13 @@ async def _scheduler_loop() -> None:
 
     strategies = _build_strategies_for(cfg, symbols)
     _raw_intraday = os.getenv("INTRADAY_ALLOWLIST", "").strip()
-    _intraday_symbols = (
-        [s.strip().upper() for s in _raw_intraday.split(",") if s.strip()]
-        if _raw_intraday
-        else list(symbols)
-    )
+    _intraday_symbols = [s.strip().upper() for s in _raw_intraday.split(",") if s.strip()]
+    _overlap = set(_intraday_symbols) & set(symbols)
+    if _overlap:
+        logger.warning(
+            "INTRADAY_ALLOWLIST overlaps daily universe: %s — overlapping symbols share broker positions",
+            _overlap,
+        )
     _intraday_strategies = _build_intraday_strategies_for(_intraday_symbols)
     strategies = strategies + _intraday_strategies
     from datetime import date as _date

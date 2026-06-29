@@ -397,9 +397,15 @@ def _prepare_signal(
 
         # On first tick after a cold start (process restart), reconstruct any
         # stateful exit tracking from bar history for symbols we still hold.
+        # Only warm up as entered if this strategy owns the position; otherwise
+        # mark warmed-up so non-owning strategies don't falsely set _entered.
         if not strategy._warmed_up:
             if symbol in state.positions:
-                strategy.warm_up(bars)
+                _warm_owner = state.position_owners.get((symbol, _pool))
+                if _warm_owner is None or _warm_owner == type(strategy).__name__:
+                    strategy.warm_up(bars)
+                else:
+                    strategy._warmed_up = True
             else:
                 strategy._warmed_up = True
 
@@ -429,23 +435,29 @@ def _prepare_signal(
             )
         else:
             # EOD exit: force-sell intraday positions 15 min before market close.
+            # Only the owning strategy fires the exit to prevent duplicate sells when
+            # multiple intraday strategies share a symbol.
             # Early-return so overlay/gate/ownership checks are bypassed — same as stop-loss path.
             if _is_intraday and strategy.eod_exit and symbol in state.positions and state.positions[symbol] > 0:
-                from zoneinfo import ZoneInfo as _ZI
-                from datetime import timezone as _timezone
-                _ny = _ZI("America/New_York")
-                _asof_ny = asof.astimezone(_ny) if asof.tzinfo else asof.replace(tzinfo=_timezone.utc).astimezone(_ny)
-                _close_ny = _asof_ny.replace(hour=16, minute=0, second=0, microsecond=0)
-                if _asof_ny >= _close_ny - timedelta(minutes=_EOD_EXIT_MINUTES):
-                    signal = Signal(
-                        symbol, "sell", 1.0,
-                        f"eod-exit: intraday flat at {_asof_ny.strftime('%H:%M')} ET",
-                    )
-                    repo.record_signal(SignalRow(
-                        run_id=run_id, symbol=symbol,
-                        side=signal.side, strength=signal.strength, reason=signal.reason,
-                    ))
-                    return signal, bars, run_id, _pool
+                _eod_owner = state.position_owners.get((symbol, "intraday"))
+                if _eod_owner and _eod_owner != type(strategy).__name__:
+                    pass  # not our position — skip EOD exit for this strategy
+                else:
+                    from zoneinfo import ZoneInfo as _ZI
+                    from datetime import timezone as _timezone
+                    _ny = _ZI("America/New_York")
+                    _asof_ny = asof.astimezone(_ny) if asof.tzinfo else asof.replace(tzinfo=_timezone.utc).astimezone(_ny)
+                    _close_ny = _asof_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+                    if _asof_ny >= _close_ny - timedelta(minutes=_EOD_EXIT_MINUTES):
+                        signal = Signal(
+                            symbol, "sell", 1.0,
+                            f"eod-exit: intraday flat at {_asof_ny.strftime('%H:%M')} ET",
+                        )
+                        repo.record_signal(SignalRow(
+                            run_id=run_id, symbol=symbol,
+                            side=signal.side, strength=signal.strength, reason=signal.reason,
+                        ))
+                        return signal, bars, run_id, _pool
 
             _cache_key = (type(strategy).__name__, symbol)
             _today = asof.date() if hasattr(asof, "date") else asof
