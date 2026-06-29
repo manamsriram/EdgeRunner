@@ -649,6 +649,7 @@ def _execute_signal(
                 today, symbol, "sell", f"stop-{type(strategy).__name__}"
             )
             try:
+                broker.cancel_open_stops(symbol)
                 broker.place_stop_order(
                     symbol=symbol, qty=stop_qty,
                     stop_price=stop_price, client_order_id=stop_oid,
