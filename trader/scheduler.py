@@ -55,7 +55,7 @@ def run_once(
     Returns an empty list (no-op) when the market is closed or the kill switch is engaged.
     """
     if not is_market_open(broker):
-        logger.debug("market closed — skipping pipeline tick")
+        logger.info("market closed — skipping equity pipeline tick")
         return []
     ks = KillSwitch(config.kill_switch_path)
     if ks.engaged():
