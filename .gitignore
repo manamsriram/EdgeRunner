@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.mcp.json
 
 # Local databases (real user data + trading state — do not track)
 users.db
@@ -53,3 +54,4 @@ node_modules/
 # Tooling
 .serena/
 graphify-out/
+.mcp.json
