@@ -33,7 +33,7 @@ async def _scheduler_loop() -> None:
     from trader.config import load_config
     from trader.execution.broker import AlpacaBroker
     from trader.portfolio.postgres_repo import PostgresRepository
-    from trader.scheduler import _build_strategies_for, run_once
+    from trader.scheduler import _build_strategies_for, _build_intraday_strategies_for, run_once
 
     cfg = load_config()
     if not cfg.alpaca_api_key:
@@ -64,6 +64,14 @@ async def _scheduler_loop() -> None:
         logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
 
     strategies = _build_strategies_for(cfg, symbols)
+    _raw_intraday = os.getenv("INTRADAY_ALLOWLIST", "").strip()
+    _intraday_symbols = (
+        [s.strip().upper() for s in _raw_intraday.split(",") if s.strip()]
+        if _raw_intraday
+        else list(symbols)
+    )
+    _intraday_strategies = _build_intraday_strategies_for(cfg, _intraday_symbols)
+    strategies = strategies + _intraday_strategies
     from datetime import date as _date
     universe_date = _date.today() if cfg.risk.dynamic_universe else None
     signal_precomputed_date = None
@@ -78,6 +86,7 @@ async def _scheduler_loop() -> None:
                     strategies = await loop.run_in_executor(
                         None, _refresh_dynamic_universe, cfg, broker, strategies
                     )
+                    strategies = strategies + _intraday_strategies  # re-append after refresh
                     universe_date = today
             from trader.scheduler import is_market_open as _is_open
             if not await loop.run_in_executor(None, _is_open, broker):

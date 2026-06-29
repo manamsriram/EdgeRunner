@@ -283,6 +283,25 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
     return strategies
 
 
+def _build_intraday_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
+    """Build all 4 intraday strategies per symbol.
+
+    Uses INTRADAY_ALLOWLIST env var; falls back to the same symbols as the equity stack.
+    """
+    from trader.strategy.intraday_trend import IntradayTrend
+    from trader.strategy.vwap_reversion import VWAPReversion
+    from trader.strategy.gap_and_go import GapAndGo
+    from trader.strategy.orb import OpeningRangeBreakout
+
+    strategies: list[Strategy] = []
+    for sym in symbols:
+        strategies.append(IntradayTrend(symbol=sym))
+        strategies.append(VWAPReversion(symbol=sym))
+        strategies.append(GapAndGo(symbol=sym))
+        strategies.append(OpeningRangeBreakout(symbol=sym))
+    return strategies
+
+
 def _refresh_dynamic_universe(
     config: Config,
     broker: AlpacaBroker,
