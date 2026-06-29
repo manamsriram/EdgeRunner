@@ -396,10 +396,14 @@ class AlpacaBroker:
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import StopOrderRequest
 
+        whole_qty = int(qty)
+        if whole_qty < 1:
+            logger.warning("place_stop_order skipped for %s — qty %.4f rounds to 0", symbol, qty)
+            return None
         client = self._ensure_client()
         request = StopOrderRequest(
             symbol=symbol,
-            qty=round(qty, 6),
+            qty=whole_qty,  # GTC stops must be whole shares on Alpaca
             side=OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
             stop_price=round(stop_price, 2),
