@@ -49,11 +49,6 @@ def test_buy_on_breakout_above_orh():
 
 def test_no_entry_inside_range():
     """Close inside range after range is set → hold."""
-    closes = [100.0] * _RANGE_BARS + [102.0]  # 102 < range_high of 100.5 is inside
-    highs = [100.5] * _RANGE_BARS + [102.5]
-    lows = [99.5] * _RANGE_BARS + [101.5]
-    # ORH = max(high[0:30]) = 100.5; close 102 > 100.5 → actually a breakout
-    # Let's keep close below ORH
     closes = [100.0] * _RANGE_BARS + [100.3]
     highs = [100.5] * _RANGE_BARS + [100.8]
     lows = [99.5] * _RANGE_BARS + [100.0]
