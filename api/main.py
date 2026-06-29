@@ -70,7 +70,7 @@ async def _scheduler_loop() -> None:
         if _raw_intraday
         else list(symbols)
     )
-    _intraday_strategies = _build_intraday_strategies_for(cfg, _intraday_symbols)
+    _intraday_strategies = _build_intraday_strategies_for(_intraday_symbols)
     strategies = strategies + _intraday_strategies
     from datetime import date as _date
     universe_date = _date.today() if cfg.risk.dynamic_universe else None

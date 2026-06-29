@@ -283,7 +283,7 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
     return strategies
 
 
-def _build_intraday_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
+def _build_intraday_strategies_for(symbols: "list[str]") -> "list[Strategy]":
     """Build all 4 intraday strategies per symbol.
 
     Uses INTRADAY_ALLOWLIST env var; falls back to the same symbols as the equity stack.
