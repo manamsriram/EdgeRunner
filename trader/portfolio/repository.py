@@ -103,16 +103,16 @@ class PortfolioRepository(ABC):
         Returns {} if no data."""
 
     @abstractmethod
-    def get_position_owners(self) -> dict[str, str]:
-        """Return all persisted ownership entries: symbol -> strategy class name."""
+    def get_position_owners(self) -> dict[tuple[str, str], str]:
+        """Return all persisted ownership entries: (symbol, pool) -> strategy class name."""
 
     @abstractmethod
-    def set_position_owner(self, symbol: str, strategy: str) -> None:
-        """Upsert ownership of symbol to strategy. Called when a buy executes."""
+    def set_position_owner(self, symbol: str, strategy: str, pool: str = "daily") -> None:
+        """Upsert ownership of (symbol, pool) to strategy. Called when a buy executes."""
 
     @abstractmethod
-    def clear_position_owner(self, symbol: str) -> None:
-        """Remove ownership for symbol. Called when a sell executes."""
+    def clear_position_owner(self, symbol: str, pool: str = "daily") -> None:
+        """Remove ownership for (symbol, pool). Called when a sell executes."""
 
     @abstractmethod
     def get_bandit_weight(self, strategy: str, regime: str) -> float:

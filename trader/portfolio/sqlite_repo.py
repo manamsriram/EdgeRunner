@@ -72,9 +72,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     decided_at TEXT
 );
 CREATE TABLE IF NOT EXISTS position_owners (
-    symbol     TEXT PRIMARY KEY,
+    symbol     TEXT NOT NULL,
+    pool       TEXT NOT NULL DEFAULT 'daily',
     strategy   TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, pool)
 );
 CREATE TABLE IF NOT EXISTS bandit_weights (
     strategy_name TEXT NOT NULL,
@@ -257,22 +259,25 @@ class SQLiteRepository(PortfolioRepository):
             ).fetchall()
             return {row["strategy"]: row["cnt"] for row in rows}
 
-    def get_position_owners(self) -> dict[str, str]:
+    def get_position_owners(self) -> dict[tuple[str, str], str]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT symbol, strategy FROM position_owners").fetchall()
-            return {row["symbol"]: row["strategy"] for row in rows}
+            rows = conn.execute("SELECT symbol, pool, strategy FROM position_owners").fetchall()
+            return {(row["symbol"], row["pool"]): row["strategy"] for row in rows}
 
-    def set_position_owner(self, symbol: str, strategy: str) -> None:
+    def set_position_owner(self, symbol: str, strategy: str, pool: str = "daily") -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO position_owners (symbol, strategy, updated_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(symbol) DO UPDATE SET strategy=excluded.strategy, updated_at=excluded.updated_at",
-                (symbol, strategy, _now()),
+                "INSERT INTO position_owners (symbol, pool, strategy, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(symbol, pool) DO UPDATE SET strategy=excluded.strategy, updated_at=excluded.updated_at",
+                (symbol, pool, strategy, _now()),
             )
 
-    def clear_position_owner(self, symbol: str) -> None:
+    def clear_position_owner(self, symbol: str, pool: str = "daily") -> None:
         with self._connect() as conn:
-            conn.execute("DELETE FROM position_owners WHERE symbol=?", (symbol,))
+            conn.execute(
+                "DELETE FROM position_owners WHERE symbol=? AND pool=?",
+                (symbol, pool),
+            )
 
     def get_bandit_weight(self, strategy: str, regime: str) -> float:
         with self._connect() as conn:

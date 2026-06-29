@@ -119,6 +119,7 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS signal_strength REAL")
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS alpha_wins INTEGER NOT NULL DEFAULT 1")
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS beta_losses INTEGER NOT NULL DEFAULT 1")
+                cur.execute("ALTER TABLE position_owners ADD COLUMN IF NOT EXISTS pool VARCHAR(10) NOT NULL DEFAULT 'daily'")
 
     # ---- writes ----
 
@@ -247,25 +248,28 @@ class PostgresRepository(PortfolioRepository):
                 )
                 return {row["strategy"]: row["cnt"] for row in cur.fetchall()}
 
-    def get_position_owners(self) -> dict[str, str]:
+    def get_position_owners(self) -> dict[tuple[str, str], str]:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT symbol, strategy FROM position_owners")
-                return {row["symbol"]: row["strategy"] for row in cur.fetchall()}
+                cur.execute("SELECT symbol, pool, strategy FROM position_owners")
+                return {(row["symbol"], row["pool"]): row["strategy"] for row in cur.fetchall()}
 
-    def set_position_owner(self, symbol: str, strategy: str) -> None:
+    def set_position_owner(self, symbol: str, strategy: str, pool: str = "daily") -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO position_owners (symbol, strategy, updated_at) VALUES (%s, %s, %s) "
-                    "ON CONFLICT (symbol) DO UPDATE SET strategy=EXCLUDED.strategy, updated_at=EXCLUDED.updated_at",
-                    (symbol, strategy, _now()),
+                    "INSERT INTO position_owners (symbol, pool, strategy, updated_at) VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (symbol, pool) DO UPDATE SET strategy=EXCLUDED.strategy, updated_at=EXCLUDED.updated_at",
+                    (symbol, pool, strategy, _now()),
                 )
 
-    def clear_position_owner(self, symbol: str) -> None:
+    def clear_position_owner(self, symbol: str, pool: str = "daily") -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM position_owners WHERE symbol=%s", (symbol,))
+                cur.execute(
+                    "DELETE FROM position_owners WHERE symbol=%s AND pool=%s",
+                    (symbol, pool),
+                )
 
     def get_bandit_weight(self, strategy: str, regime: str) -> float:
         with self._connect() as conn:

@@ -87,9 +87,11 @@ def run_pipeline(
     try:
         active_strategy_names = {type(s).__name__ for s in strategies}
         loaded_owners = repo.get_position_owners()
+        # get_position_owners returns {(symbol, pool): strategy}; flatten to {symbol: strategy}
+        # for the in-memory runtime state (which is keyed by symbol string only).
         loaded_owners = {
-            s: o for s, o in loaded_owners.items()
-            if s in state.positions and o in active_strategy_names
+            sym: o for (sym, _pool), o in loaded_owners.items()
+            if sym in state.positions and o in active_strategy_names
         }
         if loaded_owners:
             from dataclasses import replace as _replace_init
