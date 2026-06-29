@@ -443,16 +443,32 @@ class AlpacaBroker:
     def _submit_idempotent(
         self, client: _TradingClient, request: Any, client_order_id: str
     ) -> Any:
-        """Submit, treating a duplicate client_order_id as success (return existing)."""
+        """Submit, treating a duplicate client_order_id as success (return existing).
+
+        Also handles Alpaca wash-trade rejection (40310000): cancels the conflicting
+        opposite-side order identified in the error payload, then retries once.
+        """
         try:
             return client.submit_order(order_data=request)
-        except Exception as exc:  # noqa: BLE001 - inspect for the duplicate case only
+        except Exception as exc:  # noqa: BLE001 - inspect for known recoverable cases
             if _is_duplicate_order(exc):
                 logger.info(
                     "duplicate client_order_id %s; returning existing order",
                     client_order_id,
                 )
                 return client.get_order_by_client_id(client_order_id)
+            conflicting_id = _wash_trade_order_id(exc)
+            if conflicting_id:
+                logger.warning(
+                    "wash-trade rejection for %s — cancelling conflicting order %s and retrying",
+                    client_order_id,
+                    conflicting_id,
+                )
+                try:
+                    client.cancel_order_by_id(conflicting_id)
+                except Exception:
+                    logger.warning("failed to cancel conflicting order %s", conflicting_id)
+                return client.submit_order(order_data=request)
             raise
 
 
@@ -469,6 +485,22 @@ def _is_duplicate_order(exc: Exception) -> bool:
     return "client_order_id" in text and (
         "exist" in text or "duplicate" in text or "unique" in text
     )
+
+
+def _wash_trade_order_id(exc: Exception) -> str | None:
+    """Return the conflicting order ID from an Alpaca wash-trade rejection (40310000), or None."""
+    import json
+    text = str(exc)
+    if "40310000" not in text and "wash trade" not in text.lower():
+        return None
+    # The APIError string contains the raw JSON payload; extract existing_order_id.
+    try:
+        # Find the JSON blob inside the exception message.
+        start = text.index("{")
+        payload = json.loads(text[start:])
+        return payload.get("existing_order_id")
+    except (ValueError, KeyError):
+        return None
 
 
 def _is_not_fractionable(exc: Exception) -> bool:

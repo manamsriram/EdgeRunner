@@ -366,3 +366,62 @@ def test_get_portfolio_history_returns_none_on_error():
     client = _PortfolioHistoryClient(raise_exc=RuntimeError("API down"))
     result = _broker(client).get_portfolio_history()
     assert result is None
+
+
+# ---- wash-trade rejection (40310000) ----
+
+class FakeWashTradeClient(FakeClient):
+    """Raises a wash-trade 403 on the first submit_order call, then succeeds."""
+
+    CONFLICTING_ID = "ee1bfab0-d673-4a38-bf21-eae8fb81f49f"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancelled: list[str] = []
+        self._rejected_once = False
+
+    def submit_order(self, order_data):
+        if not self._rejected_once:
+            self._rejected_once = True
+            raise Exception(
+                '{"code":40310000,"existing_order_id":"'
+                + self.CONFLICTING_ID
+                + '","message":"potential wash trade detected. use complex orders",'
+                '"reject_reason":"opposite side market/stop order exists"}'
+            )
+        return super().submit_order(order_data)
+
+    def cancel_order_by_id(self, order_id: str) -> None:
+        self.cancelled.append(order_id)
+
+
+def test_wash_trade_rejection_cancels_conflict_and_retries():
+    """40310000 should cancel the conflicting order and succeed on the retry."""
+    client = FakeWashTradeClient()
+    order = _broker(client).submit(
+        symbol="ACHR", side="buy", notional=500.0, client_order_id="stop-achr"
+    )
+    assert FakeWashTradeClient.CONFLICTING_ID in client.cancelled
+    assert len(client.submitted) == 1
+    assert order.symbol == "ACHR"
+
+
+def test_wash_trade_cancels_correct_conflicting_id():
+    client = FakeWashTradeClient()
+    _broker(client).submit(
+        symbol="ACHR", side="buy", notional=500.0, client_order_id="stop-achr2"
+    )
+    assert client.cancelled == [FakeWashTradeClient.CONFLICTING_ID]
+
+
+def test_non_wash_trade_error_still_propagates():
+    """Unrelated 403s must not be silently swallowed."""
+    class UnrelatedForbiddenClient(FakeClient):
+        def submit_order(self, order_data):
+            raise Exception('{"code":40310001,"message":"some other forbidden error"}')
+
+    with pytest.raises(Exception, match="40310001"):
+        _broker(UnrelatedForbiddenClient()).submit(
+            symbol="AAPL", side="buy", notional=100.0, client_order_id="z"
+        )
+
