@@ -49,33 +49,27 @@ async def _scheduler_loop() -> None:
     broker = AlpacaBroker(cfg)
     broker.start_trade_stream()
 
-    if cfg.risk.dynamic_universe:
-        from trader.universe.screener import fetch_dynamic_universe
-        try:
-            symbols = await loop.run_in_executor(
-                None, fetch_dynamic_universe, cfg, cfg.risk.universe_size
-            )
-        except Exception:
-            logger.exception("initial equity screener failed — scheduler disabled")
-            return
-        logger.info("equity scheduler started — dynamic universe size=%d poll=60s", len(symbols))
-    else:
-        symbols = list(cfg.risk.allowlist or [])
-        logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
-
-    strategies = _build_strategies_for(cfg, symbols)
     _raw_intraday = os.getenv("INTRADAY_ALLOWLIST", "").strip()
     _intraday_symbols = [s.strip().upper() for s in _raw_intraday.split(",") if s.strip()]
-    _overlap = set(_intraday_symbols) & set(symbols)
-    if _overlap:
-        logger.warning(
-            "INTRADAY_ALLOWLIST overlaps daily universe: %s — overlapping symbols share broker positions",
-            _overlap,
-        )
     _intraday_strategies = _build_intraday_strategies_for(_intraday_symbols)
-    strategies = strategies + _intraday_strategies
+
+    if cfg.risk.dynamic_universe:
+        symbols: list[str] = []
+        strategies = []
+        logger.info("equity scheduler started — dynamic universe mode, strategies built on first tick poll=60s")
+    else:
+        symbols = list(cfg.risk.allowlist or [])
+        _overlap = set(_intraday_symbols) & set(symbols)
+        if _overlap:
+            logger.warning(
+                "INTRADAY_ALLOWLIST overlaps daily universe: %s — overlapping symbols share broker positions",
+                _overlap,
+            )
+        strategies = _build_strategies_for(cfg, symbols) + _intraday_strategies
+        logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
+
     from datetime import date as _date
-    universe_date = _date.today() if cfg.risk.dynamic_universe else None
+    universe_date = None  # always None at start — loop fetches on first tick for dynamic mode
     signal_precomputed_date = None
     while True:
         try:
