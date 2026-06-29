@@ -120,6 +120,7 @@ class SQLiteRepository(PortfolioRepository):
             conn.executescript(_SCHEMA)
             self._migrate_orders_columns(conn)
             self._migrate_bandit_columns(conn)
+            self._migrate_position_owners_pool(conn)
 
     def _migrate_orders_columns(self, conn: sqlite3.Connection) -> None:
         # CREATE TABLE IF NOT EXISTS only catches brand-new DBs; an existing
@@ -138,6 +139,11 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute("ALTER TABLE bandit_weights ADD COLUMN alpha_wins INTEGER NOT NULL DEFAULT 1")
         if "beta_losses" not in existing:
             conn.execute("ALTER TABLE bandit_weights ADD COLUMN beta_losses INTEGER NOT NULL DEFAULT 1")
+
+    def _migrate_position_owners_pool(self, conn: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(position_owners)")}
+        if "pool" not in existing:
+            conn.execute("ALTER TABLE position_owners ADD COLUMN pool TEXT NOT NULL DEFAULT 'daily'")
 
     # ---- writes ----
 
