@@ -378,11 +378,13 @@ class AlpacaBroker:
                 if notional is not None and ref_price is not None and ref_price > 0
                 else 0.0
             )
-            if not (_is_not_fractionable(exc) and whole_qty >= 1.0):
+            _is_insuf = _insufficient_qty_available(exc) is not None
+            if not ((_is_not_fractionable(exc) or _is_insuf) and whole_qty >= 1.0):
                 raise
+            reason = "not fractionable" if _is_not_fractionable(exc) else "insufficient fractional qty"
             logger.info(
-                "asset %s not fractionable; retrying %s as %d whole shares",
-                symbol, client_order_id, int(whole_qty),
+                "asset %s %s; retrying %s as %d whole shares",
+                symbol, reason, client_order_id, int(whole_qty),
             )
             request = self._request_builder(
                 symbol=symbol, side=side, client_order_id=client_order_id,
@@ -538,8 +540,8 @@ def _insufficient_qty_available(exc: Exception) -> int | None:
         start = text.index("{")
         payload = json.loads(text[start:])
         val = payload.get("available")
-        return int(val) if val is not None else None
-    except (ValueError, KeyError):
+        return int(float(val)) if val is not None else None
+    except (TypeError, ValueError, KeyError):
         return None
 
 
