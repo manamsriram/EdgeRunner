@@ -25,7 +25,7 @@ export default function App() {
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/analysis" element={<Analysis />} />
             <Route path="/controls" element={<Controls />} />
-            <Route path="/" element={<Navigate to="/portfolio" replace />} />
+            <Route path="/" element={<Navigate to="/calendar" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>

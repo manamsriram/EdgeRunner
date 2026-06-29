@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getCalendar, CalendarDay, CalendarTrade } from '../lib/api'
+import { getCalendar } from '../lib/api'
+import type { CalendarDay, CalendarTrade } from '../lib/api'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
