@@ -196,13 +196,20 @@ def apply_claude_overlay(
         )
 
         action = parsed.get("action")
-        strength = parsed.get("strength")
         rationale = str(parsed.get("rationale", ""))
 
         if action not in {"approve", "veto"}:
-            raise ValueError(f"invalid action: {action!r}")
-        if not isinstance(strength, (int, float)) or not (0.0 <= float(strength) <= 1.0):
-            raise ValueError(f"strength out of range: {strength!r}")
+            logger.warning("overlay: invalid action %r for %s, approving", action, signal.symbol)
+            action = "approve"
+
+        raw_strength = parsed.get("strength")
+        try:
+            strength = float(raw_strength)
+            if not (0.0 <= strength <= 1.0):
+                raise ValueError
+        except (TypeError, ValueError):
+            logger.warning("overlay: bad strength %r for %s, using original", raw_strength, signal.symbol)
+            strength = signal.strength
 
         if action == "veto":
             result = Signal(

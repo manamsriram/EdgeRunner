@@ -430,12 +430,12 @@ class AlpacaBroker:
             logger.warning("place_stop_order skipped for %s — qty %.4f rounds to 0", symbol, qty)
             return None
         client = self._ensure_client()
-        def _build_request(q: int) -> StopOrderRequest:
+        def _build_request(q: int, tif: TimeInForce = TimeInForce.GTC) -> StopOrderRequest:
             return StopOrderRequest(
                 symbol=symbol,
                 qty=q,  # GTC stops must be whole shares on Alpaca
                 side=OrderSide.SELL,
-                time_in_force=TimeInForce.GTC,
+                time_in_force=tif,
                 stop_price=round(stop_price, 2),
                 client_order_id=client_order_id,
             )
@@ -450,6 +450,13 @@ class AlpacaBroker:
                     whole_qty, avail, symbol,
                 )
                 return self._submit_idempotent(client, _build_request(avail), client_order_id)
+            if "hard-to-borrow" in str(exc).lower():
+                logger.warning(
+                    "%s hard-to-borrow rejects GTC stop; retrying as DAY", symbol,
+                )
+                return self._submit_idempotent(
+                    client, _build_request(whole_qty, TimeInForce.DAY), client_order_id,
+                )
             raise
 
     def cancel_open_stops(self, symbol: str) -> None:
