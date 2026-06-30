@@ -11,10 +11,12 @@ const NAV = [
 
 export default function ProtectedLayout() {
   return (
-    <div className="flex min-h-screen bg-slate-900">
+    <div className="flex min-h-screen bg-zinc-950">
       {/* Sidebar */}
-      <aside className="w-52 bg-slate-800 flex flex-col py-6 px-4 gap-2 border-r border-slate-700 shrink-0">
-        <div className="text-white font-bold text-lg mb-4 px-2">Trading Bot</div>
+      <aside className="w-52 bg-zinc-900 flex flex-col py-6 px-4 gap-1 border-r border-zinc-800 shrink-0">
+        <div className="text-white font-bold text-lg mb-5 px-2 tracking-tight">
+          EdgeRunner
+        </div>
         {NAV.map(({ to, label }) => (
           <NavLink
             key={to}
@@ -22,8 +24,8 @@ export default function ProtectedLayout() {
             className={({ isActive }) =>
               `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
               }`
             }
           >

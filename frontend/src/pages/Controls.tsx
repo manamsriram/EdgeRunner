@@ -46,7 +46,7 @@ export default function Controls() {
     try {
       await engageKillSwitch()
       qc.invalidateQueries({ queryKey: ['kill-switch'] })
-      toast.success('Kill switch engaged — trading halted')
+      toast.success('Kill switch engaged - trading halted')
     } catch {
       toast.error('Failed to engage kill switch')
     }
@@ -56,7 +56,7 @@ export default function Controls() {
     try {
       await disengageKillSwitch()
       qc.invalidateQueries({ queryKey: ['kill-switch'] })
-      toast.success('Kill switch disengaged — trading resumed')
+      toast.success('Kill switch disengaged - trading resumed')
     } catch {
       toast.error('Failed to disengage kill switch')
     }
@@ -65,28 +65,28 @@ export default function Controls() {
   return (
     <div className="flex flex-col gap-6">
       {/* Kill Switch */}
-      <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-        <h2 className="text-xl font-bold text-white mb-4">Kill Switch</h2>
-        <div className="flex items-center gap-4 mb-4">
+      <section className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
+        <h2 className="text-xl font-bold text-white mb-4 tracking-tight">Kill Switch</h2>
+        <div className="flex items-center gap-3 mb-5">
           <div
-            className={`w-3 h-3 rounded-full ${engaged ? 'bg-red-500' : 'bg-green-500'}`}
+            className={`w-2.5 h-2.5 rounded-full ${engaged ? 'bg-red-500' : 'bg-emerald-500'}`}
           />
-          <span className={`font-bold text-lg ${engaged ? 'text-red-400' : 'text-green-400'}`}>
-            {engaged ? 'ENGAGED — Trading Halted' : 'Disengaged — Trading Active'}
+          <span className={`font-semibold ${engaged ? 'text-red-400' : 'text-emerald-400'}`}>
+            {engaged ? 'ENGAGED - Trading Halted' : 'Disengaged - Trading Active'}
           </span>
         </div>
         <div className="flex gap-3">
           <button
             onClick={handleEngage}
             disabled={engaged}
-            className="bg-red-700 hover:bg-red-800 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
+            className="bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
           >
             Engage
           </button>
           <button
             onClick={handleDisengage}
             disabled={!engaged}
-            className="bg-slate-600 hover:bg-slate-500 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
+            className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
           >
             Disengage
           </button>
@@ -94,68 +94,68 @@ export default function Controls() {
       </section>
 
       {/* Autonomy */}
-      <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-        <h2 className="text-xl font-bold text-white mb-4">Autonomy Mode</h2>
-        <div className="flex items-center gap-4 mb-4">
+      <section className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
+        <h2 className="text-xl font-bold text-white mb-4 tracking-tight">Autonomy Mode</h2>
+        <div className="flex items-center gap-3 mb-5">
           <div
-            className={`w-3 h-3 rounded-full ${currentMode === 'auto' ? 'bg-yellow-400' : 'bg-blue-400'}`}
+            className={`w-2.5 h-2.5 rounded-full ${currentMode === 'auto' ? 'bg-amber-400' : 'bg-sky-400'}`}
           />
-          <span className={`font-bold text-lg ${currentMode === 'auto' ? 'text-yellow-300' : 'text-blue-300'}`}>
-            {currentMode === 'auto' ? 'AUTO — Trades execute automatically' : 'MANUAL — Proposals require approval'}
+          <span className={`font-semibold ${currentMode === 'auto' ? 'text-amber-300' : 'text-sky-300'}`}>
+            {currentMode === 'auto' ? 'AUTO - Trades execute automatically' : 'MANUAL - Proposals require approval'}
           </span>
         </div>
         <div className="flex gap-3 mb-3">
           <button
             onClick={() => handleSetAutonomy('manual')}
             disabled={currentMode === 'manual'}
-            className="bg-blue-700 hover:bg-blue-800 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
+            className="bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
           >
             Manual
           </button>
           <button
             onClick={() => handleSetAutonomy('auto')}
             disabled={currentMode === 'auto'}
-            className="bg-yellow-700 hover:bg-yellow-800 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
+            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white font-medium px-5 py-2 rounded-lg transition-colors"
           >
             Auto
           </button>
         </div>
-        <p className="text-slate-500 text-xs">
-          Runtime only — resets to <code className="text-slate-400">AUTONOMY</code> env var on restart.
+        <p className="text-zinc-600 text-xs">
+          Runtime only - resets to <code className="text-zinc-500">AUTONOMY</code> env var on restart.
         </p>
       </section>
 
       {/* Run Log */}
       <section>
-        <h2 className="text-xl font-bold text-white mb-3">Run Log (last 20)</h2>
+        <h2 className="text-xl font-bold text-white mb-3 tracking-tight">Run Log (last 20)</h2>
         {runs.length === 0 ? (
-          <div className="bg-slate-800 rounded-xl p-6 text-slate-400 border border-slate-700">
+          <div className="bg-zinc-900 rounded-xl p-6 text-zinc-500 border border-zinc-800">
             No pipeline runs recorded yet.
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-700">
-            <table className="w-full text-sm text-slate-300">
-              <thead className="bg-slate-700 text-slate-400 uppercase text-xs">
+          <div className="overflow-x-auto rounded-xl border border-zinc-800">
+            <table className="w-full text-sm text-zinc-300">
+              <thead className="bg-zinc-800 text-zinc-500 uppercase text-xs">
                 <tr>
                   {['#', 'Started', 'Strategy', 'Mode', 'Note'].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left">{h}</th>
+                    <th key={h} className="px-4 py-3 text-left font-medium tracking-wider">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {runs.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-700">
-                    <td className="px-4 py-3 text-slate-500">{r.id}</td>
-                    <td className="px-4 py-3 text-slate-400">{new Date(r.started_at).toLocaleString()}</td>
+                  <tr key={r.id} className="border-t border-zinc-800 hover:bg-zinc-900/60 transition-colors">
+                    <td className="px-4 py-3 text-zinc-600 font-mono text-xs">{r.id}</td>
+                    <td className="px-4 py-3 text-zinc-500 font-mono text-xs">{new Date(r.started_at).toLocaleString()}</td>
                     <td className="px-4 py-3">{r.strategy}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase ${
-                        r.mode === 'auto' ? 'bg-yellow-900 text-yellow-300' : 'bg-blue-900 text-blue-300'
+                        r.mode === 'auto' ? 'bg-amber-950 text-amber-400' : 'bg-sky-950 text-sky-400'
                       }`}>
                         {r.mode}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-400">{r.note ?? '—'}</td>
+                    <td className="px-4 py-3 text-zinc-500">{r.note ?? '-'}</td>
                   </tr>
                 ))}
               </tbody>

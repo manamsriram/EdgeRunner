@@ -23,11 +23,9 @@ export default function Analysis() {
       const res = await fetch('/api/analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-
         body: JSON.stringify({ query }),
         signal: ctrl.signal,
       })
-
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
@@ -69,8 +67,8 @@ export default function Analysis() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Stock Analysis Bot</h2>
-        <p className="text-slate-400 text-sm">Invest at your own risk. Analyzes stocks via LLM agent.</p>
+        <h2 className="text-xl font-bold text-white mb-1 tracking-tight">Stock Analysis</h2>
+        <p className="text-zinc-500 text-sm">Invest at your own risk. Analyzes stocks via LLM agent.</p>
       </div>
 
       <form onSubmit={handleSubmit} className="flex gap-3">
@@ -79,20 +77,20 @@ export default function Analysis() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="E.g. Should I buy NVDA this week?"
           disabled={loading}
-          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-600 disabled:opacity-50 transition-colors"
         />
         <button
           type="submit"
           disabled={loading || !query.trim()}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-lg transition-colors whitespace-nowrap"
+          className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-lg transition-colors whitespace-nowrap"
         >
-          {loading ? 'Analyzing…' : 'Analyze'}
+          {loading ? 'Analyzing...' : 'Analyze'}
         </button>
         {loading && (
           <button
             type="button"
             onClick={() => abortRef.current?.abort()}
-            className="bg-slate-700 hover:bg-slate-600 text-slate-300 px-4 py-2 rounded-lg transition-colors"
+            className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-4 py-2 rounded-lg transition-colors"
           >
             Cancel
           </button>
@@ -100,19 +98,17 @@ export default function Analysis() {
       </form>
 
       {error && (
-        <div className="bg-red-900 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
+        <div className="bg-red-950 border border-red-900 rounded-xl p-4 text-red-400 text-sm">
           {error}
         </div>
       )}
 
       {result && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-          <h3 className="text-white font-semibold mb-3">Analysis Result</h3>
-          <p className="text-slate-300 whitespace-pre-wrap text-sm leading-relaxed">{result}</p>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+          <h3 className="text-white font-semibold mb-3 tracking-tight">Analysis Result</h3>
+          <p className="text-zinc-300 whitespace-pre-wrap text-sm leading-relaxed">{result}</p>
         </div>
       )}
-
-
     </div>
   )
 }

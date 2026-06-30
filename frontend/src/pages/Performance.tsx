@@ -2,12 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { getPerformance } from '../lib/api'
 
 const THRESHOLDS = {
-  sharpe:        { min: 1.0,   label: '≥1.0'  },
-  max_drawdown:  { max: -0.15, label: '≤15%'  },
-  win_rate:      { min: 0.45,  label: '≥45%'  },
-  profit_factor: { min: 1.5,   label: '≥1.5'  },
-  trade_count:   { min: 100,   label: '≥100'  },
-  days_active:   { min: 60,    label: '≥60'   },
+  sharpe:        { min: 1.0,   label: '>=1.0'  },
+  max_drawdown:  { max: -0.15, label: '<=15%'  },
+  win_rate:      { min: 0.45,  label: '>=45%'  },
+  profit_factor: { min: 1.5,   label: '>=1.5'  },
+  trade_count:   { min: 100,   label: '>=100'  },
+  days_active:   { min: 60,    label: '>=60'   },
 }
 
 function passes(metric: keyof typeof THRESHOLDS, value: number | null): boolean | null {
@@ -30,16 +30,16 @@ function MetricTile({
   passing: boolean | null
 }) {
   const border =
-    passing === null ? 'border-slate-600' : passing ? 'border-green-500' : 'border-red-500'
+    passing === null ? 'border-zinc-700' : passing ? 'border-emerald-600' : 'border-red-600'
   const mark = passing === null ? '' : passing ? '✓' : '✗'
-  const markColor = passing ? 'text-green-400' : 'text-red-400'
+  const markColor = passing ? 'text-emerald-400' : 'text-red-400'
 
   return (
-    <div className={`bg-slate-800 rounded-xl p-4 border-2 ${border} flex flex-col gap-1`}>
-      <div className="text-slate-400 text-xs uppercase tracking-wide">{label}</div>
+    <div className={`bg-zinc-900 rounded-xl p-4 border-2 ${border} flex flex-col gap-1`}>
+      <div className="text-zinc-500 text-xs uppercase tracking-wider">{label}</div>
       <div className="text-white text-2xl font-bold font-mono">{value}</div>
       <div className="flex items-center gap-1 text-xs">
-        <span className="text-slate-500">{threshold}</span>
+        <span className="text-zinc-600">{threshold}</span>
         {mark && <span className={`font-bold ${markColor}`}>{mark}</span>}
       </div>
     </div>
@@ -48,9 +48,9 @@ function MetricTile({
 
 function VerdictBanner({ verdict }: { verdict: string }) {
   const styles: Record<string, string> = {
-    PASS: 'bg-green-900 border-green-500 text-green-200',
-    FAIL: 'bg-red-900 border-red-500 text-red-200',
-    INSUFFICIENT_DATA: 'bg-yellow-900 border-yellow-500 text-yellow-200',
+    PASS: 'bg-emerald-950 border-emerald-600 text-emerald-300',
+    FAIL: 'bg-red-950 border-red-700 text-red-300',
+    INSUFFICIENT_DATA: 'bg-amber-950 border-amber-700 text-amber-300',
   }
   const labels: Record<string, string> = {
     PASS: '✓ GO-LIVE VERDICT: PASS',
@@ -58,7 +58,7 @@ function VerdictBanner({ verdict }: { verdict: string }) {
     INSUFFICIENT_DATA: '⚠ INSUFFICIENT DATA',
   }
   return (
-    <div className={`rounded-xl border-2 px-6 py-4 font-bold text-lg ${styles[verdict] ?? styles.INSUFFICIENT_DATA}`}>
+    <div className={`rounded-xl border-2 px-6 py-4 font-bold text-lg tracking-tight ${styles[verdict] ?? styles.INSUFFICIENT_DATA}`}>
       {labels[verdict] ?? verdict}
     </div>
   )
@@ -67,15 +67,15 @@ function VerdictBanner({ verdict }: { verdict: string }) {
 function BenchmarkRow({ label, value }: { label: string; value: number | null }) {
   if (value === null)
     return (
-      <div className="flex items-center justify-between py-2 border-t border-slate-700">
-        <span className="text-slate-400 text-sm">{label}</span>
-        <span className="text-slate-500 text-sm font-mono">unavailable</span>
+      <div className="flex items-center justify-between py-2 border-t border-zinc-800">
+        <span className="text-zinc-500 text-sm">{label}</span>
+        <span className="text-zinc-600 text-sm font-mono">unavailable</span>
       </div>
     )
-  const color = value >= 0 ? 'text-green-400' : 'text-red-400'
+  const color = value >= 0 ? 'text-emerald-400' : 'text-red-400'
   return (
-    <div className="flex items-center justify-between py-2 border-t border-slate-700">
-      <span className="text-slate-300 text-sm">{label}</span>
+    <div className="flex items-center justify-between py-2 border-t border-zinc-800">
+      <span className="text-zinc-300 text-sm">{label}</span>
       <span className={`font-mono font-bold text-sm ${color}`}>
         {value >= 0 ? '+' : ''}
         {(value * 100).toFixed(1)}%
@@ -92,15 +92,15 @@ export default function Performance() {
   })
 
   if (isLoading) {
-    return <p className="text-slate-400">Loading performance data…</p>
+    return <p className="text-zinc-500">Loading performance data...</p>
   }
 
   if (!m || m.verdict === 'INSUFFICIENT_DATA') {
     return (
       <div className="flex flex-col gap-6">
-        <h1 className="text-2xl font-bold text-white">Performance</h1>
-        <div className="bg-slate-800 rounded-xl p-6 text-slate-400 border border-slate-700">
-          Not enough paper trading data yet — run the scheduler in auto mode to populate.
+        <h1 className="text-2xl font-bold text-white tracking-tight">Performance</h1>
+        <div className="bg-zinc-900 rounded-xl p-6 text-zinc-500 border border-zinc-800">
+          Not enough paper trading data yet - run the scheduler in auto mode to populate.
         </div>
       </div>
     )
@@ -111,14 +111,14 @@ export default function Performance() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold text-white">Performance</h1>
+      <h1 className="text-2xl font-bold text-white tracking-tight">Performance</h1>
 
       <VerdictBanner verdict={m.verdict} />
 
       {m.failing_checks.length > 0 && (
-        <div className="bg-red-950 border border-red-800 rounded-xl px-4 py-3">
-          <div className="text-red-300 text-sm font-semibold mb-1">Failing checks:</div>
-          <ul className="list-disc list-inside text-red-400 text-sm space-y-0.5">
+        <div className="bg-red-950 border border-red-900 rounded-xl px-4 py-3">
+          <div className="text-red-400 text-sm font-semibold mb-1">Failing checks:</div>
+          <ul className="list-disc list-inside text-red-500 text-sm space-y-0.5">
             {m.failing_checks.map((f) => (
               <li key={f}>{f}</li>
             ))}
@@ -168,11 +168,11 @@ export default function Performance() {
 
       {/* Benchmark */}
       <section>
-        <h2 className="text-lg font-bold text-white mb-3">
+        <h2 className="text-lg font-bold text-white mb-3 tracking-tight">
           Benchmark Comparison
-          <span className="ml-2 text-xs font-normal text-slate-500">(informational — not gated)</span>
+          <span className="ml-2 text-xs font-normal text-zinc-600">(informational - not gated)</span>
         </h2>
-        <div className="bg-slate-800 rounded-xl px-4 border border-slate-700">
+        <div className="bg-zinc-900 rounded-xl px-4 border border-zinc-800">
           <BenchmarkRow label="Portfolio" value={m.total_return} />
           <BenchmarkRow label="SPY" value={m.benchmark_spy_return} />
         </div>
