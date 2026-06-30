@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_PST = ZoneInfo("America/Los_Angeles")
 
 
 def _parse_ts(ts_str: str) -> datetime:
@@ -10,6 +13,14 @@ def _parse_ts(ts_str: str) -> datetime:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
     except Exception:
         return datetime.now(timezone.utc)
+
+
+def _to_pst_date(ts_str: str) -> str:
+    """Convert ISO timestamp string to YYYY-MM-DD in America/Los_Angeles."""
+    dt = _parse_ts(ts_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_PST).strftime("%Y-%m-%d")
 
 
 def _fifo_trades_by_date(fills: list[dict], order_map: dict[str, str]) -> dict[str, list[dict]]:
@@ -32,7 +43,7 @@ def _fifo_trades_by_date(fills: list[dict], order_map: dict[str, str]) -> dict[s
         elif fill["side"] == "sell":
             remaining = qty
             close_ts = fill["ts"]
-            close_date = close_ts[:10]
+            close_date = _to_pst_date(close_ts)
 
             while remaining > 1e-9 and buy_queues[symbol]:
                 lot = buy_queues[symbol][0]
@@ -56,7 +67,7 @@ def _fifo_trades_by_date(fills: list[dict], order_map: dict[str, str]) -> dict[s
                     "qty": round(matched, 6),
                     "open_price": open_price,
                     "close_price": price,
-                    "open_date": open_ts[:10],
+                    "open_date": _to_pst_date(open_ts),
                     "close_date": close_date,
                 })
 
@@ -70,15 +81,13 @@ def _fifo_trades_by_date(fills: list[dict], order_map: dict[str, str]) -> dict[s
 
 def compute_calendar_data(broker, repo) -> list[dict]:
     """Return sorted list of CalendarDay dicts for all available history."""
-    from datetime import date as _date
-
     history = broker.get_portfolio_history(period="1A") or {}
     timestamps = history.get("timestamp", [])
     equities = history.get("equity", [])
 
     equity_by_date: dict[str, tuple] = {}
     for i in range(1, len(timestamps)):
-        date_str = timestamps[i][:10]
+        date_str = _to_pst_date(timestamps[i])
         prev_eq = float(equities[i - 1]) if equities[i - 1] is not None else None
         curr_eq = float(equities[i]) if equities[i] is not None else None
         if prev_eq and curr_eq and prev_eq > 0:
@@ -90,7 +99,7 @@ def compute_calendar_data(broker, repo) -> list[dict]:
             equity_by_date[date_str] = (None, None)
 
     # Inject today's live intraday P&L — daily history bar won't exist until EOD.
-    today_str = _date.today().isoformat()
+    today_str = datetime.now(tz=_PST).strftime("%Y-%m-%d")
     if today_str not in equity_by_date:
         try:
             state = broker.reconcile()

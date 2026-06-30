@@ -107,6 +107,8 @@ function DayPanel({ day, onClose }: { day: CalendarDay; onClose: () => void }) {
 
 export default function Calendar() {
   const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth()) // 0-indexed
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null)
@@ -166,7 +168,7 @@ export default function Calendar() {
             const hasTrades = dayData && dayData.trades.length > 0
             const hasAnyData = hasPnl || hasTrades
             const pnl = hasPnl ? dayData!.pnl_pct! : null
-            const isToday = cell.dateStr === now.toISOString().slice(0, 10)
+            const isToday = cell.dateStr === todayStr
 
             let cellClass = 'rounded-lg border p-2 min-h-[80px] flex flex-col cursor-default select-none'
             if (!hasAnyData) {
