@@ -52,6 +52,7 @@ async def proposal_poller() -> None:
             # Run via executor — psycopg2.connect() is blocking; calling it directly
             # on the event loop stalls health-check responses and causes Render restarts.
             proposals = await loop.run_in_executor(None, repo.list_pending_proposals)
+            seen_ids &= {p["id"] for p in proposals}  # evict approved/rejected proposals
             new = [p for p in proposals if p["id"] not in seen_ids]
             for p in new:
                 seen_ids.add(p["id"])

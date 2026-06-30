@@ -379,6 +379,23 @@ class AlpacaBroker:
                 else 0.0
             )
             _is_insuf = _insufficient_qty_available(exc) is not None
+            # Sell blocked by a GTC stop holding the shares — cancel the specific blocking
+            # orders Alpaca identifies, then retry with backoff for the cancel to settle.
+            if side == "sell" and _is_insuf:
+                import time
+                for oid in _get_related_order_ids(exc):
+                    try:
+                        client.cancel_order_by_id(oid)
+                        logger.info("cancelled blocking order %s for %s sell", oid, symbol)
+                    except Exception:
+                        logger.warning("failed to cancel blocking order %s for %s", oid, symbol)
+                for attempt in range(3):
+                    time.sleep(0.5)
+                    try:
+                        return self._submit_idempotent(client, request, client_order_id)
+                    except Exception as retry_exc:
+                        if _insufficient_qty_available(retry_exc) is None or attempt == 2:
+                            raise
             if not ((_is_not_fractionable(exc) or _is_insuf) and whole_qty >= 1.0):
                 raise
             reason = "not fractionable" if _is_not_fractionable(exc) else "insufficient fractional qty"
@@ -543,6 +560,19 @@ def _insufficient_qty_available(exc: Exception) -> int | None:
         return int(float(val)) if val is not None else None
     except (TypeError, ValueError, KeyError):
         return None
+
+
+def _get_related_order_ids(exc: Exception) -> list[str]:
+    """Return order IDs holding shares, from Alpaca insufficient-qty error payload."""
+    import json
+    text = str(exc)
+    if "insufficient qty" not in text.lower():
+        return []
+    try:
+        payload = json.loads(text[text.index("{"):])
+        return [str(oid) for oid in payload.get("related_orders", [])]
+    except (ValueError, KeyError):
+        return []
 
 
 def _is_not_fractionable(exc: Exception) -> bool:
