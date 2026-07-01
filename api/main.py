@@ -25,6 +25,38 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
+def _rss_mb() -> float:
+    """Current resident set size in MB. ru_maxrss is peak-only, so read /proc on Linux."""
+    import resource
+    import sys
+
+    if sys.platform == "linux":
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / 1024  # kB -> MB
+        except OSError:
+            pass
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
+
+
+def _trim_heap(tag: str) -> None:
+    """Reclaim fragmented pandas heap after a tick — glibc won't return it on its own."""
+    import ctypes
+    import gc
+    import sys
+
+    gc.collect()
+    if sys.platform == "linux":
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+    logger.info("%s tick done rss=%.0fMB", tag, _rss_mb())
+
+
 async def _scheduler_loop() -> None:
     """Run the trading scheduler in a thread pool every 60 s.
 
@@ -98,6 +130,7 @@ async def _scheduler_loop() -> None:
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
         except Exception:
             logger.exception("scheduler tick error")
+        await loop.run_in_executor(None, _trim_heap, "equity")
         await asyncio.sleep(60)
 
 
@@ -167,6 +200,7 @@ async def _crypto_scheduler_loop() -> None:
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
         except Exception:
             logger.exception("crypto scheduler tick error")
+        await loop.run_in_executor(None, _trim_heap, "crypto")
         await asyncio.sleep(240)
 
 

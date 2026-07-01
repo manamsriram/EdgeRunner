@@ -328,3 +328,17 @@ def Analyze_stock(query):
         print(f"An error occurred: {e}")
         return "Unable to complete the analysis due to an error."
 
+
+if __name__ == "__main__":
+    # Subprocess entry: python -m tools.fetch_stock_info "<query>" <result_file>
+    # Result goes to a file, not stdout — the agent runs verbose=True and the tool
+    # functions print(), so stdout can't carry the result cleanly.
+    import sys
+
+    if len(sys.argv) != 3:
+        print("usage: python -m tools.fetch_stock_info '<query>' <result_file>", file=sys.stderr)
+        sys.exit(2)
+    result = Analyze_stock(sys.argv[1])
+    with open(sys.argv[2], "w") as f:
+        f.write(result)
+

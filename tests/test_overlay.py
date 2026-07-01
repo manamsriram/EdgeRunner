@@ -136,14 +136,17 @@ def test_malformed_json_passthrough(monkeypatch):
     assert result is sig
 
 
-def test_strength_out_of_range_passthrough(monkeypatch):
+def test_strength_out_of_range_keeps_original_strength(monkeypatch):
+    """Out-of-range strength from LLM → approve but keep the strategy's strength."""
     from trader.overlay import claude_overlay
     payload = json.dumps({"action": "approve", "strength": 1.5, "rationale": "overconfident"})
     monkeypatch.setattr(claude_overlay, "call_llm", _make_call_llm(payload))
 
     sig = _buy_signal()
     result = claude_overlay.apply_claude_overlay(sig, _make_bars(), None, "llama-3.1-8b-instant", "fake-key", "claude-haiku-4-5-20251001")
-    assert result is sig
+    assert result.side == sig.side
+    assert result.strength == sig.strength
+    assert "[overlay approved]" in result.reason
 
 
 def test_no_llm_response_passthrough(monkeypatch):
@@ -215,7 +218,8 @@ def test_fetch_financials_returns_string(monkeypatch):
         index=["TotalAssets", "TotalLiabilities"],
     )
     mock_ticker.income_stmt = pd.DataFrame()
-    monkeypatch.setattr(news_context.yf, "Ticker", lambda s: mock_ticker)
+    import yfinance
+    monkeypatch.setattr(yfinance, "Ticker", lambda s: mock_ticker)
 
     result = news_context.fetch_financials("AAPL")
     assert "AAPL" in result
@@ -225,7 +229,8 @@ def test_fetch_financials_returns_string(monkeypatch):
 def test_fetch_financials_error_returns_empty(monkeypatch):
     from trader.overlay import news_context
 
-    monkeypatch.setattr(news_context.yf, "Ticker", lambda s: (_ for _ in ()).throw(RuntimeError("fail")))
+    import yfinance
+    monkeypatch.setattr(yfinance, "Ticker", lambda s: (_ for _ in ()).throw(RuntimeError("fail")))
 
     result = news_context.fetch_financials("AAPL")
     assert result == ""

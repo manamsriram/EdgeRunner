@@ -216,6 +216,9 @@ def check_fundamental_gate(
         if action not in {"approve", "veto"}:
             raise ValueError(f"unexpected action {action!r}")
 
+        # Prune prior-day entries — date-keyed cache would otherwise grow for process lifetime.
+        for stale in [k for k in _FUNDAMENTAL_CACHE if k[1] != date_str]:
+            del _FUNDAMENTAL_CACHE[stale]
         _FUNDAMENTAL_CACHE[cache_key] = {"action": action, "rationale": rationale}
         logger.info(
             "fundamental gate response symbol=%s action=%s rationale=%r",

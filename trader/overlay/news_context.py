@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-import yfinance as yf
-
 # ---- News classification (FinRobot-inspired) ----
 
 _NEWS_CATEGORIES: dict[str, list[str]] = {
@@ -149,6 +147,8 @@ def fetch_financials(symbol: str, timeout: float = 5.0) -> str:
     Returns empty string on any failure — never raises.
     """
     import pandas as pd
+    # Lazy import — keeps yfinance out of the scheduler process until actually needed.
+    import yfinance as yf
 
     def _fetch() -> str:
         ticker = yf.Ticker(symbol)
