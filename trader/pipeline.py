@@ -661,6 +661,22 @@ def _execute_signal(
             entry_rationale=signal.reason if signal.side == "buy" else None,
         ))
 
+        # Confirm the fill and persist the real status. record_order upserts on
+        # client_order_id (ON CONFLICT DO UPDATE status), so this updates the
+        # "submitted" row above rather than inserting a duplicate — without this,
+        # every order stays "submitted" forever even after it fills on the broker.
+        filled_order = broker.wait_for_fill(client_order_id)
+        repo.record_order(OrderRow(
+            client_order_id=client_order_id, symbol=symbol,
+            side=signal.side, notional=risk_decision.approved_notional,
+            status="filled" if filled_order else "submitted",
+            broker_order_id=broker_order_id or None,
+            strategy_name=type(strategy).__name__,
+            regime=regime,
+            signal_strength=signal.strength,
+            entry_rationale=signal.reason if signal.side == "buy" else None,
+        ))
+
         # Record the closed-trade outcome for the cooldown guard and overlay memory.
         # Submission already succeeded above, so this never fires for a rejected/failed
         # order. ref_price approximates the fill price — sells have no wait_for_fill
@@ -692,7 +708,7 @@ def _execute_signal(
         # reads as a short sale and gets rejected by Alpaca for non-shortable assets.
         if signal.side == "buy" and not is_crypto_symbol(symbol):
             stop_price = ref_price * (1 - config.risk.stop_loss_pct)
-            filled_order = broker.wait_for_fill(client_order_id)
+            # filled_order already computed above (fill-status persistence step).
             if filled_order is None:
                 logger.warning(
                     "%s buy not confirmed filled in time — skipping broker stop, "
@@ -919,12 +935,22 @@ def _run_pair(
             (oid_a, sym_a, pair_signal.side_a, decision_a),
             (oid_b, sym_b, pair_signal.side_b, decision_b),
         ):
+            broker_order_id = str(getattr(
+                order_a if sym == sym_a else order_b, "id", ""
+            ) or "") or None
             repo.record_order(OrderRow(
                 client_order_id=oid, symbol=sym, side=side,
                 notional=decision.approved_notional, status="submitted",
-                broker_order_id=str(getattr(
-                    order_a if sym == sym_a else order_b, "id", ""
-                ) or "") or None,
+                broker_order_id=broker_order_id,
+            ))
+            # Confirm the fill and persist the real status — same upsert-on-
+            # client_order_id pattern as the single-signal path.
+            filled_order = broker.wait_for_fill(oid)
+            repo.record_order(OrderRow(
+                client_order_id=oid, symbol=sym, side=side,
+                notional=decision.approved_notional,
+                status="filled" if filled_order else "submitted",
+                broker_order_id=broker_order_id,
             ))
 
         return (

@@ -214,6 +214,7 @@ def test_pipeline_auto_mode_executes(tmp_path):
     orders = repo.get_orders()
     assert len(orders) == 1
     assert orders[0]["symbol"] == _SYMBOL
+    assert orders[0]["status"] == "filled"
     assert len(broker._client.submitted) == 1
 
 
