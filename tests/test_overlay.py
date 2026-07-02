@@ -159,6 +159,114 @@ def test_no_llm_response_passthrough(monkeypatch):
     assert result is sig
 
 
+class _FakeRepo:
+    def __init__(self, outcomes=None, raises=False):
+        self._outcomes = outcomes or []
+        self._raises = raises
+
+    def get_recent_outcomes(self, symbol=None, strategy=None, regime=None, limit=3):
+        if self._raises:
+            raise RuntimeError("db down")
+        return self._outcomes
+
+
+@dataclass(frozen=True)
+class _FakeRiskLimits:
+    trade_memory_shadow: bool = False
+    trade_memory_live: bool = False
+
+
+@dataclass(frozen=True)
+class _FakeConfigWithRisk:
+    risk: _FakeRiskLimits = field(default_factory=_FakeRiskLimits)
+    finnhub_api_key: str | None = None
+
+
+def test_trade_memory_live_injects_into_prompt(monkeypatch):
+    from trader.overlay import claude_overlay
+    payload = json.dumps({"action": "approve", "strength": 0.7, "rationale": "ok"})
+    captured = {}
+
+    def _fake_call_llm(system_prompt, user_message, *a, **kw):
+        captured["user_message"] = user_message
+        return payload
+
+    monkeypatch.setattr(claude_overlay, "call_llm", _fake_call_llm)
+    repo = _FakeRepo(outcomes=[{
+        "closed_at": "2026-06-30T00:00:00+00:00", "strategy": "DipRecovery",
+        "pnl_pct": -0.031, "exit_reason": "stop-loss",
+        "entry_overlay_rationale": "looked strong",
+    }])
+    config = _FakeConfigWithRisk(risk=_FakeRiskLimits(trade_memory_live=True))
+
+    sig = _buy_signal()
+    claude_overlay.apply_claude_overlay(
+        sig, _make_bars(), None, "llama-3.1-8b-instant", "fake-key", "claude-haiku-4-5-20251001",
+        config=config, repo=repo, strategy_name="DipRecovery", regime="calm",
+    )
+    assert "Recent closed trades on AAPL" in captured["user_message"]
+    assert "-3.1%" in captured["user_message"]
+
+
+def test_trade_memory_shadow_does_not_touch_prompt(monkeypatch):
+    from trader.overlay import claude_overlay
+    payload = json.dumps({"action": "approve", "strength": 0.7, "rationale": "ok"})
+    captured = {}
+
+    def _fake_call_llm(system_prompt, user_message, *a, **kw):
+        captured["user_message"] = user_message
+        return payload
+
+    monkeypatch.setattr(claude_overlay, "call_llm", _fake_call_llm)
+    repo = _FakeRepo(outcomes=[{
+        "closed_at": "2026-06-30T00:00:00+00:00", "strategy": "DipRecovery",
+        "pnl_pct": -0.031, "exit_reason": "stop-loss",
+        "entry_overlay_rationale": "looked strong",
+    }])
+    config = _FakeConfigWithRisk(risk=_FakeRiskLimits(trade_memory_shadow=True))
+
+    sig = _buy_signal()
+    claude_overlay.apply_claude_overlay(
+        sig, _make_bars(), None, "llama-3.1-8b-instant", "fake-key", "claude-haiku-4-5-20251001",
+        config=config, repo=repo, strategy_name="DipRecovery", regime="calm",
+    )
+    assert "Recent closed trades on AAPL" not in captured["user_message"]
+
+
+def test_trade_memory_repo_failure_is_fail_open(monkeypatch):
+    from trader.overlay import claude_overlay
+    payload = json.dumps({"action": "approve", "strength": 0.7, "rationale": "ok"})
+    monkeypatch.setattr(claude_overlay, "call_llm", _make_call_llm(payload))
+
+    repo = _FakeRepo(raises=True)
+    config = _FakeConfigWithRisk(risk=_FakeRiskLimits(trade_memory_live=True))
+
+    sig = _buy_signal()
+    result = claude_overlay.apply_claude_overlay(
+        sig, _make_bars(), None, "llama-3.1-8b-instant", "fake-key", "claude-haiku-4-5-20251001",
+        config=config, repo=repo, strategy_name="DipRecovery", regime="calm",
+    )
+    assert result.side == "buy"  # overlay still completes normally despite repo failure
+
+
+def test_no_repo_no_memory_lookup_attempted(monkeypatch):
+    """repo=None (the default) must never touch trade memory — plain passthrough behavior."""
+    from trader.overlay import claude_overlay
+    payload = json.dumps({"action": "approve", "strength": 0.7, "rationale": "ok"})
+    captured = {}
+
+    def _fake_call_llm(system_prompt, user_message, *a, **kw):
+        captured["user_message"] = user_message
+        return payload
+
+    monkeypatch.setattr(claude_overlay, "call_llm", _fake_call_llm)
+    sig = _buy_signal()
+    claude_overlay.apply_claude_overlay(
+        sig, _make_bars(), None, "llama-3.1-8b-instant", "fake-key", "claude-haiku-4-5-20251001",
+    )
+    assert "Recent closed trades" not in captured["user_message"]
+
+
 def test_markdown_fences_stripped(monkeypatch):
     from trader.overlay import claude_overlay
     inner = json.dumps({"action": "approve", "strength": 0.6, "rationale": "ok"})

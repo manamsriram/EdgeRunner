@@ -19,6 +19,7 @@ from trader.portfolio.repository import (
     PortfolioRepository,
     ProposalRow,
     SignalRow,
+    TradeOutcomeRow,
     TradeRow,
 )
 
@@ -94,6 +95,21 @@ CREATE TABLE IF NOT EXISTS arm_ic_series (
     ts            TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_arm_ic ON arm_ic_series(strategy_name, regime, ts DESC);
+CREATE TABLE IF NOT EXISTS trade_outcomes (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol                  TEXT NOT NULL,
+    strategy                TEXT NOT NULL,
+    regime                  TEXT NOT NULL,
+    side                    TEXT NOT NULL,
+    entry_price             REAL NOT NULL,
+    exit_price              REAL NOT NULL,
+    pnl_pct                 REAL NOT NULL,
+    exit_reason             TEXT NOT NULL,
+    entry_overlay_rationale TEXT,
+    closed_at               TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trade_outcomes_symbol ON trade_outcomes(symbol, closed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_outcomes_arm ON trade_outcomes(strategy, regime, closed_at DESC);
 """
 
 
@@ -132,6 +148,8 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute("ALTER TABLE orders ADD COLUMN regime TEXT")
         if "signal_strength" not in existing:
             conn.execute("ALTER TABLE orders ADD COLUMN signal_strength REAL")
+        if "entry_rationale" not in existing:
+            conn.execute("ALTER TABLE orders ADD COLUMN entry_rationale TEXT")
 
     def _migrate_bandit_columns(self, conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(bandit_weights)")}
@@ -172,14 +190,15 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute(
                 "INSERT INTO orders "
                 "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
-                "strategy_name, regime, signal_strength) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "strategy_name, regime, signal_strength, entry_rationale) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(client_order_id) DO UPDATE SET "
                 "status=excluded.status, "
                 "broker_order_id=COALESCE(excluded.broker_order_id, orders.broker_order_id)",
                 (order.client_order_id, _now(), order.symbol, order.side,
                  order.notional, order.status, order.broker_order_id,
-                 order.strategy_name, order.regime, order.signal_strength),
+                 order.strategy_name, order.regime, order.signal_strength,
+                 order.entry_rationale),
             )
             row = conn.execute(
                 "SELECT id FROM orders WHERE client_order_id=?",
@@ -247,6 +266,54 @@ class SQLiteRepository(PortfolioRepository):
     def get_orders(self) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM orders ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_last_buy_order(self, symbol: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM orders WHERE symbol=? AND side='buy' ORDER BY id DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO trade_outcomes "
+                "(symbol, strategy, regime, side, entry_price, exit_price, pnl_pct, "
+                "exit_reason, entry_overlay_rationale, closed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (outcome.symbol, outcome.strategy, outcome.regime, outcome.side,
+                 outcome.entry_price, outcome.exit_price, outcome.pnl_pct,
+                 outcome.exit_reason, outcome.entry_overlay_rationale, outcome.closed_at),
+            )
+            return int(cur.lastrowid)
+
+    def get_recent_outcomes(
+        self,
+        symbol: str | None = None,
+        strategy: str | None = None,
+        regime: str | None = None,
+        limit: int = 3,
+    ) -> list[dict]:
+        clauses = []
+        params: list = []
+        if symbol is not None:
+            clauses.append("symbol=?")
+            params.append(symbol)
+        if strategy is not None:
+            clauses.append("strategy=?")
+            params.append(strategy)
+        if regime is not None:
+            clauses.append("regime=?")
+            params.append(regime)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM trade_outcomes {where} ORDER BY closed_at DESC LIMIT ?",
+                params,
+            ).fetchall()
             return [dict(r) for r in rows]
 
     def get_runs(self) -> list[dict]:

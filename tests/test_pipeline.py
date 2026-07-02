@@ -114,7 +114,10 @@ class FakeClient:
 
     def get_all_positions(self):
         return [
-            SimpleNamespace(symbol=sym, qty=str(qty))
+            SimpleNamespace(
+                symbol=sym, qty=str(qty),
+                avg_entry_price=str(self._state.avg_entry_prices.get(sym, 0.0)),
+            )
             for sym, qty in self._state.positions.items()
         ]
 
@@ -364,6 +367,33 @@ def test_sell_allowed_when_owner_strategy_retired(tmp_path):
 
     assert len(results) == 1
     assert results[0].outcome == "queued"  # sell proposal, not ownership-blocked
+
+
+def test_auto_mode_sell_records_trade_outcome(tmp_path):
+    """A real (auto-mode) sell fill writes exactly one trade_outcomes row with the
+    correct entry basis, exit price, and exit_reason classification."""
+    cfg = _config(tmp_path, autonomy="auto")
+
+    results, repo, _ = _run([_FixedStrategy(_SYMBOL, "sell")], cfg, state=_held_state())
+
+    assert results[0].outcome == "executed"
+    outcomes = repo.get_recent_outcomes(symbol=_SYMBOL)
+    assert len(outcomes) == 1
+    assert outcomes[0]["entry_price"] == pytest.approx(100.0)
+    assert outcomes[0]["exit_reason"] == "signal-exit"
+
+
+def test_manual_mode_queued_sell_records_no_trade_outcome(tmp_path):
+    """A manual-mode 'queued' proposal is not a real fill — recording an outcome
+    here would feed fabricated P&L into cooldown/trade-memory. Locks in the v1 scope
+    cut: manual-mode trades don't produce trade_outcomes rows until the ProposalRow/
+    approve() gap is closed in a follow-up."""
+    cfg = _config(tmp_path, autonomy="manual")
+
+    results, repo, _ = _run([_FixedStrategy(_SYMBOL, "sell")], cfg, state=_held_state())
+
+    assert results[0].outcome == "queued"
+    assert repo.get_recent_outcomes(symbol=_SYMBOL) == []
 
 
 def test_sell_still_blocked_when_owner_strategy_active(tmp_path):

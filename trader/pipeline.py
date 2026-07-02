@@ -29,6 +29,7 @@ from trader.portfolio.repository import (
     ProposalRow,
     SignalRow,
     PortfolioRepository,
+    TradeOutcomeRow,
 )
 from trader.risk.gate import KillSwitch, OrderIntent, RiskDecision, RiskGate, is_crypto_symbol
 from trader.risk.vol_sizing import vol_scale
@@ -100,6 +101,20 @@ def run_pipeline(
             state = _replace_init(state, position_owners=loaded_owners)
     except Exception:
         logger.warning("failed to load position owners from DB — starting with empty ownership")
+
+    # Fold recent losing exits into state for the risk gate's symbol-cooldown check.
+    # Fail-open: a lookup failure just means "no cooldown data this tick", not a halt.
+    try:
+        recent_outcomes = repo.get_recent_outcomes(limit=200)
+        last_losing_exit_at: dict = {}
+        for o in recent_outcomes:
+            if o["pnl_pct"] < 0 and o["symbol"] not in last_losing_exit_at:
+                last_losing_exit_at[o["symbol"]] = datetime.fromisoformat(o["closed_at"])
+        if last_losing_exit_at:
+            from dataclasses import replace as _replace_cooldown
+            state = _replace_cooldown(state, last_losing_exit_at=last_losing_exit_at)
+    except Exception:
+        logger.warning("failed to load trade outcomes from DB — cooldown check has no data this tick")
 
     logger.info(
         "tick equity=%.2f trades_today=%d autonomy=%s",
@@ -526,7 +541,10 @@ def _prepare_signal(
                 )
 
         if not signal.reason.startswith("stop-loss:") and not signal.reason.startswith("eod-exit:") and not _is_intraday:
-            signal = apply_overlay(signal, bars, config)
+            signal = apply_overlay(
+                signal, bars, config,
+                repo=repo, strategy_name=type(strategy).__name__, regime=classify_regime(bars),
+            )
 
         repo.record_signal(SignalRow(
             run_id=run_id, symbol=symbol,
@@ -632,14 +650,42 @@ def _execute_signal(
             ref_price=ref_price,
         )
         broker_order_id = str(getattr(order, "id", "") or "")
+        regime = classify_regime(bars)
         repo.record_order(OrderRow(
             client_order_id=client_order_id, symbol=symbol,
             side=signal.side, notional=risk_decision.approved_notional,
             status="submitted", broker_order_id=broker_order_id or None,
             strategy_name=type(strategy).__name__,
-            regime=classify_regime(bars),
+            regime=regime,
             signal_strength=signal.strength,
+            entry_rationale=signal.reason if signal.side == "buy" else None,
         ))
+
+        # Record the closed-trade outcome for the cooldown guard and overlay memory.
+        # Submission already succeeded above, so this never fires for a rejected/failed
+        # order. ref_price approximates the fill price — sells have no wait_for_fill
+        # step in this codebase (only buys do, to place the protective stop).
+        if signal.side == "sell":
+            entry_price = state.avg_entry_prices.get(symbol, 0.0)
+            if entry_price > 0:
+                if signal.reason.startswith("stop-loss:"):
+                    exit_reason = "stop-loss"
+                elif signal.reason.startswith("eod-exit:"):
+                    exit_reason = "eod-exit"
+                else:
+                    exit_reason = "signal-exit"
+                last_buy = repo.get_last_buy_order(symbol)
+                entry_rationale = last_buy.get("entry_rationale") if last_buy else None
+                try:
+                    repo.record_trade_outcome(TradeOutcomeRow(
+                        symbol=symbol, strategy=type(strategy).__name__, regime=regime,
+                        side="buy", entry_price=entry_price, exit_price=ref_price,
+                        pnl_pct=(ref_price - entry_price) / entry_price,
+                        exit_reason=exit_reason, entry_overlay_rationale=entry_rationale,
+                        closed_at=datetime.now(timezone.utc).isoformat(),
+                    ))
+                except Exception:
+                    logger.warning("failed to record trade outcome for %s", symbol)
 
         # Place a broker-side GTC stop to protect new long positions. Wait for the
         # buy to actually fill first — submitting a stop-sell before the fill lands

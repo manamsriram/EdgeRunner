@@ -13,6 +13,7 @@ from trader.portfolio.repository import (
     OrderRow,
     ProposalRow,
     SignalRow,
+    TradeOutcomeRow,
     TradeRow,
 )
 from trader.portfolio.sqlite_repo import SQLiteRepository
@@ -100,6 +101,68 @@ def test_get_all_bandit_weights_returns_all(repo):
         ("DonchianBreakout", "calm"): (1.3, 1),
         ("SuperTrend", "trending"): (0.8, 2),
     }
+
+
+def test_get_last_buy_order_returns_most_recent(repo):
+    repo.record_order(OrderRow("c1", "AAPL", "buy", 1000.0, "accepted", entry_rationale="first"))
+    repo.record_order(OrderRow("c2", "AAPL", "sell", 1000.0, "accepted"))
+    repo.record_order(OrderRow("c3", "AAPL", "buy", 1000.0, "accepted", entry_rationale="second"))
+    last_buy = repo.get_last_buy_order("AAPL")
+    assert last_buy["entry_rationale"] == "second"
+
+
+def test_get_last_buy_order_none_when_no_buys(repo):
+    assert repo.get_last_buy_order("AAPL") is None
+
+
+def _outcome(**overrides) -> TradeOutcomeRow:
+    base = dict(
+        symbol="AAPL", strategy="DipRecovery", regime="calm", side="buy",
+        entry_price=100.0, exit_price=95.0, pnl_pct=-0.05, exit_reason="stop-loss",
+        entry_overlay_rationale="looked good", closed_at="2026-07-01T00:00:00+00:00",
+    )
+    base.update(overrides)
+    return TradeOutcomeRow(**base)
+
+
+def test_record_and_retrieve_trade_outcome(repo):
+    outcome_id = repo.record_trade_outcome(_outcome())
+    assert outcome_id > 0
+    rows = repo.get_recent_outcomes(symbol="AAPL")
+    assert len(rows) == 1
+    assert rows[0]["pnl_pct"] == pytest.approx(-0.05)
+    assert rows[0]["exit_reason"] == "stop-loss"
+
+
+def test_get_recent_outcomes_ordered_most_recent_first(repo):
+    repo.record_trade_outcome(_outcome(closed_at="2026-07-01T00:00:00+00:00", pnl_pct=-0.01))
+    repo.record_trade_outcome(_outcome(closed_at="2026-07-02T00:00:00+00:00", pnl_pct=-0.02))
+    rows = repo.get_recent_outcomes(symbol="AAPL", limit=5)
+    assert [r["pnl_pct"] for r in rows] == pytest.approx([-0.02, -0.01])
+
+
+def test_get_recent_outcomes_filters_by_strategy_and_regime(repo):
+    repo.record_trade_outcome(_outcome(strategy="DipRecovery", regime="calm"))
+    repo.record_trade_outcome(_outcome(strategy="SuperTrend", regime="trending"))
+    rows = repo.get_recent_outcomes(strategy="SuperTrend", regime="trending")
+    assert len(rows) == 1
+    assert rows[0]["strategy"] == "SuperTrend"
+
+
+def test_get_recent_outcomes_respects_limit(repo):
+    for i in range(5):
+        repo.record_trade_outcome(_outcome(closed_at=f"2026-07-0{i+1}T00:00:00+00:00"))
+    rows = repo.get_recent_outcomes(symbol="AAPL", limit=2)
+    assert len(rows) == 2
+
+
+def test_order_persists_entry_rationale(repo):
+    repo.record_order(OrderRow(
+        "c-rationale", "AAPL", "buy", 1000.0, "accepted",
+        entry_rationale="[overlay approved] strong momentum",
+    ))
+    orders = repo.get_orders()
+    assert orders[0]["entry_rationale"] == "[overlay approved] strong momentum"
 
 
 def test_coexists_with_app_users_table_no_destruction(tmp_path):

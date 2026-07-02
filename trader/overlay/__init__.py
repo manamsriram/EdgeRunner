@@ -94,12 +94,19 @@ def apply_fundamental_gate(
     )
 
 
-def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
+def apply_overlay(
+    signal: Signal, bars: pd.DataFrame, config=None,
+    repo=None, strategy_name: str | None = None, regime: str | None = None,
+) -> Signal:
     """Apply LLM overlay when at least one API key is configured; otherwise pass through.
 
     Invariants preserved by the overlay implementation:
       - Signal.side remains one of {"buy", "sell", "hold"}.
       - Signal.strength remains within [0.0, 1.0].
+
+    `repo`/`strategy_name`/`regime` are optional — when `repo` is set and
+    `config.risk.trade_memory_shadow`/`_live` is on, recent trade outcomes for this
+    symbol are looked up and (in live mode) injected into the overlay prompt.
     """
     if config is None:
         return signal
@@ -121,4 +128,5 @@ def apply_overlay(signal: Signal, bars: pd.DataFrame, config=None) -> Signal:
         gemini_key=gemini_key, gemini_model=gemini_model,
         config=config,
         sentiment_client=sentiment_client,
+        repo=repo, strategy_name=strategy_name, regime=regime,
     )

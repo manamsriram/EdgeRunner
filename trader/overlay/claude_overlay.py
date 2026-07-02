@@ -62,6 +62,11 @@ Let that tension inform your strength value and whether to veto.
 Reserve veto for clear, material, signal-invalidating events only. A false veto costs
 edge; a missed veto costs at most one trade — the risk gate still protects.
 
+If recent trade history for this symbol is provided below, weigh it — for an entry
+signal, a recent stop-out from the same strategy is a caution signal but not an
+automatic veto; for an exit signal, a recent loss is not a reason to veto the exit
+itself (a vetoed sell just strands the position). Use judgment either way.
+
 NEVER flip buy to sell or sell to buy. NEVER originate a trade. NEVER increase
 strength above what the strategy reported.
 
@@ -97,6 +102,11 @@ Let that tension inform your strength value and whether to veto.
 
 Reserve veto for clear, material, signal-invalidating events only. A false veto costs
 edge; a missed veto costs at most one trade — the risk gate still protects.
+
+If recent trade history for this symbol is provided below, weigh it — for an entry
+signal, a recent stop-out from the same strategy is a caution signal but not an
+automatic veto; for an exit signal, a recent loss is not a reason to veto the exit
+itself (a vetoed sell just strands the position). Use judgment either way.
 
 NEVER flip buy to sell or sell to buy. NEVER originate a trade. NEVER increase
 strength above what the strategy reported.
@@ -144,6 +154,9 @@ def apply_claude_overlay(
     gemini_model: str = "gemini-3.1-flash-lite",
     config=None,  # optional, enables Finnhub news path
     sentiment_client=None,  # NEW — crypto sentiment overlay
+    repo=None,  # optional PortfolioRepository — enables trade-memory context
+    strategy_name: str | None = None,
+    regime: str | None = None,
 ) -> Signal:
     """Call LLM to review a quant signal. Returns original signal on any failure."""
     try:
@@ -176,6 +189,27 @@ def apply_claude_overlay(
         )
         if sentiment_str:
             user_message += f"\n\n{sentiment_str}"
+
+        memory_shadow = bool(config and getattr(config.risk, "trade_memory_shadow", False))
+        memory_live = bool(config and getattr(config.risk, "trade_memory_live", False))
+        if repo is not None and (memory_shadow or memory_live):
+            try:
+                outcomes = repo.get_recent_outcomes(symbol=signal.symbol, limit=3)
+                if outcomes:
+                    lines = [f"Recent closed trades on {signal.symbol}:"]
+                    for o in outcomes:
+                        lines.append(
+                            f"- {o['closed_at'][:10]} {o['strategy']}: {o['pnl_pct']:+.1%} "
+                            f"({o['exit_reason']}). Entry rationale was: "
+                            f"{o.get('entry_overlay_rationale') or 'n/a'}"
+                        )
+                    memory_section = "\n".join(lines)
+                    if memory_live:
+                        user_message += f"\n\n{memory_section}"
+                    else:
+                        logger.info("trade_memory shadow symbol=%s would inject: %s", signal.symbol, memory_section)
+            except Exception:
+                logger.warning("trade memory lookup failed for %s, continuing without it", signal.symbol)
 
         logger.info(
             "overlay request symbol=%s side=%s strength=%.2f news_lines=%d",

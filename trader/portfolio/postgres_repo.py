@@ -18,6 +18,7 @@ from trader.portfolio.repository import (
     PortfolioRepository,
     ProposalRow,
     SignalRow,
+    TradeOutcomeRow,
     TradeRow,
 )
 
@@ -94,6 +95,21 @@ CREATE TABLE IF NOT EXISTS arm_ic_series (
     ts            TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_arm_ic ON arm_ic_series(strategy_name, regime, ts DESC);
+CREATE TABLE IF NOT EXISTS trade_outcomes (
+    id                      SERIAL PRIMARY KEY,
+    symbol                  TEXT NOT NULL,
+    strategy                TEXT NOT NULL,
+    regime                  TEXT NOT NULL,
+    side                    TEXT NOT NULL,
+    entry_price             REAL NOT NULL,
+    exit_price              REAL NOT NULL,
+    pnl_pct                 REAL NOT NULL,
+    exit_reason             TEXT NOT NULL,
+    entry_overlay_rationale TEXT,
+    closed_at               TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trade_outcomes_symbol ON trade_outcomes(symbol, closed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_outcomes_arm ON trade_outcomes(strategy, regime, closed_at DESC);
 """
 
 
@@ -117,6 +133,7 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS strategy_name TEXT")
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS regime TEXT")
                 cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS signal_strength REAL")
+                cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS entry_rationale TEXT")
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS alpha_wins INTEGER NOT NULL DEFAULT 1")
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS beta_losses INTEGER NOT NULL DEFAULT 1")
                 cur.execute("ALTER TABLE position_owners ADD COLUMN IF NOT EXISTS pool VARCHAR(10) NOT NULL DEFAULT 'daily'")
@@ -150,15 +167,16 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute(
                     "INSERT INTO orders "
                     "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
-                    "strategy_name, regime, signal_strength) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "strategy_name, regime, signal_strength, entry_rationale) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (client_order_id) DO UPDATE SET "
                     "status=EXCLUDED.status, "
                     "broker_order_id=COALESCE(EXCLUDED.broker_order_id, orders.broker_order_id) "
                     "RETURNING id",
                     (order.client_order_id, _now(), order.symbol, order.side,
                      order.notional, order.status, order.broker_order_id,
-                     order.strategy_name, order.regime, order.signal_strength),
+                     order.strategy_name, order.regime, order.signal_strength,
+                     order.entry_rationale),
                 )
                 return int(cur.fetchone()["id"])
 
@@ -228,6 +246,59 @@ class PostgresRepository(PortfolioRepository):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM orders ORDER BY id")
+                return [dict(r) for r in cur.fetchall()]
+
+    def get_last_buy_order(self, symbol: str) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM orders WHERE symbol=%s AND side='buy' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (symbol,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO trade_outcomes "
+                    "(symbol, strategy, regime, side, entry_price, exit_price, pnl_pct, "
+                    "exit_reason, entry_overlay_rationale, closed_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (outcome.symbol, outcome.strategy, outcome.regime, outcome.side,
+                     outcome.entry_price, outcome.exit_price, outcome.pnl_pct,
+                     outcome.exit_reason, outcome.entry_overlay_rationale, outcome.closed_at),
+                )
+                return int(cur.fetchone()["id"])
+
+    def get_recent_outcomes(
+        self,
+        symbol: str | None = None,
+        strategy: str | None = None,
+        regime: str | None = None,
+        limit: int = 3,
+    ) -> list[dict]:
+        clauses = []
+        params: list = []
+        if symbol is not None:
+            clauses.append("symbol=%s")
+            params.append(symbol)
+        if strategy is not None:
+            clauses.append("strategy=%s")
+            params.append(strategy)
+        if regime is not None:
+            clauses.append("regime=%s")
+            params.append(regime)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM trade_outcomes {where} ORDER BY closed_at DESC LIMIT %s",
+                    params,
+                )
                 return [dict(r) for r in cur.fetchall()]
 
     def get_runs(self) -> list[dict]:

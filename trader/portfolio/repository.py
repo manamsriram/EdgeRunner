@@ -36,6 +36,7 @@ class OrderRow:
     strategy_name: str | None = None
     regime: str | None = None
     signal_strength: float | None = None
+    entry_rationale: str | None = None  # buy-side only: overlay's approval rationale
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,23 @@ class TradeRow:
     side: str
     qty: float
     price: float
+
+
+@dataclass(frozen=True)
+class TradeOutcomeRow:
+    """A closed round-trip trade, written once a sell fills. Feeds the symbol
+    cooldown guard (RiskGate) and the overlay's trade-memory prompt context."""
+
+    symbol: str
+    strategy: str
+    regime: str
+    side: str                              # entry side; always "buy" today (long/flat-only)
+    entry_price: float
+    exit_price: float
+    pnl_pct: float
+    exit_reason: str                       # "stop-loss" | "signal-exit" | "eod-exit"
+    entry_overlay_rationale: str | None
+    closed_at: str                         # ISO-8601 UTC
 
 
 @dataclass(frozen=True)
@@ -92,6 +110,25 @@ class PortfolioRepository(ABC):
 
     @abstractmethod
     def get_orders(self) -> list[dict]: ...
+
+    @abstractmethod
+    def get_last_buy_order(self, symbol: str) -> dict | None:
+        """Most recent side='buy' order for symbol, or None. Indexed lookup —
+        do not use get_orders() + client-side filtering for this."""
+
+    @abstractmethod
+    def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int: ...
+
+    @abstractmethod
+    def get_recent_outcomes(
+        self,
+        symbol: str | None = None,
+        strategy: str | None = None,
+        regime: str | None = None,
+        limit: int = 3,
+    ) -> list[dict]:
+        """Most-recent-first closed trades matching the given filters. Any of
+        symbol/strategy/regime left None widens the match (no filter on that column)."""
 
     @abstractmethod
     def get_runs(self) -> list[dict]: ...

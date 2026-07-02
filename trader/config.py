@@ -74,6 +74,14 @@ class RiskLimits:
     # also reweights buy-signal ranking priority. Stays off until shadow logs validate it.
     bandit_weighting_shadow: bool = False   # env: BANDIT_WEIGHTING_SHADOW
     bandit_weighting_live: bool = False     # env: BANDIT_WEIGHTING_LIVE
+    # Symbol cooldown — blocks new buys on a symbol for a window after a losing exit.
+    # The gate already logs every rejection reason, so enabling on paper IS the shadow test.
+    symbol_cooldown_enabled: bool = False   # env: SYMBOL_COOLDOWN_ENABLED
+    symbol_cooldown_seconds: int = 3600     # env: SYMBOL_COOLDOWN_SECONDS
+    # Trade-memory overlay context — shadow logs what would be injected; live actually
+    # appends it to the LLM prompt. Same two-stage rollout shape as bandit weighting.
+    trade_memory_shadow: bool = False       # env: TRADE_MEMORY_SHADOW
+    trade_memory_live: bool = False         # env: TRADE_MEMORY_LIVE
 
 
 @dataclass(frozen=True)
@@ -163,6 +171,10 @@ def load_config() -> Config:
             dynamic_crypto_universe=_env_bool("DYNAMIC_CRYPTO_UNIVERSE", False),
             bandit_weighting_shadow=_env_bool("BANDIT_WEIGHTING_SHADOW", False),
             bandit_weighting_live=_env_bool("BANDIT_WEIGHTING_LIVE", False),
+            symbol_cooldown_enabled=_env_bool("SYMBOL_COOLDOWN_ENABLED", False),
+            symbol_cooldown_seconds=int(os.getenv("SYMBOL_COOLDOWN_SECONDS", "3600")),
+            trade_memory_shadow=_env_bool("TRADE_MEMORY_SHADOW", False),
+            trade_memory_live=_env_bool("TRADE_MEMORY_LIVE", False),
             crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
             min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "500.0")),
             max_spread_pct=float(os.getenv("MAX_SPREAD_PCT", "0.01")),

@@ -5,6 +5,8 @@ and pending-order and side-sanity enforced, and unknown/stale state rejected.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from trader.config import DEFAULT_ALLOWLIST, RiskLimits, _env_allowlist
@@ -216,3 +218,63 @@ def test_pdt_never_blocks_sells():
     sell = OrderIntent(symbol="AAPL", side="sell", notional=1_000.0, ref_price=100.0)
     decision = _pdt_gate().evaluate(sell, state)
     assert decision.approved
+
+
+# ---- symbol cooldown ----
+
+COOLDOWN_LIMITS = RiskLimits(
+    max_position_pct=0.10,
+    allowlist=("AAPL", "MSFT"),
+    symbol_cooldown_enabled=True,
+    symbol_cooldown_seconds=3600,
+)
+
+
+def _cooldown_gate() -> RiskGate:
+    return RiskGate(COOLDOWN_LIMITS)
+
+
+def test_cooldown_blocks_buy_within_window():
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=30)})
+    decision = _cooldown_gate().evaluate(_buy(), state, now=now)
+    assert not decision.approved
+    assert "cooldown" in decision.reason.lower()
+
+
+def test_cooldown_allows_buy_once_elapsed():
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    state = _state(last_losing_exit_at={"AAPL": now - timedelta(hours=2)})
+    decision = _cooldown_gate().evaluate(_buy(), state, now=now)
+    assert decision.approved
+
+
+def test_cooldown_disabled_by_default_ignores_recent_loss():
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
+    decision = gate_default().evaluate(_buy(), state, now=now)
+    assert decision.approved
+
+
+def gate_default() -> RiskGate:
+    return RiskGate(LIMITS)
+
+
+def test_cooldown_never_blocks_sells():
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    state = _state(
+        positions={"AAPL": 10.0},
+        last_losing_exit_at={"AAPL": now - timedelta(minutes=1)},
+    )
+    sell = OrderIntent(symbol="AAPL", side="sell", notional=1_000.0, ref_price=100.0)
+    decision = _cooldown_gate().evaluate(sell, state, now=now)
+    assert decision.approved
+
+
+def test_kill_switch_wins_over_cooldown(tmp_path):
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    ks = KillSwitch(tmp_path / "kill.flag")
+    ks.engage()
+    state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
+    decision = _cooldown_gate().evaluate(_buy(), state, ks, now=now)
+    assert decision.reason == "kill switch engaged"

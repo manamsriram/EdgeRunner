@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from trader.config import RiskLimits
@@ -51,6 +52,7 @@ class AccountState:
     position_owners: dict[str, str] = field(default_factory=dict)     # symbol -> owning strategy class name
     deployed_notional: float = 0.0         # cumulative buy notional approved this tick (daily pool)
     intraday_deployed: float = 0.0         # cumulative buy notional approved this tick (intraday pool)
+    last_losing_exit_at: dict[str, datetime] = field(default_factory=dict)  # symbol -> most recent losing exit ts
 
 
 @dataclass(frozen=True)
@@ -127,8 +129,10 @@ class RiskGate:
         intent: OrderIntent,
         state: AccountState,
         kill_switch: KillSwitch | None = None,
+        now: datetime | None = None,
     ) -> RiskDecision:
         limits = self._limits
+        now = now or datetime.now(timezone.utc)
 
         # 0. Kill switch / unknown state — fail closed before anything else.
         if kill_switch is not None and kill_switch.engaged():
@@ -156,6 +160,19 @@ class RiskGate:
         # 2. Pending order — positions don't reflect an in-flight order; refuse to stack.
         if intent.symbol in state.open_order_symbols:
             return RiskDecision.reject(f"{intent.symbol} has an unfilled order in flight")
+
+        # 2b. Symbol cooldown — block new entries shortly after a losing exit on this
+        #     symbol, to prevent immediate revenge re-entry chasing a setup that just
+        #     failed. Buys only; a cooldown must never block closing a position.
+        if intent.side == "buy" and limits.symbol_cooldown_enabled:
+            last_loss = state.last_losing_exit_at.get(intent.symbol)
+            if last_loss is not None:
+                elapsed = (now - last_loss).total_seconds()
+                if elapsed < limits.symbol_cooldown_seconds:
+                    return RiskDecision.reject(
+                        f"{intent.symbol} in cooldown: last losing exit "
+                        f"{elapsed / 60:.0f}m ago, cooldown={limits.symbol_cooldown_seconds / 60:.0f}m"
+                    )
 
         # 3. Daily-loss circuit breaker (None = unprovable = reject when check is required).
         #    CCXT brokers set require_daily_pnl_check=False because they have no last_equity.
