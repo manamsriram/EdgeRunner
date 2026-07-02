@@ -641,27 +641,34 @@ def _execute_signal(
             signal_strength=signal.strength,
         ))
 
-        # Place a broker-side GTC stop to protect new long positions.
+        # Place a broker-side GTC stop to protect new long positions. Wait for the
+        # buy to actually fill first — submitting a stop-sell before the fill lands
+        # reads as a short sale and gets rejected by Alpaca for non-shortable assets.
         if signal.side == "buy" and not is_crypto_symbol(symbol):
             stop_price = ref_price * (1 - config.risk.stop_loss_pct)
-            stop_qty = round(risk_decision.approved_notional / ref_price, 6)
-            # Cap to currently-held shares so we never stop more than we own.
-            # New positions (no state entry) keep the computed qty.
-            held = state.positions.get(symbol, 0.0)
-            if held > 0:
-                stop_qty = min(stop_qty, held)
-            stop_oid = client_order_id_for(
-                today, symbol, "sell", f"stop-{type(strategy).__name__}"
-            )
-            try:
-                broker.cancel_open_stops(symbol)
-                broker.place_stop_order(
-                    symbol=symbol, qty=stop_qty,
-                    stop_price=stop_price, client_order_id=stop_oid,
+            filled_order = broker.wait_for_fill(client_order_id)
+            if filled_order is None:
+                logger.warning(
+                    "%s buy not confirmed filled in time — skipping broker stop, "
+                    "software stop remains active", symbol,
                 )
-                logger.info("placed GTC stop for %s at %.2f", symbol, stop_price)
-            except Exception:
-                logger.exception("stop order failed for %s — software stop remains active", symbol)
+            else:
+                filled_qty = float(getattr(filled_order, "filled_qty", 0) or 0)
+                stop_qty = filled_qty if filled_qty > 0 else round(
+                    risk_decision.approved_notional / ref_price, 6
+                )
+                stop_oid = client_order_id_for(
+                    today, symbol, "sell", f"stop-{type(strategy).__name__}"
+                )
+                try:
+                    broker.cancel_open_stops(symbol)
+                    broker.place_stop_order(
+                        symbol=symbol, qty=stop_qty,
+                        stop_price=stop_price, client_order_id=stop_oid,
+                    )
+                    logger.info("placed GTC stop for %s at %.2f", symbol, stop_price)
+                except Exception:
+                    logger.exception("stop order failed for %s — software stop remains active", symbol)
 
         _env = "paper" if config.alpaca_paper else "LIVE"
         send_alert(

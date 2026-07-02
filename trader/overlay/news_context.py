@@ -124,7 +124,8 @@ def fetch_news(
         query_symbol = symbol.split("/")[0] if "/" in symbol else symbol
         request = NewsRequest(symbols=query_symbol, limit=5)
         response = client.get_news(request)
-        articles = getattr(response, "news", None) or []
+        # NewsSet has no `.news` attribute — articles live at `.data["news"]`.
+        articles = response.data.get("news", []) if hasattr(response, "data") else []
         headlines = [a.headline for a in articles[:4] if getattr(a, "headline", None)]
         if not headlines:
             return ""

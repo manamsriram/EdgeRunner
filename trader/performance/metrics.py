@@ -175,12 +175,26 @@ def compute_live_metrics(config, broker, repo) -> LiveMetrics:
     timestamps = history["timestamp"]
     ts_end = _parse_ts(timestamps[-1])
 
-    # Trim equity curve to start at first actual fill so Sharpe/drawdown/days_active
-    # reflect live-trading performance, not the flat pre-trading period.
+    # Trim equity curve to start at the bot's actual first trade so Sharpe/drawdown/
+    # days_active reflect live-trading performance, not the flat pre-trading period
+    # (or, if the account predates this bot, months of unrelated history).
+    #
+    # Prefer the local order ledger over Alpaca's fills endpoint: it's our own data,
+    # recorded synchronously on every submit (pipeline.py), so it can't go stale or
+    # empty the way an external API call can — and a single point of failure there
+    # (e.g. get_account_activities silently failing) must not also corrupt this.
+    start_candidates = []
     if fills:
-        first_fill_ts = _parse_ts(min(fills, key=lambda f: f["ts"])["ts"])
+        start_candidates.append(_parse_ts(min(fills, key=lambda f: f["ts"])["ts"]))
+    orders = repo.get_orders()
+    order_timestamps = [o["ts"] for o in orders if o.get("ts")]
+    if order_timestamps:
+        start_candidates.append(_parse_ts(min(order_timestamps)))
+
+    if start_candidates:
+        first_trade_ts = min(start_candidates)
         trim_idx = next(
-            (i for i, ts in enumerate(timestamps) if _parse_ts(ts) >= first_fill_ts),
+            (i for i, ts in enumerate(timestamps) if _parse_ts(ts) >= first_trade_ts),
             0,
         )
     else:

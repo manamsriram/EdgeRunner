@@ -128,7 +128,9 @@ class FakeClient:
         coid = order_data["client_order_id"]
         if coid in self._by_coid:
             raise FakeDuplicateError()
-        order = SimpleNamespace(id="broker-id-1", **order_data)
+        # Market orders fill near-instantly in paper trading; simulate that so
+        # AlpacaBroker.wait_for_fill doesn't block real tests on a real sleep.
+        order = SimpleNamespace(id="broker-id-1", status="filled", filled_qty="0", **order_data)
         self._by_coid[coid] = order
         self.submitted.append(order)
         return order

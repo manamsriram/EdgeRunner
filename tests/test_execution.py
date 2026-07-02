@@ -475,3 +475,114 @@ def test_short_sale_rejection_exhausts_and_raises(monkeypatch):
             symbol="NBIL", qty=3, stop_price=2.5, client_order_id="stop-nbil2"
         )
 
+
+# ---- wait_for_fill ----
+
+def test_wait_for_fill_returns_order_once_filled():
+    client = FakeClient()
+    client._by_coid["buy-1"] = SimpleNamespace(status="filled", filled_qty="5")
+    order = _broker(client).wait_for_fill("buy-1", timeout=1.0, poll_interval=0.01)
+    assert order is not None
+    assert order.status == "filled"
+
+
+def test_wait_for_fill_times_out_when_never_filled(monkeypatch):
+    import trader.execution.broker as broker_mod
+    monkeypatch.setattr(broker_mod.time, "sleep", lambda s: None)
+    client = FakeClient()
+    client._by_coid["buy-2"] = SimpleNamespace(status="pending_new", filled_qty="0")
+    order = _broker(client).wait_for_fill("buy-2", timeout=1.0, poll_interval=0.01)
+    assert order is None
+
+
+def _fake_activity(activity_id: str, symbol: str = "AAPL", side: str = "buy") -> dict:
+    return {
+        "id": activity_id,
+        "activity_type": "FILL",
+        "symbol": symbol,
+        "side": side,
+        "qty": "1",
+        "price": "100.0",
+        "transaction_time": "2026-06-29T10:00:00Z",
+        "order_id": f"order-{activity_id}",
+    }
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def test_get_account_activities_single_page(monkeypatch):
+    import trader.execution.broker as broker_mod
+
+    calls = []
+
+    def _fake_get(url, headers, params, timeout):
+        calls.append(params)
+        return _FakeResponse([_fake_activity("1"), _fake_activity("2")])
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    result = _broker(FakeClient()).get_account_activities("FILL")
+
+    assert len(result) == 2
+    assert len(calls) == 1
+    assert calls[0]["page_size"] == 100  # never the old, over-the-cap 999
+
+
+def test_get_account_activities_paginates_full_pages(monkeypatch):
+    import trader.execution.broker as broker_mod
+
+    pages = [
+        [_fake_activity(str(i)) for i in range(100)],  # full page -> fetch next
+        [_fake_activity("100")],                        # short page -> stop
+    ]
+    calls = []
+
+    def _fake_get(url, headers, params, timeout):
+        calls.append(params.get("page_token"))
+        return _FakeResponse(pages.pop(0))
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    result = _broker(FakeClient()).get_account_activities("FILL")
+
+    assert len(result) == 101
+    assert calls[0] is None
+    assert calls[1] == "99"  # id of the last activity on the first page
+
+
+def test_get_account_activities_returns_empty_on_error(monkeypatch):
+    import trader.execution.broker as broker_mod
+
+    def _fake_get(url, headers, params, timeout):
+        raise RuntimeError("API down")
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    assert _broker(FakeClient()).get_account_activities("FILL") == []
+
+
+def test_wait_for_fill_tolerates_lookup_errors(monkeypatch):
+    import trader.execution.broker as broker_mod
+    monkeypatch.setattr(broker_mod.time, "sleep", lambda s: None)
+
+    class _FlakyClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self._calls = 0
+
+        def get_order_by_client_id(self, client_id):
+            self._calls += 1
+            if self._calls < 2:
+                raise RuntimeError("transient network error")
+            return SimpleNamespace(status="filled", filled_qty="1")
+
+    order = _broker(_FlakyClient()).wait_for_fill("buy-3", timeout=1.0, poll_interval=0.01)
+    assert order is not None
+    assert order.status == "filled"
+

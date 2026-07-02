@@ -182,7 +182,7 @@ def test_fetch_news_returns_headlines(monkeypatch):
     mock_article = MagicMock()
     mock_article.headline = "Apple reports record quarterly earnings"
     mock_response = MagicMock()
-    mock_response.news = [mock_article]
+    mock_response.data = {"news": [mock_article]}
 
     mock_client = MagicMock()
     mock_client.get_news.return_value = mock_response

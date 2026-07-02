@@ -42,9 +42,10 @@ def _make_broker(history=None, fills=None):
     return broker
 
 
-def _make_repo(signal_counts=None):
+def _make_repo(signal_counts=None, orders=None):
     repo = MagicMock()
     repo.get_strategy_signal_counts.return_value = signal_counts or {}
+    repo.get_orders.return_value = orders or []
     return repo
 
 
@@ -260,6 +261,25 @@ def test_compute_profit_factor_from_fills():
     assert result.trade_count == 1
     assert result.win_rate == pytest.approx(1.0)
     assert result.profit_factor == float("inf")
+
+
+def test_compute_days_active_uses_local_orders_when_fills_endpoint_is_empty():
+    """Regression: if get_account_activities silently fails (e.g. a page_size bug),
+    fills == [] must not force days_active back to the full 1-year history window —
+    the local order ledger is an independent source of the bot's real start date."""
+    n = 90
+    timestamps = _timestamps(n)
+    broker = _make_broker(
+        history={"equity": _equity(n), "timestamp": timestamps},
+        fills=[],  # simulates a broken/empty Alpaca activities response
+    )
+    # Bot's first-ever order was recorded locally 5 days before the history ends.
+    first_order_ts = timestamps[n - 5]
+    repo = _make_repo(orders=[{"ts": first_order_ts, "symbol": "AAPL"}])
+
+    result = compute_live_metrics(_make_config(), broker, repo)
+    assert result.days_active <= 5
+    assert result.days_active < n - 1
 
 
 def test_compute_benchmark_none_when_fetch_fails(monkeypatch):

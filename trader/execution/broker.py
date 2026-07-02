@@ -175,7 +175,11 @@ class AlpacaBroker:
         try:
             client = self._ensure_client()
             from alpaca.trading.requests import GetPortfolioHistoryRequest
-            request = GetPortfolioHistoryRequest(period=period, timeframe="1D")
+            # continuous reporting includes weekend/off-session bars — needed
+            # since this account trades crypto 24/7, not just NYSE hours.
+            request = GetPortfolioHistoryRequest(
+                period=period, timeframe="1D", intraday_reporting="continuous"
+            )
             history = client.get_portfolio_history(history_filter=request)
 
             def _ts_to_iso(t: Any) -> str:
@@ -219,17 +223,30 @@ class AlpacaBroker:
                 f"{self._config.alpaca_base_url}"
                 f"/v2/account/activities/{activity_type}"
             )
-            resp = requests.get(
-                url,
-                headers={
-                    "APCA-API-KEY-ID": self._config.alpaca_api_key or "",
-                    "APCA-API-SECRET-KEY": self._config.alpaca_secret_key or "",
-                },
-                params={"page_size": 999},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            activities = resp.json()
+            headers = {
+                "APCA-API-KEY-ID": self._config.alpaca_api_key or "",
+                "APCA-API-SECRET-KEY": self._config.alpaca_secret_key or "",
+            }
+
+            # Alpaca caps page_size at 100 when no `date` filter is given; a
+            # larger value 422s and (before this fix) silently returned [].
+            activities: list[dict] = []
+            page_token: str | None = None
+            while True:
+                params: dict[str, Any] = {"page_size": 100}
+                if page_token:
+                    params["page_token"] = page_token
+                resp = requests.get(url, headers=headers, params=params, timeout=15)
+                resp.raise_for_status()
+                page = resp.json()
+                if not page:
+                    break
+                activities.extend(page)
+                if len(page) < 100:
+                    break
+                page_token = page[-1].get("id")
+                if not page_token:
+                    break
 
             result = []
             for a in activities:
@@ -483,6 +500,26 @@ class AlpacaBroker:
                     continue
                 raise
         raise RuntimeError(f"stop order retries exhausted for {client_order_id}")
+
+    def wait_for_fill(
+        self, client_order_id: str, timeout: float = 5.0, poll_interval: float = 0.5
+    ) -> Any | None:
+        """Poll for an order's fill, up to `timeout` seconds. Returns the filled order,
+        or None if it hasn't filled in time (caller should treat as "not yet safe to
+        act on this position").
+        """
+        client = self._ensure_client()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                order = client.get_order_by_client_id(client_order_id)
+                if _is_filled(order):
+                    return order
+            except Exception as exc:
+                logger.warning("wait_for_fill lookup failed for %s: %s", client_order_id, exc)
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(poll_interval)
 
     def cancel_open_stops(self, symbol: str) -> None:
         """Cancel open GTC stop-sell orders for symbol. Best-effort — logs failures."""

@@ -87,7 +87,7 @@ def compute_calendar_data(broker, repo) -> list[dict]:
 
     equity_by_date: dict[str, tuple] = {}
     for i in range(1, len(timestamps)):
-        date_str = _to_pst_date(timestamps[i - 1])
+        date_str = _to_pst_date(timestamps[i])
         prev_eq = float(equities[i - 1]) if equities[i - 1] is not None else None
         curr_eq = float(equities[i]) if equities[i] is not None else None
         if prev_eq and curr_eq and prev_eq > 0:
