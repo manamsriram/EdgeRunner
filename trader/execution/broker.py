@@ -430,34 +430,59 @@ class AlpacaBroker:
             logger.warning("place_stop_order skipped for %s — qty %.4f rounds to 0", symbol, qty)
             return None
         client = self._ensure_client()
-        def _build_request(q: int, tif: TimeInForce = TimeInForce.GTC) -> StopOrderRequest:
+        def _build_request(
+            q: int, tif: TimeInForce = TimeInForce.GTC, coid: str = client_order_id
+        ) -> StopOrderRequest:
             return StopOrderRequest(
                 symbol=symbol,
                 qty=q,  # GTC stops must be whole shares on Alpaca
                 side=OrderSide.SELL,
                 time_in_force=tif,
                 stop_price=round(stop_price, 2),
-                client_order_id=client_order_id,
+                client_order_id=coid,
             )
 
-        try:
-            return self._submit_idempotent(client, _build_request(whole_qty), client_order_id)
-        except Exception as exc:
-            avail = _insufficient_qty_available(exc)
-            if avail and avail >= 1:
-                logger.warning(
-                    "stop qty %d exceeds available %d for %s; retrying with available",
-                    whole_qty, avail, symbol,
-                )
-                return self._submit_idempotent(client, _build_request(avail), client_order_id)
-            if "hard-to-borrow" in str(exc).lower():
-                logger.warning(
-                    "%s hard-to-borrow rejects GTC stop; retrying as DAY", symbol,
-                )
+        # Retries use fresh client_order_ids: Alpaca consumes the id on a rejected
+        # order, so resubmitting the same id silently returns the rejected order.
+        for attempt in range(3):
+            oid = client_order_id if attempt == 0 else f"{client_order_id}-r{attempt}"
+            try:
                 return self._submit_idempotent(
-                    client, _build_request(whole_qty, TimeInForce.DAY), client_order_id,
+                    client, _build_request(whole_qty, coid=oid), oid
                 )
-            raise
+            except Exception as exc:
+                msg = str(exc).lower()
+                avail = _insufficient_qty_available(exc)
+                if avail and avail >= 1:
+                    logger.warning(
+                        "stop qty %d exceeds available %d for %s; retrying with available",
+                        whole_qty, avail, symbol,
+                    )
+                    day_oid = f"{client_order_id}-avail"
+                    return self._submit_idempotent(
+                        client, _build_request(avail, coid=day_oid), day_oid
+                    )
+                if "hard-to-borrow" in msg:
+                    logger.warning(
+                        "%s hard-to-borrow rejects GTC stop; retrying as DAY", symbol,
+                    )
+                    day_oid = f"{client_order_id}-day"
+                    return self._submit_idempotent(
+                        client,
+                        _build_request(whole_qty, TimeInForce.DAY, coid=day_oid),
+                        day_oid,
+                    )
+                # Buy fills are async — a stop-sell submitted before the fill lands
+                # reads as a short sale and non-shortable assets reject it (42210000).
+                if "cannot be sold short" in msg and attempt < 2:
+                    logger.warning(
+                        "%s stop rejected as short sale (buy fill pending); retry %d",
+                        symbol, attempt + 1,
+                    )
+                    time.sleep(2.0)
+                    continue
+                raise
+        raise RuntimeError(f"stop order retries exhausted for {client_order_id}")
 
     def cancel_open_stops(self, symbol: str) -> None:
         """Cancel open GTC stop-sell orders for symbol. Best-effort — logs failures."""

@@ -425,3 +425,53 @@ def test_non_wash_trade_error_still_propagates():
             symbol="AAPL", side="buy", notional=100.0, client_order_id="z"
         )
 
+
+# ---- place_stop_order rejection handling ----
+
+class StopRejectClient(FakeClient):
+    """Rejects submissions with the given error messages, in order, then accepts."""
+
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__()
+        self.errors = list(errors)
+
+    def submit_order(self, order_data):
+        if self.errors:
+            raise Exception(self.errors.pop(0))
+        self.submitted.append(order_data)
+        return order_data
+
+
+HTB_ERR = '{"code":42210000,"message":"only day orders are allowed for hard-to-borrow asset \\"GVH\\""}'
+SHORT_ERR = '{"code":42210000,"message":"asset \\"NBIL\\" cannot be sold short"}'
+
+
+def test_hard_to_borrow_stop_retries_as_day_with_fresh_id():
+    client = StopRejectClient([HTB_ERR])
+    order = _broker(client).place_stop_order(
+        symbol="GVH", qty=5, stop_price=1.23, client_order_id="stop-gvh"
+    )
+    assert str(order.time_in_force).lower().endswith("day")
+    assert order.client_order_id == "stop-gvh-day"
+
+
+def test_short_sale_rejection_retries_with_fresh_id(monkeypatch):
+    import trader.execution.broker as broker_mod
+    monkeypatch.setattr(broker_mod.time, "sleep", lambda s: None)
+    client = StopRejectClient([SHORT_ERR])
+    order = _broker(client).place_stop_order(
+        symbol="NBIL", qty=3, stop_price=2.5, client_order_id="stop-nbil"
+    )
+    assert order.client_order_id == "stop-nbil-r1"
+    assert float(order.qty) == 3.0
+
+
+def test_short_sale_rejection_exhausts_and_raises(monkeypatch):
+    import trader.execution.broker as broker_mod
+    monkeypatch.setattr(broker_mod.time, "sleep", lambda s: None)
+    client = StopRejectClient([SHORT_ERR, SHORT_ERR, SHORT_ERR])
+    with pytest.raises(Exception, match="cannot be sold short"):
+        _broker(client).place_stop_order(
+            symbol="NBIL", qty=3, stop_price=2.5, client_order_id="stop-nbil2"
+        )
+
