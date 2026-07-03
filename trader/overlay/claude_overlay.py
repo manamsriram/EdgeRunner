@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # (symbol, side) -> (monotonic_timestamp, Signal)
 _OVERLAY_CACHE: dict[tuple[str, str], tuple[float, Signal]] = {}
-_OVERLAY_TTL = 300.0  # 5 minutes
+_OVERLAY_TTL = 1800.0  # 30 minutes
 
 
 def _clear_overlay_cache() -> None:
