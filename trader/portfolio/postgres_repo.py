@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS trade_outcomes (
 );
 CREATE INDEX IF NOT EXISTS idx_trade_outcomes_symbol ON trade_outcomes(symbol, closed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trade_outcomes_arm ON trade_outcomes(strategy, regime, closed_at DESC);
+CREATE TABLE IF NOT EXISTS overlay_cache (
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    ts              TEXT NOT NULL,
+    result_side     TEXT NOT NULL,
+    result_strength REAL NOT NULL,
+    result_reason   TEXT,
+    PRIMARY KEY (symbol, side)
+);
 """
 
 
@@ -423,3 +432,36 @@ class PostgresRepository(PortfolioRepository):
                 )
                 rows = cur.fetchall()
         return [float(r["ic"]) for r in reversed(rows)]
+
+    def get_overlay_cache(self, symbol: str, side: str, ttl_seconds: float) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ts, result_side, result_strength, result_reason "
+                    "FROM overlay_cache WHERE symbol=%s AND side=%s",
+                    (symbol, side),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["ts"])).total_seconds()
+        if age >= ttl_seconds:
+            return None
+        return {
+            "side": row["result_side"],
+            "strength": float(row["result_strength"]),
+            "reason": row["result_reason"],
+        }
+
+    def set_overlay_cache(self, symbol: str, side: str, result_side: str,
+                          result_strength: float, result_reason: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO overlay_cache (symbol, side, ts, result_side, result_strength, result_reason) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (symbol, side) DO UPDATE SET "
+                    "ts=EXCLUDED.ts, result_side=EXCLUDED.result_side, "
+                    "result_strength=EXCLUDED.result_strength, result_reason=EXCLUDED.result_reason",
+                    (symbol, side, _now(), result_side, result_strength, result_reason),
+                )

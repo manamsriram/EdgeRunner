@@ -179,3 +179,14 @@ class PortfolioRepository(ABC):
     @abstractmethod
     def get_ic_series(self, strategy: str, regime: str, limit: int = 60) -> list[float]:
         """Return the most recent `limit` IC values, oldest-first."""
+
+    @abstractmethod
+    def get_overlay_cache(self, symbol: str, side: str, ttl_seconds: float) -> dict | None:
+        """Return the cached overlay result for (symbol, side) if younger than
+        ttl_seconds, else None. Keys: side, strength, reason (of the cached result,
+        not the request). DB-backed so the cache survives process restarts/redeploys."""
+
+    @abstractmethod
+    def set_overlay_cache(self, symbol: str, side: str, result_side: str,
+                          result_strength: float, result_reason: str) -> None:
+        """Upsert the overlay result cached for (symbol, side)."""

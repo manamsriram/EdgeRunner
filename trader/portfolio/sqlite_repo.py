@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS trade_outcomes (
 );
 CREATE INDEX IF NOT EXISTS idx_trade_outcomes_symbol ON trade_outcomes(symbol, closed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trade_outcomes_arm ON trade_outcomes(strategy, regime, closed_at DESC);
+CREATE TABLE IF NOT EXISTS overlay_cache (
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    ts              TEXT NOT NULL,
+    result_side     TEXT NOT NULL,
+    result_strength REAL NOT NULL,
+    result_reason   TEXT,
+    PRIMARY KEY (symbol, side)
+);
 """
 
 
@@ -420,3 +429,33 @@ class SQLiteRepository(PortfolioRepository):
                 (strategy, regime, limit),
             ).fetchall()
         return [float(r["ic"]) for r in reversed(rows)]  # oldest-first
+
+    def get_overlay_cache(self, symbol: str, side: str, ttl_seconds: float) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT ts, result_side, result_strength, result_reason "
+                "FROM overlay_cache WHERE symbol=? AND side=?",
+                (symbol, side),
+            ).fetchone()
+        if row is None:
+            return None
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["ts"])).total_seconds()
+        if age >= ttl_seconds:
+            return None
+        return {
+            "side": row["result_side"],
+            "strength": float(row["result_strength"]),
+            "reason": row["result_reason"],
+        }
+
+    def set_overlay_cache(self, symbol: str, side: str, result_side: str,
+                          result_strength: float, result_reason: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO overlay_cache (symbol, side, ts, result_side, result_strength, result_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (symbol, side) DO UPDATE SET "
+                "ts=excluded.ts, result_side=excluded.result_side, "
+                "result_strength=excluded.result_strength, result_reason=excluded.result_reason",
+                (symbol, side, datetime.now(timezone.utc).isoformat(), result_side, result_strength, result_reason),
+            )

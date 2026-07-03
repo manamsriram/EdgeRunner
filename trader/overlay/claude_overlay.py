@@ -162,7 +162,21 @@ def apply_claude_overlay(
     try:
         cache_key = (signal.symbol, signal.side)
         now = time.monotonic()
-        if cache_key in _OVERLAY_CACHE:
+        if repo is not None:
+            try:
+                cached_row = repo.get_overlay_cache(signal.symbol, signal.side, _OVERLAY_TTL)
+            except Exception:
+                logger.warning("overlay cache read failed for %s, continuing without it", signal.symbol, exc_info=True)
+                cached_row = None
+            if cached_row is not None:
+                logger.debug("overlay cache hit (db) symbol=%s side=%s", signal.symbol, signal.side)
+                return Signal(
+                    symbol=signal.symbol,
+                    side=cached_row["side"],
+                    strength=cached_row["strength"],
+                    reason=cached_row["reason"],
+                )
+        elif cache_key in _OVERLAY_CACHE:
             ts, cached = _OVERLAY_CACHE[cache_key]
             if now - ts < _OVERLAY_TTL:
                 logger.debug("overlay cache hit symbol=%s side=%s age=%.0fs", signal.symbol, signal.side, now - ts)
@@ -260,7 +274,13 @@ def apply_claude_overlay(
                 reason=f"[overlay approved] {rationale}",
             )
 
-        _OVERLAY_CACHE[cache_key] = (now, result)
+        if repo is not None:
+            try:
+                repo.set_overlay_cache(signal.symbol, signal.side, result.side, result.strength, result.reason)
+            except Exception:
+                logger.warning("overlay cache write failed for %s", signal.symbol, exc_info=True)
+        else:
+            _OVERLAY_CACHE[cache_key] = (now, result)
         return result
 
     except Exception as exc:  # noqa: BLE001
