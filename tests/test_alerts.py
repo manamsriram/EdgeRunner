@@ -1,7 +1,8 @@
 """Alert module tests: fire-and-forget contract, no real HTTP."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import smtplib
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -36,41 +37,42 @@ def test_send_alert_swallows_timeout():
         send_alert("msg", "https://hooks.example.com/abc")
 
 
-# --- SendGrid email path ---
+# --- SMTP email path ---
 
-def test_send_alert_email_calls_sendgrid():
-    """Email path must POST to SendGrid API with correct headers and payload."""
-    with patch("trader.alerts.requests.post") as mock_post:
-        mock_post.return_value.raise_for_status = MagicMock()
+def test_send_alert_email_calls_smtp():
+    """Email path must log in and send via smtplib.SMTP with correct fields."""
+    with patch("trader.alerts.smtplib.SMTP") as mock_smtp_cls:
+        mock_smtp = mock_smtp_cls.return_value.__enter__.return_value
         send_alert(
             "fill: bought AAPL",
             None,
             alert_email="dest@example.com",
             smtp_user="sender@example.com",
-            smtp_password="SG.fakekey",
+            smtp_password="app-password",
         )
-        mock_post.assert_called_once()
-        call_kwargs = mock_post.call_args
-        assert call_kwargs.kwargs["headers"]["Authorization"] == "Bearer SG.fakekey"
-        payload = call_kwargs.kwargs["json"]
-        assert payload["from"]["email"] == "sender@example.com"
-        assert payload["personalizations"][0]["to"][0]["email"] == "dest@example.com"
-        assert "fill: bought AAPL" in payload["subject"]
+        mock_smtp_cls.assert_called_once_with("smtp.gmail.com", 587)
+        mock_smtp.starttls.assert_called_once()
+        mock_smtp.login.assert_called_once_with("sender@example.com", "app-password")
+        mock_smtp.send_message.assert_called_once()
+        sent_msg = mock_smtp.send_message.call_args[0][0]
+        assert sent_msg["From"] == "sender@example.com"
+        assert sent_msg["To"] == "dest@example.com"
+        assert "fill: bought AAPL" in sent_msg["Subject"]
 
 
 def test_send_alert_email_missing_credentials_skips():
     """Email block must be skipped when credentials are absent."""
-    with patch("trader.alerts.requests.post") as mock_post:
+    with patch("trader.alerts.smtplib.SMTP") as mock_smtp_cls:
         # No webhook, no credentials — nothing should fire.
         send_alert("msg", None, alert_email="dest@example.com")
-        mock_post.assert_not_called()
+        mock_smtp_cls.assert_not_called()
 
 
-def test_send_alert_email_swallows_sendgrid_error():
-    """SendGrid HTTP errors must not propagate to the caller."""
+def test_send_alert_email_swallows_smtp_error():
+    """SMTP errors must not propagate to the caller."""
     with patch(
-        "trader.alerts.requests.post",
-        side_effect=requests.HTTPError("403 Forbidden"),
+        "trader.alerts.smtplib.SMTP",
+        side_effect=smtplib.SMTPException("auth failed"),
     ):
         # Must not raise.
         send_alert(
@@ -78,5 +80,5 @@ def test_send_alert_email_swallows_sendgrid_error():
             None,
             alert_email="dest@example.com",
             smtp_user="sender@example.com",
-            smtp_password="SG.badkey",
+            smtp_password="bad-password",
         )
