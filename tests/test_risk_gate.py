@@ -67,17 +67,40 @@ def test_buy_at_cap_with_existing_position_rejected_as_noop(gate):
 
 # ---- circuit breakers ----
 
-@pytest.mark.skip(reason="daily loss breaker disabled for performance monitoring")
-def test_daily_loss_breaker_trips(gate):
-    decision = gate.evaluate(_buy(), _state(daily_pnl_pct=-0.04))
+HALT_LIMITS = RiskLimits(
+    max_position_pct=0.10,
+    daily_loss_limit_pct=0.03,
+    allowlist=("AAPL", "MSFT"),
+    daily_loss_halt_enabled=True,
+)
+
+
+def _halt_gate() -> RiskGate:
+    return RiskGate(HALT_LIMITS)
+
+
+def test_daily_loss_halt_blocks_new_buy_when_enabled():
+    decision = _halt_gate().evaluate(_buy(), _state(daily_pnl_pct=-0.04))
     assert not decision.approved
     assert "daily loss" in decision.reason.lower()
 
 
-@pytest.mark.skip(reason="daily loss breaker disabled for performance monitoring")
-def test_daily_pnl_unknown_is_failclosed(gate):
-    decision = gate.evaluate(_buy(), _state(daily_pnl_pct=None))
-    assert not decision.approved
+def test_daily_loss_halt_never_blocks_sells():
+    intent = OrderIntent(symbol="AAPL", side="sell", notional=1_000.0, ref_price=100.0)
+    decision = _halt_gate().evaluate(intent, _state(positions={"AAPL": 10.0}, daily_pnl_pct=-0.04))
+    assert decision.approved
+
+
+def test_daily_loss_halt_skips_when_pnl_unknown():
+    # crypto/CCXT has no last_equity → daily_pnl_pct is None; must never fail-closed.
+    decision = _halt_gate().evaluate(_buy(), _state(daily_pnl_pct=None))
+    assert decision.approved
+
+
+def test_daily_loss_halt_disabled_by_default_ignores_daily_loss(gate):
+    # LIMITS (default fixture) has daily_loss_halt_enabled=False — no behavior change.
+    decision = gate.evaluate(_buy(), _state(daily_pnl_pct=-0.04))
+    assert decision.approved
 
 
 @pytest.mark.skip(reason="max trades/day cap disabled for performance monitoring")

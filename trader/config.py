@@ -60,6 +60,7 @@ class RiskLimits:
     crypto_allowlist: tuple[str, ...] = ()  # e.g. ("BTC/USD", "ETH/USD")
     max_crypto_position_pct: float = 0.05   # tighter cap — crypto is more volatile
     require_daily_pnl_check: bool = True    # False for CCXT (no last_equity available)
+    daily_loss_halt_enabled: bool = False   # opt-in: halt NEW BUYS after daily loss hits daily_loss_limit_pct (env: DAILY_LOSS_HALT_ENABLED)
     stop_loss_pct: float = 0.08             # exit equity/ETF position if down this fraction from avg entry
     crypto_stop_loss_pct: float = 0.05      # tighter stop for crypto — more volatile
     # Dynamic universe — replaces static allowlist with Alpaca daily screener
@@ -166,6 +167,8 @@ def load_config() -> Config:
                       else _env_allowlist("CRYPTO_ALLOWLIST", ()),
             max_crypto_position_pct=float(os.getenv("MAX_CRYPTO_POSITION_PCT", "0.05")),
             require_daily_pnl_check=_env_bool("REQUIRE_DAILY_PNL_CHECK", default=True),
+            daily_loss_halt_enabled=_env_bool("DAILY_LOSS_HALT_ENABLED", default=False),
+            daily_loss_limit_pct=float(os.getenv("DAILY_LOSS_LIMIT_PCT", "0.03")),
             dynamic_universe=_env_bool("DYNAMIC_UNIVERSE", False),
             universe_size=int(os.getenv("UNIVERSE_SIZE", "100")),
             dynamic_crypto_universe=_env_bool("DYNAMIC_CRYPTO_UNIVERSE", False),
