@@ -174,17 +174,8 @@ class RiskGate:
                         f"{elapsed / 60:.0f}m ago, cooldown={limits.symbol_cooldown_seconds / 60:.0f}m"
                     )
 
-        # 3. Daily-loss circuit breaker (None = unprovable = reject when check is required).
-        #    CCXT brokers set require_daily_pnl_check=False because they have no last_equity.
-        # DISABLED: daily loss halt — too blunt; stops unrelated trades after position crashes.
-        # if limits.require_daily_pnl_check:
-        #     if state.daily_pnl_pct is None:
-        #         return RiskDecision.reject("daily P&L unknown")
-        #     if state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
-        #         return RiskDecision.reject(
-        #             f"daily loss {state.daily_pnl_pct:.2%} hit limit "
-        #             f"-{limits.daily_loss_limit_pct:.2%}"
-        #         )
+        # 3. Daily-loss halt is enforced in the buy path only (after the sell branch),
+        #    so a daily loss never traps you in a crashing position — sells stay open.
 
         # 4b. PDT guard — US equity FINRA rule only; does not apply to crypto.
         #     trades_today counts individual fills; a day-trade is a buy+sell pair, so
@@ -213,6 +204,21 @@ class RiskGate:
             if approved <= _NO_OP_EPSILON:
                 return RiskDecision.reject("approved notional below minimum")
             return RiskDecision.approve(approved, "sell approved")
+
+        # 5b. Daily-loss halt (buys only, opt-in). Blocks NEW buys once the day's drawdown
+        #     hits the limit; sells already returned above, so exits are never blocked.
+        #     Skips when daily_pnl_pct is None (e.g. CCXT has no last_equity) — never a hard
+        #     reject, so an unknown P&L cannot freeze the whole book.
+        if (
+            limits.daily_loss_halt_enabled
+            and limits.require_daily_pnl_check
+            and state.daily_pnl_pct is not None
+            and state.daily_pnl_pct <= -limits.daily_loss_limit_pct
+        ):
+            return RiskDecision.reject(
+                f"daily loss {state.daily_pnl_pct:.2%} hit limit "
+                f"-{limits.daily_loss_limit_pct:.2%} — new buys halted"
+            )
 
         # 6. Max position size (buys only) — cap is a fraction of pool equity, not total equity.
         _cap_pct = limits.max_crypto_position_pct if _is_crypto else limits.max_position_pct
