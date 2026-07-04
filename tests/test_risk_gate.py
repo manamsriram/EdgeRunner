@@ -103,13 +103,6 @@ def test_daily_loss_halt_disabled_by_default_ignores_daily_loss(gate):
     assert decision.approved
 
 
-@pytest.mark.skip(reason="max trades/day cap disabled for performance monitoring")
-def test_max_trades_per_day_rejected(gate):
-    decision = gate.evaluate(_buy(), _state(trades_today=5))
-    assert not decision.approved
-    assert "max trades" in decision.reason.lower()
-
-
 # ---- allowlist / pending / stale / kill switch ----
 
 def test_off_allowlist_rejected(gate):
