@@ -187,3 +187,58 @@ def test_uniform_regime_table_matches_fixed_params() -> None:
     adaptive = DipRecovery("TEST", regime_params=uniform).generate(bars, bars.index[-1])
     assert adaptive.side == fixed.side
     assert adaptive.strength == fixed.strength
+
+
+# ---- Drawdown smoothing ----
+
+def test_invalid_smooth_window_raises() -> None:
+    with pytest.raises(ValueError):
+        DipRecovery("TEST", smooth_window=0)
+    with pytest.raises(ValueError):
+        DipRecovery("TEST", smooth_window=-5)
+
+
+def test_smooth_window_none_matches_unsmoothed_default() -> None:
+    closes = [100.0] * MIN_BARS + [89.0]
+    bars = _bars(closes)
+    default = DipRecovery("TEST").generate(bars, bars.index[-1])
+    explicit_none = DipRecovery("TEST", smooth_window=None).generate(bars, bars.index[-1])
+    assert default.side == explicit_none.side
+    assert default.strength == explicit_none.strength
+
+
+def test_smoothing_damps_single_bar_noise_below_trigger() -> None:
+    # One noisy bar dips 11% intraday-close but the surrounding bars sit at the
+    # ATH — raw drawdown crosses the 10% trigger on that single bar, a 5-bar
+    # rolling mean should not (it's mostly zeros).
+    closes = [100.0] * MIN_BARS + [89.0] + [100.0] * 4
+    bars = _bars(closes)
+    raw = DipRecovery("TEST").generate(bars, bars.index[-5])  # the noisy bar itself
+    smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-5])
+    assert raw.side == "buy"
+    assert smoothed.side == "hold"
+
+
+def test_sustained_dip_still_triggers_when_smoothed() -> None:
+    # A real, sustained drawdown should still cross the threshold once smoothed
+    # over the same window it dipped for.
+    closes = [100.0] * MIN_BARS + [89.0] * 5
+    bars = _bars(closes)
+    smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-1])
+    assert smoothed.side == "buy"
+
+
+def test_ewma_smooth_window_accepted() -> None:
+    closes = [100.0] * MIN_BARS + [89.0] * 8
+    bars = _bars(closes)
+    signal = DipRecovery("TEST", smooth_window=4.0).generate(bars, bars.index[-1])
+    assert signal.side == "buy"
+
+
+def test_smoothing_does_not_affect_exit() -> None:
+    # Expansion exit is a hard breakout check — smoothing must not delay it.
+    closes = [100.0] * MIN_BARS + [106.0]
+    bars = _bars(closes)
+    signal = DipRecovery("TEST", smooth_window=10).generate(bars, bars.index[-1])
+    assert signal.side == "sell"
+    assert signal.strength == 1.0

@@ -17,6 +17,7 @@ from __future__ import annotations
 import pandas as pd
 
 from trader.strategy.base import Signal, Strategy
+from trader.strategy.indicators import smooth_score
 from trader.strategy.regime import Regime, classify_regime
 
 MIN_BARS = 30
@@ -43,6 +44,12 @@ class DipRecovery(Strategy):
                     and the matching params are used; regimes missing from the
                     table fall back to the base params. When None (default) the
                     strategy behaves exactly as the fixed-param version.
+    smooth_window:  optional smoothing of the drawdown score before it's compared
+                    to `dip_pct` — int for a rolling mean over that many bars,
+                    float for an EWMA span. None (default) uses the raw single-bar
+                    drawdown, matching prior behavior exactly. Damps single-bar
+                    noise that would otherwise trigger a premature entry; the
+                    expansion exit is left unsmoothed since exits should stay fast.
     """
 
     def __init__(
@@ -51,6 +58,7 @@ class DipRecovery(Strategy):
         dip_pct: float = 0.10,
         expansion_pct: float = 0.05,
         regime_params: dict[Regime, tuple[float, float]] | None = None,
+        smooth_window: int | float | None = None,
     ) -> None:
         super().__init__(symbol)
         _validate_params(dip_pct, expansion_pct)
@@ -59,9 +67,12 @@ class DipRecovery(Strategy):
                 if regime not in {"calm", "normal", "stressed"}:
                     raise ValueError(f"unknown regime: {regime!r}")
                 _validate_params(r_dip, r_exp)
+        if smooth_window is not None and smooth_window <= 0:
+            raise ValueError("smooth_window must be > 0")
         self.dip_pct = dip_pct
         self.expansion_pct = expansion_pct
         self.regime_params = regime_params
+        self.smooth_window = smooth_window
 
     def _effective_params(self, bars: pd.DataFrame) -> tuple[float, float, str]:
         """Resolve (dip_pct, expansion_pct, reason_tag) for the current bars."""
@@ -94,16 +105,32 @@ class DipRecovery(Strategy):
                 f"+{expansion_pct:.0%}{regime_tag}",
             )
 
-        if drawdown >= dip_pct:
+        buy_drawdown, smooth_tag = self._buy_drawdown(bars, drawdown)
+
+        if buy_drawdown >= dip_pct:
             # Deeper dips earn more conviction; 2x the trigger depth maxes out.
-            strength = float(min(drawdown / (2.0 * dip_pct), 1.0))
+            strength = float(min(buy_drawdown / (2.0 * dip_pct), 1.0))
             return Signal(
                 self.symbol, "buy", strength,
-                f"drawdown {drawdown:.1%} >= {dip_pct:.0%} "
-                f"from ATH {prior_ath:.2f}{regime_tag}",
+                f"drawdown {buy_drawdown:.1%} >= {dip_pct:.0%} "
+                f"from ATH {prior_ath:.2f}{regime_tag}{smooth_tag}",
             )
 
         return Signal(
             self.symbol, "hold", 0.0,
-            f"drawdown {drawdown:.1%} < {dip_pct:.0%}, no exit level hit{regime_tag}",
+            f"drawdown {buy_drawdown:.1%} < {dip_pct:.0%}, no exit level hit{regime_tag}{smooth_tag}",
         )
+
+    def _buy_drawdown(self, bars: pd.DataFrame, raw_drawdown: float) -> tuple[float, str]:
+        """Drawdown score used for the *entry* threshold only. Raw unless
+        `smooth_window` is set, in which case it's the smoothed drawdown series
+        computed over history (each bar's drawdown vs. the ATH known before it)."""
+        if self.smooth_window is None:
+            return raw_drawdown, ""
+        prior_ath_series = bars["high"].expanding().max().shift(1)
+        drawdown_series = (prior_ath_series - bars["close"]) / prior_ath_series
+        smoothed = smooth_score(drawdown_series, self.smooth_window)
+        value = smoothed.iloc[-1]
+        if pd.isna(value):
+            return raw_drawdown, ""
+        return float(value), " (smoothed)"

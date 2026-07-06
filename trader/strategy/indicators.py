@@ -61,6 +61,19 @@ def zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - mean) / std.replace(0.0, float("nan"))
 
 
+def smooth_score(series: pd.Series, window: int | float) -> pd.Series:
+    """Damp a noisy per-bar score before it's thresholded into a trade decision.
+
+    int window -> simple rolling mean; float window -> EWMA span. A strategy that
+    triggers off a single-bar score (e.g. drawdown depth) can whipsaw on noise;
+    smoothing the score series first — same trick as smoothing price — trades a
+    little entry latency for fewer false triggers.
+    """
+    if isinstance(window, float):
+        return series.ewm(span=window, min_periods=max(1, int(window) // 2), adjust=False).mean()
+    return series.rolling(window=window, min_periods=max(1, window // 2)).mean()
+
+
 def rolling_high(series: pd.Series, window: int) -> pd.Series:
     """Rolling maximum over `window` bars."""
     return series.rolling(window=window, min_periods=window).max()
