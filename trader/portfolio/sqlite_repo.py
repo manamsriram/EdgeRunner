@@ -119,6 +119,18 @@ CREATE TABLE IF NOT EXISTS overlay_cache (
     result_reason   TEXT,
     PRIMARY KEY (symbol, side)
 );
+CREATE TABLE IF NOT EXISTS llm_call_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            TEXT NOT NULL,
+    provider      TEXT NOT NULL,
+    call_site     TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    cache_hit     INTEGER NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    est_cost_usd  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_call_log_ts ON llm_call_log(ts);
 """
 
 
@@ -458,4 +470,23 @@ class SQLiteRepository(PortfolioRepository):
                 "ts=excluded.ts, result_side=excluded.result_side, "
                 "result_strength=excluded.result_strength, result_reason=excluded.result_reason",
                 (symbol, side, datetime.now(timezone.utc).isoformat(), result_side, result_strength, result_reason),
+            )
+
+    def record_llm_call(
+        self,
+        provider: str,
+        call_site: str,
+        symbol: str,
+        cache_hit: bool,
+        input_tokens: int,
+        output_tokens: int,
+        est_cost_usd: float,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO llm_call_log "
+                "(ts, provider, call_site, symbol, cache_hit, input_tokens, output_tokens, est_cost_usd) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (datetime.now(timezone.utc).isoformat(), provider, call_site, symbol,
+                 cache_hit, input_tokens, output_tokens, est_cost_usd),
             )

@@ -67,11 +67,15 @@ def apply_fundamental_gate(
     bars: pd.DataFrame,
     config=None,
     date_str: str = "",
+    repo=None,
 ) -> bool:
     """Fundamental + price-trend gate for first-entry equity buys. True = approved.
 
     Non-load-bearing: returns True on missing keys, missing financials, or any error.
     Skip for crypto — no yfinance balance sheets for BTC/USD.
+
+    `repo` is optional — when set, each LLM call (or cache hit) is logged to
+    llm_call_log for cost measurement.
     """
     if config is None:
         return True
@@ -90,7 +94,7 @@ def apply_fundamental_gate(
     return check_fundamental_gate(
         symbol, bars, groq_key, groq_model, claude_key, claude_model, date_str,
         gemini_key=gemini_key, gemini_model=gemini_model,
-        finnhub_client=finnhub_client,
+        finnhub_client=finnhub_client, repo=repo,
     )
 
 

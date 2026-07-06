@@ -52,8 +52,8 @@ class _FakeConfig:
 
 
 def _make_call_llm(response_text: str):
-    """Return a call_llm replacement that always returns response_text."""
-    return lambda *a, **kw: response_text
+    """Return a call_llm replacement that always returns (response_text, None)."""
+    return lambda *a, **kw: (response_text, None)
 
 
 def _make_call_llm_raises(exc: Exception):
@@ -189,7 +189,7 @@ def test_trade_memory_live_injects_into_prompt(monkeypatch):
 
     def _fake_call_llm(system_prompt, user_message, *a, **kw):
         captured["user_message"] = user_message
-        return payload
+        return payload, None
 
     monkeypatch.setattr(claude_overlay, "call_llm", _fake_call_llm)
     repo = _FakeRepo(outcomes=[{
@@ -215,7 +215,7 @@ def test_trade_memory_shadow_does_not_touch_prompt(monkeypatch):
 
     def _fake_call_llm(system_prompt, user_message, *a, **kw):
         captured["user_message"] = user_message
-        return payload
+        return payload, None
 
     monkeypatch.setattr(claude_overlay, "call_llm", _fake_call_llm)
     repo = _FakeRepo(outcomes=[{
@@ -257,7 +257,7 @@ def test_no_repo_no_memory_lookup_attempted(monkeypatch):
 
     def _fake_call_llm(system_prompt, user_message, *a, **kw):
         captured["user_message"] = user_message
-        return payload
+        return payload, None
 
     monkeypatch.setattr(claude_overlay, "call_llm", _fake_call_llm)
     sig = _buy_signal()

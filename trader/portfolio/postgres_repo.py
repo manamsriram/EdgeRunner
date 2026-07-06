@@ -119,6 +119,18 @@ CREATE TABLE IF NOT EXISTS overlay_cache (
     result_reason   TEXT,
     PRIMARY KEY (symbol, side)
 );
+CREATE TABLE IF NOT EXISTS llm_call_log (
+    id            SERIAL PRIMARY KEY,
+    ts            TEXT NOT NULL,
+    provider      TEXT NOT NULL,
+    call_site     TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    cache_hit     BOOLEAN NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    est_cost_usd  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_call_log_ts ON llm_call_log(ts);
 """
 
 
@@ -464,4 +476,23 @@ class PostgresRepository(PortfolioRepository):
                     "ts=EXCLUDED.ts, result_side=EXCLUDED.result_side, "
                     "result_strength=EXCLUDED.result_strength, result_reason=EXCLUDED.result_reason",
                     (symbol, side, _now(), result_side, result_strength, result_reason),
+                )
+
+    def record_llm_call(
+        self,
+        provider: str,
+        call_site: str,
+        symbol: str,
+        cache_hit: bool,
+        input_tokens: int,
+        output_tokens: int,
+        est_cost_usd: float,
+    ) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO llm_call_log "
+                    "(ts, provider, call_site, symbol, cache_hit, input_tokens, output_tokens, est_cost_usd) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (_now(), provider, call_site, symbol, cache_hit, input_tokens, output_tokens, est_cost_usd),
                 )

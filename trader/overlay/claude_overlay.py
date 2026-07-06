@@ -13,6 +13,7 @@ import time
 
 import pandas as pd
 
+from trader.overlay.cost_tracking import estimate_cost_usd
 from trader.overlay.llm_client import call_llm
 from trader.overlay.news_context import fetch_news
 from trader.strategy.base import Signal
@@ -29,6 +30,24 @@ _OVERLAY_TTL = 1800.0  # 30 minutes
 def _clear_overlay_cache() -> None:
     """Test helper — clears the in-process overlay cache."""
     _OVERLAY_CACHE.clear()
+
+
+def _log_llm_call(repo, provider: str, symbol: str, cache_hit: bool, usage) -> None:
+    """Best-effort cost-log write. Never raises — logging must not affect the overlay."""
+    if repo is None:
+        return
+    try:
+        repo.record_llm_call(
+            provider=provider,
+            call_site="overlay",
+            symbol=symbol,
+            cache_hit=cache_hit,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            est_cost_usd=estimate_cost_usd(usage),
+        )
+    except Exception:
+        logger.warning("llm call-log write failed for %s", symbol, exc_info=True)
 
 
 # ---- System prompts ----
@@ -170,6 +189,7 @@ def apply_claude_overlay(
                 cached_row = None
             if cached_row is not None:
                 logger.debug("overlay cache hit (db) symbol=%s side=%s", signal.symbol, signal.side)
+                _log_llm_call(repo, "cache", signal.symbol, cache_hit=True, usage=None)
                 return Signal(
                     symbol=signal.symbol,
                     side=cached_row["side"],
@@ -180,6 +200,7 @@ def apply_claude_overlay(
             ts, cached = _OVERLAY_CACHE[cache_key]
             if now - ts < _OVERLAY_TTL:
                 logger.debug("overlay cache hit symbol=%s side=%s age=%.0fs", signal.symbol, signal.side, now - ts)
+                _log_llm_call(repo, "cache", signal.symbol, cache_hit=True, usage=None)
                 return cached
 
         is_crypto = "/" in signal.symbol
@@ -232,10 +253,11 @@ def apply_claude_overlay(
         )
         logger.debug("overlay user_message:\n%s", user_message)
 
-        raw = call_llm(system_prompt, user_message, 256, groq_key, groq_model, claude_key, claude_model, gemini_key, gemini_model)
+        raw, usage = call_llm(system_prompt, user_message, 256, groq_key, groq_model, claude_key, claude_model, gemini_key, gemini_model)
         if not raw:
             logger.warning("overlay: no LLM response for %s, passing through", signal.symbol)
             return signal
+        _log_llm_call(repo, usage.provider if usage else "unknown", signal.symbol, cache_hit=False, usage=usage)
 
         parsed = _parse_response(raw)
         logger.info(

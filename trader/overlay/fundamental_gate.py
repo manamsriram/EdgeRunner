@@ -15,6 +15,7 @@ import re
 
 import pandas as pd
 
+from trader.overlay.cost_tracking import estimate_cost_usd
 from trader.overlay.llm_client import call_llm
 from trader.overlay.news_context import fetch_financials
 
@@ -29,6 +30,24 @@ _FUNDAMENTAL_CACHE: dict[tuple[str, str], dict] = {}
 def _clear_cache() -> None:
     """Test helper — clears the in-process fundamental cache."""
     _FUNDAMENTAL_CACHE.clear()
+
+
+def _log_llm_call(repo, provider: str, symbol: str, cache_hit: bool, usage) -> None:
+    """Best-effort cost-log write. Never raises — logging must not affect the gate."""
+    if repo is None:
+        return
+    try:
+        repo.record_llm_call(
+            provider=provider,
+            call_site="fundamental_gate",
+            symbol=symbol,
+            cache_hit=cache_hit,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            est_cost_usd=estimate_cost_usd(usage),
+        )
+    except Exception:
+        logger.warning("llm call-log write failed for %s", symbol, exc_info=True)
 
 
 # ---- System prompt ----
@@ -174,6 +193,7 @@ def check_fundamental_gate(
     gemini_key: str | None = None,
     gemini_model: str = "gemini-3.1-flash-lite",
     finnhub_client=None,  # optional, used instead of yfinance when set
+    repo=None,  # optional PortfolioRepository — enables LLM cost logging
 ) -> bool:
     """Run fundamental + price-trend check for a first-entry equity buy.
 
@@ -186,6 +206,7 @@ def check_fundamental_gate(
         if cache_key in _FUNDAMENTAL_CACHE:
             cached = _FUNDAMENTAL_CACHE[cache_key]
             logger.debug("fundamental gate cache hit symbol=%s date=%s action=%s", symbol, date_str, cached["action"])
+            _log_llm_call(repo, "cache", symbol, cache_hit=True, usage=None)
             return cached["action"] == "approve"
 
         # Try Finnhub first, fall back to yfinance
@@ -204,10 +225,11 @@ def check_fundamental_gate(
 
         logger.info("fundamental gate request symbol=%s date=%s", symbol, date_str)
 
-        raw = call_llm(_SYSTEM_PROMPT, user_message, 128, groq_key, groq_model, claude_key, claude_model, gemini_key, gemini_model)
+        raw, usage = call_llm(_SYSTEM_PROMPT, user_message, 128, groq_key, groq_model, claude_key, claude_model, gemini_key, gemini_model)
         if not raw:
             logger.warning("fundamental gate: no LLM response for %s, approving", symbol)
             return True
+        _log_llm_call(repo, usage.provider if usage else "unknown", symbol, cache_hit=False, usage=usage)
 
         parsed = _parse_response(raw)
         action = parsed["action"]

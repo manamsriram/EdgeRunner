@@ -37,7 +37,7 @@ class _FakeConfig:
 
 
 def _make_call_llm(response_text: str):
-    return MagicMock(return_value=response_text)
+    return MagicMock(return_value=(response_text, None))
 
 
 def _make_call_llm_raises(exc: Exception):

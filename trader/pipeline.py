@@ -526,7 +526,7 @@ def _prepare_signal(
         is_first_entry = symbol not in state.positions or state.positions.get(symbol, 0.0) == 0.0
         if signal.side == "buy" and is_first_entry and not is_crypto_symbol(symbol) and not _is_intraday:
             date_str = asof.strftime("%Y-%m-%d")
-            if not apply_fundamental_gate(symbol, bars, config, date_str):
+            if not apply_fundamental_gate(symbol, bars, config, date_str, repo=repo):
                 veto_signal = Signal(
                     symbol, "hold", 0.0,
                     "[fundamental gate veto] financials/trend failed quality check",

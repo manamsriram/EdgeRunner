@@ -190,3 +190,20 @@ class PortfolioRepository(ABC):
     def set_overlay_cache(self, symbol: str, side: str, result_side: str,
                           result_strength: float, result_reason: str) -> None:
         """Upsert the overlay result cached for (symbol, side)."""
+
+    @abstractmethod
+    def record_llm_call(
+        self,
+        provider: str,
+        call_site: str,
+        symbol: str,
+        cache_hit: bool,
+        input_tokens: int,
+        output_tokens: int,
+        est_cost_usd: float,
+    ) -> None:
+        """Append one row to the LLM call log (Phase 0 cost measurement).
+
+        `call_site` is "overlay" or "fundamental_gate". Cache hits are logged too
+        (cache_hit=True, tokens=0, est_cost_usd=0.0) so hit-rate is visible
+        alongside raw call volume."""
