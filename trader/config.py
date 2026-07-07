@@ -83,6 +83,16 @@ class RiskLimits:
     # appends it to the LLM prompt. Same two-stage rollout shape as bandit weighting.
     trade_memory_shadow: bool = False       # env: TRADE_MEMORY_SHADOW
     trade_memory_live: bool = False         # env: TRADE_MEMORY_LIVE
+    # Options trading — both strategies opt-in and default off (env: OPTIONS_TRADING_ENABLED
+    # is the master switch; the two sub-strategies below still need their own flag).
+    options_trading_enabled: bool = False   # env: OPTIONS_TRADING_ENABLED
+    csp_on_dip_enabled: bool = False        # env: CSP_ON_DIP_ENABLED
+    wheel_strategy_enabled: bool = False    # env: WHEEL_STRATEGY_ENABLED
+    options_min_open_interest: int = 100    # min OI on the near-dated chain to consider a symbol (env: OPTIONS_MIN_OPEN_INTEREST)
+    options_max_spread_pct: float = 0.10    # reject option legs with wider bid-ask than this (env: OPTIONS_MAX_SPREAD_PCT)
+    # Combined cap: CSP cash-collateral + CC share-value-at-risk, capped as a fraction
+    # of NAV. Checked alongside (not instead of) stock/crypto position caps in the gate.
+    max_options_allocation_pct: float = 0.15  # env: MAX_OPTIONS_ALLOCATION_PCT
 
 
 @dataclass(frozen=True)
@@ -96,6 +106,7 @@ class Config:
     portfolio_db_path: str                   # SQLite store for orders/trades/proposals
     kill_switch_path: str                    # file flag that halts the order path
     risk: RiskLimits = field(default_factory=RiskLimits)
+    alpaca_options_paper: bool = True        # separate flag: options can stay paper after stock goes live
     database_url: str | None = None              # Postgres DSN; None → SQLite
     log_level: str = "INFO"                    # passed to logging.basicConfig
     slack_webhook_url: str | None = None       # Slack-compatible webhook for alerts
@@ -149,6 +160,7 @@ def load_config() -> Config:
         alpaca_api_key=os.getenv("ALPACA_API_KEY"),
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY"),
         alpaca_paper=_env_bool("ALPACA_PAPER", default=True),
+        alpaca_options_paper=_env_bool("ALPACA_OPTIONS_PAPER", default=True),
         autonomy=os.getenv("AUTONOMY", "manual").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
@@ -178,6 +190,12 @@ def load_config() -> Config:
             symbol_cooldown_seconds=int(os.getenv("SYMBOL_COOLDOWN_SECONDS", "3600")),
             trade_memory_shadow=_env_bool("TRADE_MEMORY_SHADOW", False),
             trade_memory_live=_env_bool("TRADE_MEMORY_LIVE", False),
+            options_trading_enabled=_env_bool("OPTIONS_TRADING_ENABLED", False),
+            csp_on_dip_enabled=_env_bool("CSP_ON_DIP_ENABLED", False),
+            wheel_strategy_enabled=_env_bool("WHEEL_STRATEGY_ENABLED", False),
+            options_min_open_interest=int(os.getenv("OPTIONS_MIN_OPEN_INTEREST", "100")),
+            options_max_spread_pct=float(os.getenv("OPTIONS_MAX_SPREAD_PCT", "0.10")),
+            max_options_allocation_pct=float(os.getenv("MAX_OPTIONS_ALLOCATION_PCT", "0.15")),
             crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
             min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "500.0")),
             max_spread_pct=float(os.getenv("MAX_SPREAD_PCT", "0.01")),

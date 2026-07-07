@@ -14,6 +14,7 @@ import psycopg2.extras
 
 from trader.portfolio.repository import (
     PROPOSAL_PENDING,
+    OptionsPositionRow,
     OrderRow,
     PortfolioRepository,
     ProposalRow,
@@ -119,6 +120,21 @@ CREATE TABLE IF NOT EXISTS overlay_cache (
     result_reason   TEXT,
     PRIMARY KEY (symbol, side)
 );
+CREATE TABLE IF NOT EXISTS options_positions (
+    id               SERIAL PRIMARY KEY,
+    contract_symbol  TEXT NOT NULL UNIQUE,
+    underlying       TEXT NOT NULL,
+    option_type      TEXT NOT NULL,
+    strike           REAL NOT NULL,
+    expiry           TEXT NOT NULL,
+    opening_order_id TEXT NOT NULL,
+    strategy         TEXT NOT NULL,
+    collateral       REAL NOT NULL,
+    wheel_state      TEXT NOT NULL DEFAULT 'csp_open',
+    status           TEXT NOT NULL DEFAULT 'open',
+    opened_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_options_positions_underlying ON options_positions(underlying, status);
 CREATE TABLE IF NOT EXISTS llm_call_log (
     id            SERIAL PRIMARY KEY,
     ts            TEXT NOT NULL,
@@ -477,6 +493,58 @@ class PostgresRepository(PortfolioRepository):
                     "result_strength=EXCLUDED.result_strength, result_reason=EXCLUDED.result_reason",
                     (symbol, side, _now(), result_side, result_strength, result_reason),
                 )
+
+    def record_options_position(self, position: OptionsPositionRow) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO options_positions "
+                    "(contract_symbol, underlying, option_type, strike, expiry, opening_order_id, "
+                    "strategy, collateral, wheel_state, status, opened_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (contract_symbol) DO NOTHING",
+                    (position.contract_symbol, position.underlying, position.option_type,
+                     position.strike, position.expiry, position.opening_order_id,
+                     position.strategy, position.collateral, position.wheel_state,
+                     position.status, _now()),
+                )
+                cur.execute(
+                    "SELECT id FROM options_positions WHERE contract_symbol=%s",
+                    (position.contract_symbol,),
+                )
+                return int(cur.fetchone()["id"])
+
+    def update_options_position(
+        self, contract_symbol: str, *, wheel_state: str | None = None, status: str | None = None,
+    ) -> None:
+        sets, params = [], []
+        if wheel_state is not None:
+            sets.append("wheel_state=%s")
+            params.append(wheel_state)
+        if status is not None:
+            sets.append("status=%s")
+            params.append(status)
+        if not sets:
+            return
+        params.append(contract_symbol)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE options_positions SET {', '.join(sets)} WHERE contract_symbol=%s",
+                    params,
+                )
+
+    def get_open_options_positions(self, underlying: str | None = None) -> list[dict]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                if underlying is not None:
+                    cur.execute(
+                        "SELECT * FROM options_positions WHERE status='open' AND underlying=%s",
+                        (underlying,),
+                    )
+                else:
+                    cur.execute("SELECT * FROM options_positions WHERE status='open'")
+                return [dict(r) for r in cur.fetchall()]
 
     def record_llm_call(
         self,

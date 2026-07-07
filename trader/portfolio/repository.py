@@ -65,6 +65,32 @@ class TradeOutcomeRow:
 
 
 @dataclass(frozen=True)
+class OptionsPositionRow:
+    """One options contract position — CSP or CC, opened by CSP-on-dip or the Wheel.
+
+    `wheel_state` is one of "csp_open" | "assigned" | "cc_open" | "called_away" | "csp_expired"
+    | "cc_expired"; CSP-on-dip positions that aren't part of a Wheel cycle use "csp_open" /
+    "csp_expired" only. `collateral` is cash reserved for a CSP (100 * strike) or the market
+    value of shares reserved for a CC — whichever this contract ties up.
+    """
+
+    contract_symbol: str        # OCC symbol, e.g. AAPL260116P00150000
+    underlying: str
+    option_type: str            # "call" | "put" (not "right" — reserved word in Postgres)
+    strike: float
+    expiry: str                 # ISO date
+    opening_order_id: str       # client_order_id of the order that opened this contract
+    strategy: str                # "csp_on_dip" | "wheel"
+    collateral: float
+    wheel_state: str = "csp_open"
+    status: str = "open"         # "open" | "closed"
+
+    def __post_init__(self) -> None:
+        if self.option_type not in {"call", "put"}:
+            raise ValueError(f"invalid option_type: {self.option_type!r}")
+
+
+@dataclass(frozen=True)
 class ProposalRow:
     symbol: str
     side: str
@@ -190,6 +216,21 @@ class PortfolioRepository(ABC):
     def set_overlay_cache(self, symbol: str, side: str, result_side: str,
                           result_strength: float, result_reason: str) -> None:
         """Upsert the overlay result cached for (symbol, side)."""
+
+    @abstractmethod
+    def record_options_position(self, position: OptionsPositionRow) -> int:
+        """Persist a newly opened options contract. Idempotent on `opening_order_id`."""
+
+    @abstractmethod
+    def update_options_position(
+        self, contract_symbol: str, *, wheel_state: str | None = None, status: str | None = None,
+    ) -> None:
+        """Update wheel_state and/or status for an open contract. Leaves fields None-d as-is."""
+
+    @abstractmethod
+    def get_open_options_positions(self, underlying: str | None = None) -> list[dict]:
+        """Open contracts, optionally filtered to one underlying. Used for collateral
+        sums (RiskGate) and Wheel state-machine resumption."""
 
     @abstractmethod
     def record_llm_call(

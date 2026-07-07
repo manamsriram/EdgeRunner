@@ -22,18 +22,24 @@ from trader.config import Config
 from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch, get_live_prices_batch, get_intraday_bars_batch
 from trader.data.crypto_bars import get_crypto_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
+from trader.execution.options_broker import AlpacaOptionsBroker, options_client_order_id_for
 from trader.overlay import apply_fundamental_gate, apply_overlay
 from trader.portfolio.repository import (
     PROPOSAL_PENDING,
+    OptionsPositionRow,
     OrderRow,
     ProposalRow,
     SignalRow,
     PortfolioRepository,
     TradeOutcomeRow,
 )
-from trader.risk.gate import KillSwitch, OrderIntent, RiskDecision, RiskGate, is_crypto_symbol
+from trader.risk.gate import (
+    KillSwitch, OptionsOrderIntent, OrderIntent, RiskDecision, RiskGate, is_crypto_symbol,
+)
 from trader.risk.vol_sizing import vol_scale
+from trader.strategy.dip_recovery import DipRecovery
 from trader.strategy.regime import classify_regime
+from trader.strategy.wheel import WheelStrategy
 
 if TYPE_CHECKING:
     from trader.strategy.base import PairSignal, PairStrategy, Signal, Strategy
@@ -63,6 +69,7 @@ class PipelineRun:
     proposal_id: int | None = None
     order_id: str | None = None
     error: str | None = None
+    is_options: bool = False  # True when this run opened a CSP/CC rather than a stock order
 
 
 def run_pipeline(
@@ -71,6 +78,7 @@ def run_pipeline(
     broker: AlpacaBroker,
     repo: PortfolioRepository,
     asof: datetime | None = None,
+    options_broker: "AlpacaOptionsBroker | None" = None,
 ) -> list[PipelineRun]:
     """Run one pipeline tick across all strategies.
 
@@ -85,6 +93,15 @@ def run_pipeline(
     kill_switch = KillSwitch(config.kill_switch_path)
 
     state = broker.reconcile()
+
+    if config.risk.options_trading_enabled:
+        try:
+            open_options = repo.get_open_options_positions()
+            total_collateral = sum(p["collateral"] for p in open_options)
+            from dataclasses import replace as _replace_collateral
+            state = _replace_collateral(state, options_collateral=total_collateral)
+        except Exception:
+            logger.warning("failed to load options collateral for %s", "risk gate combined cap")
 
     # Seed ownership from DB; prune entries for positions no longer held and for
     # owner strategies no longer in the active stack — otherwise a position bought
@@ -232,7 +249,7 @@ def run_pipeline(
                 config=config, broker=broker, repo=repo, gate=gate,
                 kill_switch=kill_switch, state=state, asof=asof,
                 live_prices=live_prices, live_spread_pcts=live_spread_pcts,
-                pool=pool,
+                pool=pool, options_broker=options_broker,
             )
             results.append(result)
             logger.info(
@@ -272,7 +289,7 @@ def run_pipeline(
             config=config, broker=broker, repo=repo, gate=gate,
             kill_switch=kill_switch, state=state, asof=asof,
             live_prices=live_prices, live_spread_pcts=live_spread_pcts,
-            corr_factor=corr_factor, pool=pool,
+            corr_factor=corr_factor, pool=pool, options_broker=options_broker,
         )
         results.append(result)
         logger.info(
@@ -289,6 +306,16 @@ def _advance_state(state, result, strategy, repo):
     """Return updated AccountState after an approved trade within a tick."""
     from dataclasses import replace as _replace
     from trader.strategy.base import IntradayStrategy
+
+    if result.is_options:
+        # CSP-on-dip / Wheel opened a contract this tick — bump collateral so a later
+        # signal in the same tick sees the updated combined-allocation headroom.
+        return _replace(
+            state,
+            trades_today=state.trades_today + 1,
+            options_collateral=state.options_collateral + (result.risk_decision.approved_notional or 0.0),
+        )
+
     pool = "intraday" if isinstance(strategy, IntradayStrategy) else "daily"
     approved_notional = result.risk_decision.approved_notional or 0.0
     new_owners = dict(state.position_owners)
@@ -585,6 +612,7 @@ def _execute_signal(
     live_spread_pcts: dict | None = None,
     corr_factor: float = 1.0,
     pool: str = "daily",
+    options_broker: "AlpacaOptionsBroker | None" = None,
 ):
     """Gate evaluation and order submission for a pre-generated signal."""
     symbol = signal.symbol
@@ -598,6 +626,27 @@ def _execute_signal(
             )
 
         ref_price = (live_prices or {}).get(signal.symbol) or float(bars["close"].iloc[-1])
+
+        # CSP-on-dip / Wheel entry: a DipRecovery-family buy signal on an
+        # options-eligible symbol sells a cash-secured put instead of buying stock.
+        # `type(strategy) is DipRecovery` (not isinstance) so plain DipRecovery only
+        # routes here when CSP_ON_DIP_ENABLED; WheelStrategy (a DipRecovery subclass)
+        # routes here whenever WHEEL_STRATEGY_ENABLED is on, tagged as "wheel".
+        _wants_csp = (
+            options_broker is not None
+            and signal.side == "buy"
+            and not is_crypto_symbol(symbol)
+            and (
+                (type(strategy) is DipRecovery and config.risk.csp_on_dip_enabled)
+                or (isinstance(strategy, WheelStrategy) and config.risk.wheel_strategy_enabled)
+            )
+        )
+        if _wants_csp:
+            return _execute_csp_entry(
+                signal=signal, run_id=run_id, strategy=strategy, config=config,
+                options_broker=options_broker, repo=repo, gate=gate,
+                kill_switch=kill_switch, state=state, asof=asof, ref_price=ref_price,
+            )
 
         # For auto-mode sells: cancel broker-side stop before gate evaluation so the
         # open stop order doesn't appear in open_order_symbols and block the sell.
@@ -757,6 +806,115 @@ def _execute_signal(
             outcome="blocked",
             error="exception — see logs",
         )
+
+
+def _execute_csp_entry(
+    *,
+    signal,
+    run_id: int,
+    strategy,
+    config,
+    options_broker: "AlpacaOptionsBroker",
+    repo,
+    gate,
+    kill_switch,
+    state,
+    asof,
+    ref_price: float,
+):
+    """Sell a cash-secured put on `signal.symbol` instead of buying stock.
+
+    Manual-mode (proposal-queue) support is intentionally out of scope for v1 — the
+    existing proposal/approval flow has no options-aware executor, so this path only
+    runs under AUTONOMY=auto. Manual mode blocks with a clear reason rather than
+    silently no-op-ing.
+    """
+    symbol = signal.symbol
+    strategy_tag = "wheel" if isinstance(strategy, WheelStrategy) else "csp_on_dip"
+
+    if config.autonomy != "auto":
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=RiskDecision.reject(
+                "options entries require AUTONOMY=auto (no manual-proposal support yet)"
+            ),
+            outcome="blocked",
+        )
+
+    budget = config.risk.max_options_allocation_pct * state.equity - state.options_collateral
+    if budget <= 0:
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=RiskDecision.reject("options allocation already at cap"),
+            outcome="blocked",
+        )
+
+    contract = options_broker.select_csp_contract(symbol, ref_price=ref_price, max_collateral=budget)
+    if contract is None:
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=RiskDecision.reject(
+                f"no liquid CSP contract for {symbol} fits budget ${budget:,.0f}"
+            ),
+            outcome="blocked",
+        )
+
+    spread = options_broker.check_spread(contract.symbol)
+    if spread is not None and spread > config.risk.options_max_spread_pct:
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=RiskDecision.reject(
+                f"{contract.symbol} spread {spread:.1%} exceeds max {config.risk.options_max_spread_pct:.1%}"
+            ),
+            outcome="blocked",
+        )
+
+    collateral = contract.strike * 100.0
+    risk_decision = gate.evaluate_options_order(
+        OptionsOrderIntent(underlying=symbol, collateral=collateral), state, kill_switch,
+    )
+    logger.info(
+        "options gate symbol=%s contract=%s approved=%s reason=%s",
+        symbol, contract.symbol, risk_decision.approved, risk_decision.reason,
+    )
+    if not risk_decision.approved:
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=risk_decision, outcome="blocked",
+        )
+
+    today = asof.date() if isinstance(asof, datetime) else asof
+    client_order_id = options_client_order_id_for(today, symbol, "put", strategy_tag)
+    order = options_broker.sell_to_open(contract_symbol=contract.symbol, client_order_id=client_order_id)
+    broker_order_id = str(getattr(order, "id", "") or "")
+
+    repo.record_order(OrderRow(
+        client_order_id=client_order_id, symbol=contract.symbol, side="sell",
+        notional=collateral, status="submitted", broker_order_id=broker_order_id or None,
+        strategy_name=type(strategy).__name__, regime=None,
+        signal_strength=signal.strength, entry_rationale=signal.reason,
+    ))
+
+    repo.record_options_position(OptionsPositionRow(
+        contract_symbol=contract.symbol, underlying=symbol, option_type="put",
+        strike=contract.strike, expiry=contract.expiry.isoformat(),
+        opening_order_id=client_order_id, strategy=strategy_tag,
+        collateral=collateral, wheel_state="csp_open", status="open",
+    ))
+
+    send_alert(
+        f"CSP-OPEN {contract.symbol} collateral=${collateral:,.0f} "
+        f"{'paper' if config.alpaca_options_paper else 'LIVE'}",
+        config.slack_webhook_url,
+        alert_email=config.alert_email,
+        smtp_user=config.smtp_user,
+        smtp_password=config.smtp_password,
+    )
+    return PipelineRun(
+        run_id=run_id, symbol=symbol, signal=signal,
+        risk_decision=risk_decision, outcome="executed",
+        order_id=client_order_id, is_options=True,
+    )
 
 
 def _fetch_bars(
