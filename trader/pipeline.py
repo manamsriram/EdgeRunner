@@ -96,8 +96,7 @@ def run_pipeline(
 
     if config.risk.options_trading_enabled:
         try:
-            open_options = repo.get_open_options_positions()
-            total_collateral = sum(p["collateral"] for p in open_options)
+            total_collateral = repo.get_total_options_collateral()
             from dataclasses import replace as _replace_collateral
             state = _replace_collateral(state, options_collateral=total_collateral)
         except Exception:
@@ -849,6 +848,15 @@ def _execute_csp_entry(
             run_id=run_id, symbol=symbol, signal=signal,
             risk_decision=RiskDecision.reject(
                 "options entries require AUTONOMY=auto (no manual-proposal support yet)"
+            ),
+            outcome="blocked",
+        )
+
+    if repo.get_open_options_positions(symbol):
+        return PipelineRun(
+            run_id=run_id, symbol=symbol, signal=signal,
+            risk_decision=RiskDecision.reject(
+                f"{symbol} already has an open wheel/CSP position"
             ),
             outcome="blocked",
         )

@@ -22,6 +22,7 @@ from trader.portfolio.repository import (
     SignalRow,
     TradeOutcomeRow,
     TradeRow,
+    validate_options_transition,
 )
 
 _SCHEMA = """
@@ -130,8 +131,9 @@ CREATE TABLE IF NOT EXISTS options_positions (
     opening_order_id  TEXT NOT NULL,
     strategy          TEXT NOT NULL,
     collateral        REAL NOT NULL,
-    wheel_state       TEXT NOT NULL DEFAULT 'csp_open',
-    status            TEXT NOT NULL DEFAULT 'open',
+    wheel_state       TEXT NOT NULL DEFAULT 'csp_open'
+        CHECK (wheel_state IN ('csp_open', 'assigned', 'cc_open', 'called_away', 'csp_expired', 'cc_expired')),
+    status            TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
     opened_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_options_positions_underlying ON options_positions(underlying, status);
@@ -510,6 +512,7 @@ class SQLiteRepository(PortfolioRepository):
     def update_options_position(
         self, contract_symbol: str, *, wheel_state: str | None = None, status: str | None = None,
     ) -> None:
+        validate_options_transition(wheel_state, status)
         sets, params = [], []
         if wheel_state is not None:
             sets.append("wheel_state=?")

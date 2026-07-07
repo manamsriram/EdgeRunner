@@ -90,6 +90,24 @@ class OptionsPositionRow:
             raise ValueError(f"invalid option_type: {self.option_type!r}")
 
 
+# wheel_state values that terminate a position (must pair with status="closed").
+TERMINAL_WHEEL_STATES = {"called_away", "csp_expired", "cc_expired"}
+
+
+def expected_options_status(wheel_state: str) -> str:
+    """The status a wheel_state implies — "closed" for terminal states, else "open"."""
+    return "closed" if wheel_state in TERMINAL_WHEEL_STATES else "open"
+
+
+def validate_options_transition(wheel_state: str | None, status: str | None) -> None:
+    """Raise if a wheel_state/status pair being written would desync the two fields."""
+    if wheel_state is not None and status is not None:
+        if status != expected_options_status(wheel_state):
+            raise ValueError(
+                f"wheel_state={wheel_state!r} requires status={expected_options_status(wheel_state)!r}, got {status!r}"
+            )
+
+
 @dataclass(frozen=True)
 class ProposalRow:
     symbol: str
@@ -231,6 +249,15 @@ class PortfolioRepository(ABC):
     def get_open_options_positions(self, underlying: str | None = None) -> list[dict]:
         """Open contracts, optionally filtered to one underlying. Used for collateral
         sums (RiskGate) and Wheel state-machine resumption."""
+
+    def get_total_options_collateral(self) -> float:
+        """Sum of `collateral` across all open options positions.
+
+        The single source of truth for options exposure — call sites should use this
+        instead of summing `get_open_options_positions()` themselves, so a future call
+        site can't drift out of sync with the others.
+        """
+        return sum(p["collateral"] for p in self.get_open_options_positions())
 
     @abstractmethod
     def record_llm_call(

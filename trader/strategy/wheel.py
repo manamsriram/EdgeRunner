@@ -131,8 +131,7 @@ def run_wheel_tick(config, options_broker, stock_broker, repo, gate, kill_switch
     if stock_state.stale:
         return acted
     from dataclasses import replace as _replace
-    total_collateral = sum(p["collateral"] for p in repo.get_open_options_positions())
-    stock_state = _replace(stock_state, options_collateral=total_collateral)
+    stock_state = _replace(stock_state, options_collateral=repo.get_total_options_collateral())
     today = datetime.now(timezone.utc).date()
 
     for underlying in underlyings:
