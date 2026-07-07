@@ -53,6 +53,7 @@ class AccountState:
     deployed_notional: float = 0.0         # cumulative buy notional approved this tick (daily pool)
     intraday_deployed: float = 0.0         # cumulative buy notional approved this tick (intraday pool)
     last_losing_exit_at: dict[str, datetime] = field(default_factory=dict)  # symbol -> most recent losing exit ts
+    options_collateral: float = 0.0        # cash/shares currently locked in open options positions (CSP + CC)
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,20 @@ class RiskDecision:
     @classmethod
     def approve(cls, notional: float, reason: str = "ok") -> RiskDecision:
         return cls(approved=True, reason=reason, approved_notional=notional)
+
+
+@dataclass(frozen=True)
+class OptionsOrderIntent:
+    """A proposed CSP/CC sell-to-open, before the gate. `collateral` is the dollar
+    amount this contract would lock up (100 * strike for a CSP; share value for a CC)."""
+
+    underlying: str
+    collateral: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "underlying", self.underlying.strip().upper())
+        if self.collateral <= 0:
+            raise ValueError(f"collateral must be > 0, got {self.collateral}")
 
 
 class KillSwitch:
@@ -243,3 +258,45 @@ class RiskGate:
                 approved, f"sized down to position cap (${approved:,.0f})"
             )
         return RiskDecision.approve(approved, "buy approved")
+
+    def evaluate_options_order(
+        self,
+        intent: OptionsOrderIntent,
+        state: AccountState,
+        kill_switch: KillSwitch | None = None,
+    ) -> RiskDecision:
+        """Gate a CSP/CC sell-to-open. Two caps, both must pass:
+
+        1. Options-only cap: existing options collateral + this contract stays within
+           `max_options_allocation_pct` of equity.
+        2. Combined cap: total commitment across stock/crypto positions + options
+           collateral must not exceed equity — a backstop against the three asset
+           classes independently sizing to 100% each and jointly over-committing.
+        """
+        limits = self._limits
+
+        if kill_switch is not None and kill_switch.engaged():
+            return RiskDecision.reject("kill switch engaged")
+        if state.stale:
+            return RiskDecision.reject("account state stale (reconciliation failed)")
+
+        options_cap = limits.max_options_allocation_pct * state.equity
+        options_after = state.options_collateral + intent.collateral
+        if options_after > options_cap:
+            return RiskDecision.reject(
+                f"options allocation ${options_after:,.0f} would exceed cap "
+                f"${options_cap:,.0f} ({limits.max_options_allocation_pct:.0%} of equity)"
+            )
+
+        stock_crypto_exposure = sum(
+            qty * state.avg_entry_prices.get(sym, 0.0) for sym, qty in state.positions.items()
+        )
+        combined_after = stock_crypto_exposure + options_after
+        if combined_after > state.equity:
+            return RiskDecision.reject(
+                f"combined exposure ${combined_after:,.0f} (stock/crypto "
+                f"${stock_crypto_exposure:,.0f} + options ${options_after:,.0f}) "
+                f"would exceed equity ${state.equity:,.0f}"
+            )
+
+        return RiskDecision.approve(intent.collateral, "options order approved")

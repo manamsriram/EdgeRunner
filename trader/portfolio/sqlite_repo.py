@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from trader.portfolio.repository import (
     PROPOSAL_PENDING,
+    OptionsPositionRow,
     OrderRow,
     PortfolioRepository,
     ProposalRow,
@@ -119,6 +120,21 @@ CREATE TABLE IF NOT EXISTS overlay_cache (
     result_reason   TEXT,
     PRIMARY KEY (symbol, side)
 );
+CREATE TABLE IF NOT EXISTS options_positions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_symbol   TEXT NOT NULL UNIQUE,
+    underlying        TEXT NOT NULL,
+    option_type       TEXT NOT NULL,
+    strike            REAL NOT NULL,
+    expiry            TEXT NOT NULL,
+    opening_order_id  TEXT NOT NULL,
+    strategy          TEXT NOT NULL,
+    collateral        REAL NOT NULL,
+    wheel_state       TEXT NOT NULL DEFAULT 'csp_open',
+    status            TEXT NOT NULL DEFAULT 'open',
+    opened_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_options_positions_underlying ON options_positions(underlying, status);
 CREATE TABLE IF NOT EXISTS llm_call_log (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     ts            TEXT NOT NULL,
@@ -471,6 +487,57 @@ class SQLiteRepository(PortfolioRepository):
                 "result_strength=excluded.result_strength, result_reason=excluded.result_reason",
                 (symbol, side, datetime.now(timezone.utc).isoformat(), result_side, result_strength, result_reason),
             )
+
+    def record_options_position(self, position: OptionsPositionRow) -> int:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO options_positions "
+                "(contract_symbol, underlying, option_type, strike, expiry, opening_order_id, "
+                "strategy, collateral, wheel_state, status, opened_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(contract_symbol) DO NOTHING",
+                (position.contract_symbol, position.underlying, position.option_type,
+                 position.strike, position.expiry, position.opening_order_id,
+                 position.strategy, position.collateral, position.wheel_state,
+                 position.status, _now()),
+            )
+            row = conn.execute(
+                "SELECT id FROM options_positions WHERE contract_symbol=?",
+                (position.contract_symbol,),
+            ).fetchone()
+            return int(row["id"])
+
+    def update_options_position(
+        self, contract_symbol: str, *, wheel_state: str | None = None, status: str | None = None,
+    ) -> None:
+        sets, params = [], []
+        if wheel_state is not None:
+            sets.append("wheel_state=?")
+            params.append(wheel_state)
+        if status is not None:
+            sets.append("status=?")
+            params.append(status)
+        if not sets:
+            return
+        params.append(contract_symbol)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE options_positions SET {', '.join(sets)} WHERE contract_symbol=?",
+                params,
+            )
+
+    def get_open_options_positions(self, underlying: str | None = None) -> list[dict]:
+        with self._connect() as conn:
+            if underlying is not None:
+                rows = conn.execute(
+                    "SELECT * FROM options_positions WHERE status='open' AND underlying=?",
+                    (underlying,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM options_positions WHERE status='open'"
+                ).fetchall()
+            return [dict(r) for r in rows]
 
     def record_llm_call(
         self,

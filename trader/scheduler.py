@@ -15,10 +15,12 @@ from typing import TYPE_CHECKING
 from trader.alerts import send_alert
 from trader.config import Config, load_config
 from trader.execution.broker import AlpacaBroker
+from trader.execution.options_broker import AlpacaOptionsBroker
 from trader.pipeline import PipelineRun, run_pipeline
 from trader.portfolio.repository import PortfolioRepository
 from trader.portfolio.postgres_repo import PostgresRepository
-from trader.risk.gate import KillSwitch, is_crypto_symbol
+from trader.risk.gate import KillSwitch, RiskGate, is_crypto_symbol
+from trader.strategy.wheel import WheelStrategy, reconcile_options, run_wheel_tick
 
 if TYPE_CHECKING:
     from trader.strategy.base import Strategy
@@ -49,11 +51,26 @@ def run_once(
     strategies: "list[Strategy]",
     broker: AlpacaBroker,
     repo: PortfolioRepository,
+    options_broker: "AlpacaOptionsBroker | None" = None,
 ) -> list[PipelineRun]:
     """Single pipeline tick. Called by the scheduler loop and directly in smoke tests.
 
     Returns an empty list (no-op) when the market is closed or the kill switch is engaged.
     """
+    # Options assignment/expiry settle off-hours (Friday close, weekends) — reconcile
+    # and advance the Wheel state machine BEFORE the market-hours gate below, so a
+    # cycle doesn't sit stale until the next open tick.
+    if config.risk.options_trading_enabled and options_broker is not None:
+        try:
+            reconcile_options(options_broker, broker, repo)
+            wheel_symbols = sorted({s.symbol for s in strategies if isinstance(s, WheelStrategy)})
+            if config.risk.wheel_strategy_enabled and wheel_symbols and config.autonomy == "auto":
+                gate = RiskGate(config.risk)
+                ks = KillSwitch(config.kill_switch_path)
+                run_wheel_tick(config, options_broker, broker, repo, gate, ks, wheel_symbols)
+        except Exception:
+            logger.exception("options reconcile/wheel tick failed — continuing with equity pipeline")
+
     if not is_market_open(broker):
         logger.info("market closed — skipping equity pipeline tick")
         return []
@@ -71,7 +88,7 @@ def run_once(
             )
             run_once._kill_switch_alert_date = _today  # type: ignore[attr-defined]
         return []
-    return run_pipeline(config, strategies, broker, repo)
+    return run_pipeline(config, strategies, broker, repo, options_broker=options_broker)
 
 
 def run_nightly_bandit_update(
@@ -111,6 +128,7 @@ def start_scheduler(
     broker: AlpacaBroker,
     repo: PortfolioRepository,
     poll_minutes: int = 1,
+    options_broker: "AlpacaOptionsBroker | None" = None,
 ) -> None:
     """Blocking scheduler loop. Checks the Alpaca clock before each tick.
 
@@ -169,7 +187,7 @@ def start_scheduler(
                     run_nightly_bandit_update(config, broker, repo, cycle_index=cycle_index)
                     bandit_update_date = today
 
-            results = run_once(config, current_strategies, broker, repo)
+            results = run_once(config, current_strategies, broker, repo, options_broker=options_broker)
             for r in results:
                 logger.info("tick result: symbol=%s outcome=%s", r.symbol, r.outcome)
         except Exception:
@@ -492,4 +510,6 @@ if __name__ == "__main__":
         logger.info("dynamic universe mode — strategies built at market open each day")
     else:
         _strategies = _build_strategies_for(cfg, list(cfg.risk.allowlist or []))
-    start_scheduler(cfg, _strategies, _broker, _repo)  # blocks main thread
+
+    _options_broker = AlpacaOptionsBroker(cfg) if cfg.risk.options_trading_enabled else None
+    start_scheduler(cfg, _strategies, _broker, _repo, options_broker=_options_broker)  # blocks main thread
