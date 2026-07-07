@@ -192,10 +192,15 @@ def run_wheel_tick(config, options_broker, stock_broker, repo, gate, kill_switch
             opening_order_id=client_order_id, strategy="wheel", collateral=collateral,
             wheel_state="cc_open" if right == "call" else "csp_open", status="open",
         ))
-        # Advance options_collateral on stock_state so the next underlying in this
-        # loop sees the collateral already committed, enforcing the combined cap
-        # across the whole underlyings pass rather than just checking the initial total.
-        stock_state = _replace(stock_state, options_collateral=stock_state.options_collateral + collateral)
+        # Advance options_collateral AND cash on stock_state so the next underlying in
+        # this loop sees both the collateral already committed and the cash already
+        # reserved for it — otherwise a later CSP in the same tick could pass the cash
+        # check in evaluate_options_order by reusing cash this loop already spent.
+        stock_state = _replace(
+            stock_state,
+            options_collateral=stock_state.options_collateral + collateral,
+            cash=stock_state.cash - collateral,
+        )
         acted.append(underlying)
 
     return acted
