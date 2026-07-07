@@ -2,8 +2,6 @@
 machine, and repository CRUD. No network/Alpaca keys — everything is fake-injected."""
 from __future__ import annotations
 
-import os
-import tempfile
 from datetime import date, timedelta
 
 import pytest
@@ -145,12 +143,9 @@ def test_advance_wheel_state(open_positions, shares_held, expected_action):
 # ---- repository CRUD ----
 
 @pytest.fixture
-def sqlite_repo():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        path = tmp.name
-    repo = SQLiteRepository(path)
+def sqlite_repo(tmp_path):
+    repo = SQLiteRepository(str(tmp_path / "test_options.db"))
     yield repo
-    os.remove(path)
 
 
 def test_options_position_crud(sqlite_repo):
@@ -215,7 +210,7 @@ class _FakeOptionsBroker:
         return type("O", (), {"id": "order-id"})()
 
 
-def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo):
+def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo, tmp_path):
     past_expiry = (date.today() - timedelta(days=1)).isoformat()
     sqlite_repo.record_options_position(OptionsPositionRow(
         contract_symbol="AAPL_TESTPUT", underlying="AAPL", option_type="put", strike=140.0,
@@ -233,10 +228,7 @@ def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo):
         cc_contract=ContractCandidate("AAPL_TESTCALL", 150.0, date.today() + timedelta(days=30), 200)
     )
     gate = RiskGate(RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1))
-    with tempfile.NamedTemporaryFile(delete=False) as _ks_tmp:
-        _ks_path = _ks_tmp.name
-    os.remove(_ks_path)  # KillSwitch treats file presence as engaged; start disengaged
-    ks = KillSwitch(_ks_path)
+    ks = KillSwitch(tmp_path / "kill_switch.flag")  # file does not exist → disengaged
     config = type("C", (), {
         "risk": RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1),
     })()
