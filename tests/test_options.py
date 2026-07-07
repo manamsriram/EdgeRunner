@@ -146,7 +146,8 @@ def test_advance_wheel_state(open_positions, shares_held, expected_action):
 
 @pytest.fixture
 def sqlite_repo():
-    path = tempfile.mktemp(suffix=".db")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        path = tmp.name
     repo = SQLiteRepository(path)
     yield repo
     os.remove(path)
@@ -232,7 +233,10 @@ def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo):
         cc_contract=ContractCandidate("AAPL_TESTCALL", 150.0, date.today() + timedelta(days=30), 200)
     )
     gate = RiskGate(RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1))
-    ks = KillSwitch(tempfile.mktemp())
+    with tempfile.NamedTemporaryFile(delete=False) as _ks_tmp:
+        _ks_path = _ks_tmp.name
+    os.remove(_ks_path)  # KillSwitch treats file presence as engaged; start disengaged
+    ks = KillSwitch(_ks_path)
     config = type("C", (), {
         "risk": RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1),
     })()
