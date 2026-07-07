@@ -396,14 +396,18 @@ class _FakeStockBroker:
 
 
 class _FakeOptionsBroker:
-    def __init__(self, cc_contract=None):
+    def __init__(self, cc_contract=None, csp_contract=None):
         self._cc_contract = cc_contract
+        self._csp_contract = csp_contract
 
     def open_option_positions(self):
         return []  # nothing at the broker — everything expired/settled
 
     def select_cc_contract(self, underlying, ref_price, shares_held):
         return self._cc_contract
+
+    def select_csp_contract(self, underlying, ref_price, budget):
+        return self._csp_contract
 
     def check_spread(self, contract_symbol):
         return 0.01
@@ -445,6 +449,33 @@ def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo, tmp_p
     cc_rows = [p for p in positions if p["wheel_state"] == "cc_open"]
     assert len(cc_rows) == 1
     assert cc_rows[0]["contract_symbol"] == "AAPL_TESTCALL"
+
+
+def test_run_wheel_tick_restarts_csp_after_called_away(sqlite_repo, tmp_path):
+    """Covered call's shares are gone (called away) while its row is still open —
+    advance_wheel_state's sell_csp branch should restart the wheel with a new CSP."""
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTCALL", underlying="AAPL", option_type="call", strike=150.0,
+        expiry=(date.today() + timedelta(days=30)).isoformat(), opening_order_id="oid_cc",
+        strategy="wheel", collateral=15_000.0, wheel_state="cc_open", status="open",
+    ))
+    stock_broker = _FakeStockBroker({}, {"AAPL": 140.0})  # 0 shares held — called away
+    options_broker = _FakeOptionsBroker(
+        csp_contract=ContractCandidate("AAPL_TESTPUT2", 135.0, date.today() + timedelta(days=30), 200)
+    )
+    gate = RiskGate(RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1))
+    ks = KillSwitch(tmp_path / "kill_switch.flag")
+    config = type("C", (), {
+        "risk": RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1),
+    })()
+
+    acted = run_wheel_tick(config, options_broker, stock_broker, sqlite_repo, gate, ks, ["AAPL"])
+
+    assert acted == ["AAPL"]
+    positions = sqlite_repo.get_open_options_positions("AAPL")
+    csp_rows = [p for p in positions if p["wheel_state"] == "csp_open"]
+    assert len(csp_rows) == 1
+    assert csp_rows[0]["contract_symbol"] == "AAPL_TESTPUT2"
 
 
 def test_reconcile_options_csp_expires_worthless(sqlite_repo):

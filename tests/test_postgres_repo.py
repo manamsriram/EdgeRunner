@@ -111,7 +111,9 @@ def test_update_options_position_rejects_inconsistent_wheel_state_and_status(pos
 
 def test_check_constraint_rejects_invalid_wheel_state(postgres_repo):
     """DB-level backstop (migration 006) in case app-level validation is ever bypassed."""
-    with pytest.raises(Exception):
+    import psycopg2
+
+    with pytest.raises(psycopg2.errors.CheckViolation):
         with postgres_repo._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
