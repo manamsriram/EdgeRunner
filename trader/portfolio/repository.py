@@ -237,13 +237,25 @@ class PortfolioRepository(ABC):
 
     @abstractmethod
     def record_options_position(self, position: OptionsPositionRow) -> int:
-        """Persist a newly opened options contract. Idempotent on `opening_order_id`."""
+        """Persist a newly opened options contract. Idempotent on `opening_order_id` —
+        a retried record for the same order returns the existing row's id rather than
+        inserting a duplicate."""
 
     @abstractmethod
     def update_options_position(
         self, contract_symbol: str, *, wheel_state: str | None = None, status: str | None = None,
+        collateral: float | None = None,
     ) -> None:
-        """Update wheel_state and/or status for an open contract. Leaves fields None-d as-is."""
+        """Update wheel_state/status/collateral for the *open* contract matching
+        `contract_symbol`. Leaves fields None-d as-is. Only matches rows with
+        status='open' — contract_symbol is not unique across wheel cycles, so a stale
+        closed row that happens to share a symbol is never touched.
+
+        Pass `collateral=0.0` when transitioning a CSP to "assigned": the cash it
+        reserved has now been spent buying the underlying shares, so counting it still
+        as options collateral would double-count that capital against the stock
+        position `RiskGate` already sees via `AccountState.positions`.
+        """
 
     @abstractmethod
     def get_open_options_positions(self, underlying: str | None = None) -> list[dict]:

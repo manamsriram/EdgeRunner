@@ -6,10 +6,11 @@ wrap a minimal client Protocol, keep the SDK behind an injectable seam, fail clo
 reconciliation errors.
 
 CONTRACT SIZING IS NOT A NOTIONAL SWAP. Equity buys size to a fractional dollar amount;
-option contracts are quantized to 100 shares of collateral per contract, so this module
-picks a strike + whole contract count that fits a target collateral budget, and returns
-None if even one contract would exceed it (the pipeline skips the trade rather than
-oversize — see `select_csp_contract` / `select_cc_contract`).
+option contracts are quantized to 100 shares of collateral per contract. v1 sells exactly
+one contract per entry (see `sell_to_open`'s qty=1) — `select_csp_contract` /
+`select_cc_contract` pick the single best-fit strike whose 100x collateral fits the
+budget, and return None if even one contract would exceed it (the pipeline skips the
+trade rather than oversize). Multi-contract sizing is not implemented.
 """
 from __future__ import annotations
 
