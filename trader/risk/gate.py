@@ -280,6 +280,28 @@ class RiskGate:
         if state.stale:
             return RiskDecision.reject("account state stale (reconciliation failed)")
 
+        # Daily-loss halt — mirrors the buy-side check in evaluate(). CSP/CC
+        # sell-to-open commits new capital, so the same halt should apply.
+        if (
+            limits.daily_loss_halt_enabled
+            and limits.require_daily_pnl_check
+            and state.daily_pnl_pct is not None
+            and state.daily_pnl_pct <= -limits.daily_loss_limit_pct
+        ):
+            return RiskDecision.reject(
+                f"daily loss {state.daily_pnl_pct:.2%} hit limit "
+                f"-{limits.daily_loss_limit_pct:.2%} — new options orders halted"
+            )
+
+        # Cash check — CSP collateral must be available in uninvested cash. Without
+        # this, a CSP could be accepted while the account has insufficient liquidity
+        # to cover assignment (the broker would reject it, but we want to fail here).
+        if intent.collateral > state.cash:
+            return RiskDecision.reject(
+                f"insufficient cash: collateral ${intent.collateral:,.0f} "
+                f"> available cash ${state.cash:,.0f}"
+            )
+
         options_cap = limits.max_options_allocation_pct * state.equity
         options_after = state.options_collateral + intent.collateral
         if options_after > options_cap:

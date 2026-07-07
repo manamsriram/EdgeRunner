@@ -82,7 +82,10 @@ class AlpacaOptionsBroker:
         if self._client is None:
             from alpaca.trading.client import TradingClient
 
-            self._config.require_alpaca()
+            # Use require_alpaca_credentials() (keys only) instead of require_alpaca()
+            # so the options TradingClient can be constructed when alpaca_paper=False
+            # but alpaca_options_paper=True (stocks live, options still paper).
+            self._config.require_alpaca_credentials()
             self._client = TradingClient(
                 api_key=self._config.alpaca_api_key,
                 secret_key=self._config.alpaca_secret_key,
@@ -94,7 +97,8 @@ class AlpacaOptionsBroker:
         if self._data_client is None:
             from alpaca.data.historical.option import OptionHistoricalDataClient
 
-            self._config.require_alpaca()
+            # Data clients only need credentials, not the paper/live order guard.
+            self._config.require_alpaca_credentials()
             self._data_client = OptionHistoricalDataClient(
                 api_key=self._config.alpaca_api_key,
                 secret_key=self._config.alpaca_secret_key,

@@ -101,7 +101,15 @@ def run_pipeline(
             from dataclasses import replace as _replace_collateral
             state = _replace_collateral(state, options_collateral=total_collateral)
         except Exception:
-            logger.warning("failed to load options collateral for %s", "risk gate combined cap")
+            # Fail closed: set options_collateral to the full equity value so the
+            # combined-cap check in evaluate_options_order will reject any new options
+            # order until the next successful reconciliation. Log the full traceback
+            # so the root cause is surfaced rather than silently swallowed.
+            logger.exception(
+                "failed to load options collateral — setting sentinel to block new options orders"
+            )
+            from dataclasses import replace as _replace_collateral
+            state = _replace_collateral(state, options_collateral=state.equity)
 
     # Seed ownership from DB; prune entries for positions no longer held and for
     # owner strategies no longer in the active stack — otherwise a position bought
@@ -310,9 +318,12 @@ def _advance_state(state, result, strategy, repo):
     if result.is_options:
         # CSP-on-dip / Wheel opened a contract this tick — bump collateral so a later
         # signal in the same tick sees the updated combined-allocation headroom.
+        # Also add the underlying to open_order_symbols so a second signal for the
+        # same underlying within this tick is blocked, matching equity behaviour.
         return _replace(
             state,
             trades_today=state.trades_today + 1,
+            open_order_symbols=state.open_order_symbols | {result.symbol},
             options_collateral=state.options_collateral + (result.risk_decision.approved_notional or 0.0),
         )
 
@@ -634,6 +645,7 @@ def _execute_signal(
         # routes here whenever WHEEL_STRATEGY_ENABLED is on, tagged as "wheel".
         _wants_csp = (
             options_broker is not None
+            and config.risk.options_trading_enabled
             and signal.side == "buy"
             and not is_crypto_symbol(symbol)
             and (
@@ -884,7 +896,9 @@ def _execute_csp_entry(
         )
 
     today = asof.date() if isinstance(asof, datetime) else asof
-    client_order_id = options_client_order_id_for(today, symbol, "put", strategy_tag)
+    # Include the resolved contract symbol in the ID so different contracts on the
+    # same underlying on the same day produce distinct IDs and don't alias each other.
+    client_order_id = options_client_order_id_for(today, contract.symbol, "put", strategy_tag)
     order = options_broker.sell_to_open(contract_symbol=contract.symbol, client_order_id=client_order_id)
     broker_order_id = str(getattr(order, "id", "") or "")
 

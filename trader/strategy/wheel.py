@@ -188,6 +188,10 @@ def run_wheel_tick(config, options_broker, stock_broker, repo, gate, kill_switch
             opening_order_id=client_order_id, strategy="wheel", collateral=collateral,
             wheel_state="cc_open" if right == "call" else "csp_open", status="open",
         ))
+        # Advance options_collateral on stock_state so the next underlying in this
+        # loop sees the collateral already committed, enforcing the combined cap
+        # across the whole underlyings pass rather than just checking the initial total.
+        stock_state = _replace(stock_state, options_collateral=stock_state.options_collateral + collateral)
         acted.append(underlying)
 
     return acted
