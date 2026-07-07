@@ -104,8 +104,13 @@ def reconcile_options(options_broker, stock_broker, repo) -> None:
         else:  # csp_open — either CSP-on-dip or the Wheel's opening leg
             if shares_held >= 100:
                 # Row stays OPEN with wheel_state=assigned so advance_wheel_state sees
-                # it on the next tick and knows to sell the covering call.
-                repo.update_options_position(pos["contract_symbol"], wheel_state="assigned", status="open")
+                # it on the next tick and knows to sell the covering call. collateral is
+                # zeroed: the cash it reserved has now been spent buying the shares, so
+                # RiskGate would otherwise double-count that capital (once as options
+                # collateral here, once as stock exposure via AccountState.positions).
+                repo.update_options_position(
+                    pos["contract_symbol"], wheel_state="assigned", status="open", collateral=0.0,
+                )
             else:
                 repo.update_options_position(pos["contract_symbol"], wheel_state="csp_expired", status="closed")
 

@@ -123,12 +123,12 @@ CREATE TABLE IF NOT EXISTS overlay_cache (
 );
 CREATE TABLE IF NOT EXISTS options_positions (
     id               SERIAL PRIMARY KEY,
-    contract_symbol  TEXT NOT NULL UNIQUE,
+    contract_symbol  TEXT NOT NULL,
     underlying       TEXT NOT NULL,
     option_type      TEXT NOT NULL,
     strike           REAL NOT NULL,
     expiry           TEXT NOT NULL,
-    opening_order_id TEXT NOT NULL,
+    opening_order_id TEXT NOT NULL UNIQUE,
     strategy         TEXT NOT NULL,
     collateral       REAL NOT NULL,
     wheel_state      TEXT NOT NULL DEFAULT 'csp_open'
@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS options_positions (
     opened_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_options_positions_underlying ON options_positions(underlying, status);
+CREATE INDEX IF NOT EXISTS idx_options_positions_contract_symbol ON options_positions(contract_symbol);
 CREATE TABLE IF NOT EXISTS llm_call_log (
     id            SERIAL PRIMARY KEY,
     ts            TEXT NOT NULL,
@@ -504,20 +505,21 @@ class PostgresRepository(PortfolioRepository):
                     "(contract_symbol, underlying, option_type, strike, expiry, opening_order_id, "
                     "strategy, collateral, wheel_state, status, opened_at) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (contract_symbol) DO NOTHING",
+                    "ON CONFLICT (opening_order_id) DO NOTHING",
                     (position.contract_symbol, position.underlying, position.option_type,
                      position.strike, position.expiry, position.opening_order_id,
                      position.strategy, position.collateral, position.wheel_state,
                      position.status, _now()),
                 )
                 cur.execute(
-                    "SELECT id FROM options_positions WHERE contract_symbol=%s",
-                    (position.contract_symbol,),
+                    "SELECT id FROM options_positions WHERE opening_order_id=%s",
+                    (position.opening_order_id,),
                 )
                 return int(cur.fetchone()["id"])
 
     def update_options_position(
         self, contract_symbol: str, *, wheel_state: str | None = None, status: str | None = None,
+        collateral: float | None = None,
     ) -> None:
         validate_options_transition(wheel_state, status)
         sets, params = [], []
@@ -527,13 +529,16 @@ class PostgresRepository(PortfolioRepository):
         if status is not None:
             sets.append("status=%s")
             params.append(status)
+        if collateral is not None:
+            sets.append("collateral=%s")
+            params.append(collateral)
         if not sets:
             return
         params.append(contract_symbol)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"UPDATE options_positions SET {', '.join(sets)} WHERE contract_symbol=%s",
+                    f"UPDATE options_positions SET {', '.join(sets)} WHERE contract_symbol=%s AND status='open'",
                     params,
                 )
 

@@ -303,7 +303,7 @@ def test_options_position_crud(sqlite_repo):
     assert sqlite_repo.get_open_options_positions("AAPL") == []
 
 
-def test_options_position_insert_idempotent_on_contract_symbol(sqlite_repo):
+def test_options_position_insert_idempotent_on_opening_order_id(sqlite_repo):
     row = OptionsPositionRow(
         contract_symbol="AAPL260116P00150000", underlying="AAPL", option_type="put",
         strike=150.0, expiry="2026-01-16", opening_order_id="abc123",
@@ -313,6 +313,47 @@ def test_options_position_insert_idempotent_on_contract_symbol(sqlite_repo):
     id2 = sqlite_repo.record_options_position(row)
     assert id1 == id2
     assert len(sqlite_repo.get_open_options_positions("AAPL")) == 1
+
+
+def test_options_position_same_contract_symbol_reopens_across_wheel_cycles(sqlite_repo):
+    """contract_symbol (the OCC symbol) is not the uniqueness key — the same strike/expiry
+    can legitimately be sold again in a later Wheel cycle after the first position on it
+    closed. Uniqueness lives on opening_order_id (one row per broker order)."""
+    first = OptionsPositionRow(
+        contract_symbol="AAPL260116P00150000", underlying="AAPL", option_type="put",
+        strike=150.0, expiry="2026-01-16", opening_order_id="oid_cycle1",
+        strategy="wheel", collateral=15_000.0,
+    )
+    id1 = sqlite_repo.record_options_position(first)
+    sqlite_repo.update_options_position("AAPL260116P00150000", wheel_state="csp_expired", status="closed")
+
+    second = OptionsPositionRow(
+        contract_symbol="AAPL260116P00150000", underlying="AAPL", option_type="put",
+        strike=150.0, expiry="2026-01-16", opening_order_id="oid_cycle2",
+        strategy="wheel", collateral=15_000.0,
+    )
+    id2 = sqlite_repo.record_options_position(second)
+    assert id2 != id1  # a genuinely new row, not the stale closed one
+    open_positions = sqlite_repo.get_open_options_positions("AAPL")
+    assert len(open_positions) == 1
+    assert open_positions[0]["opening_order_id"] == "oid_cycle2"
+
+
+def test_update_options_position_does_not_touch_stale_closed_row_sharing_symbol(sqlite_repo):
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_P", underlying="AAPL", option_type="put", strike=140.0,
+        expiry="2026-01-16", opening_order_id="oid_old", strategy="wheel", collateral=14_000.0,
+        wheel_state="csp_expired", status="closed",
+    ))
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_P", underlying="AAPL", option_type="put", strike=140.0,
+        expiry="2026-01-16", opening_order_id="oid_new", strategy="wheel", collateral=14_000.0,
+    ))
+    sqlite_repo.update_options_position("AAPL_P", wheel_state="assigned", status="open", collateral=0.0)
+    open_positions = sqlite_repo.get_open_options_positions("AAPL")
+    assert len(open_positions) == 1
+    assert open_positions[0]["opening_order_id"] == "oid_new"
+    assert open_positions[0]["wheel_state"] == "assigned"
 
 
 def test_total_options_collateral_sums_open_positions(sqlite_repo):
@@ -384,6 +425,10 @@ def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo, tmp_p
     reconcile_options(options_broker, stock_broker, sqlite_repo)
     positions = sqlite_repo.get_open_options_positions("AAPL")
     assert positions[0]["wheel_state"] == "assigned"
+    # collateral zeroed on assignment — the cash was spent buying shares, so it must
+    # not still count as options exposure (would double-count against stock exposure).
+    assert positions[0]["collateral"] == 0.0
+    assert sqlite_repo.get_total_options_collateral() == 0.0
 
     options_broker = _FakeOptionsBroker(
         cc_contract=ContractCandidate("AAPL_TESTCALL", 150.0, date.today() + timedelta(days=30), 200)

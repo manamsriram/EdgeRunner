@@ -51,7 +51,7 @@ def test_options_position_crud(postgres_repo):
     assert postgres_repo.get_open_options_positions("AAPL") == []
 
 
-def test_options_position_insert_idempotent_on_contract_symbol(postgres_repo):
+def test_options_position_insert_idempotent_on_opening_order_id(postgres_repo):
     row = OptionsPositionRow(
         contract_symbol="AAPL260116P00150000", underlying="AAPL", option_type="put",
         strike=150.0, expiry="2026-01-16", opening_order_id="abc123",
@@ -61,6 +61,27 @@ def test_options_position_insert_idempotent_on_contract_symbol(postgres_repo):
     id2 = postgres_repo.record_options_position(row)
     assert id1 == id2
     assert len(postgres_repo.get_open_options_positions("AAPL")) == 1
+
+
+def test_options_position_same_contract_symbol_reopens_across_wheel_cycles(postgres_repo):
+    first = OptionsPositionRow(
+        contract_symbol="AAPL260116P00150000", underlying="AAPL", option_type="put",
+        strike=150.0, expiry="2026-01-16", opening_order_id="oid_cycle1",
+        strategy="wheel", collateral=15_000.0,
+    )
+    id1 = postgres_repo.record_options_position(first)
+    postgres_repo.update_options_position("AAPL260116P00150000", wheel_state="csp_expired", status="closed")
+
+    second = OptionsPositionRow(
+        contract_symbol="AAPL260116P00150000", underlying="AAPL", option_type="put",
+        strike=150.0, expiry="2026-01-16", opening_order_id="oid_cycle2",
+        strategy="wheel", collateral=15_000.0,
+    )
+    id2 = postgres_repo.record_options_position(second)
+    assert id2 != id1
+    open_positions = postgres_repo.get_open_options_positions("AAPL")
+    assert len(open_positions) == 1
+    assert open_positions[0]["opening_order_id"] == "oid_cycle2"
 
 
 def test_total_options_collateral_sums_open_positions(postgres_repo):
