@@ -8,9 +8,12 @@ import pytest
 
 from trader.config import RiskLimits
 from trader.execution.options_broker import AlpacaOptionsBroker, ContractCandidate
+from trader.pipeline import _execute_csp_entry
 from trader.portfolio.repository import OptionsPositionRow
 from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import AccountState, KillSwitch, OptionsOrderIntent, RiskGate
+from trader.strategy.base import Signal
+from trader.strategy.dip_recovery import DipRecovery
 from trader.strategy.wheel import advance_wheel_state, reconcile_options, run_wheel_tick
 
 
@@ -84,6 +87,139 @@ def test_select_cc_contract_requires_100_shares():
     assert broker.select_cc_contract("AAPL", ref_price=150.0, shares_held=50) is None
     picked = broker.select_cc_contract("AAPL", ref_price=150.0, shares_held=100)
     assert picked.symbol == "AAPL_160C"
+
+
+def test_select_csp_contract_boundary_exact_budget_match_is_accepted():
+    # strike*100 == max_collateral exactly — the "<=" boundary must be inclusive.
+    contracts = [_FakeContract("AAPL_130P", 130.0, date(2026, 1, 16), 500)]
+    limits = RiskLimits(options_min_open_interest=100)
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": limits})(), client=_FakeTradingClient(contracts),
+    )
+    picked = broker.select_csp_contract("AAPL", ref_price=150.0, max_collateral=13_000.0)
+    assert picked.symbol == "AAPL_130P"
+
+
+def test_select_csp_contract_tie_break_picks_a_max_strike_candidate():
+    # Two contracts tie on the max strike — max() must resolve deterministically to one
+    # of the tied candidates rather than erroring or picking a lower strike.
+    contracts = [
+        _FakeContract("AAPL_130P_A", 130.0, date(2026, 1, 16), 500),
+        _FakeContract("AAPL_130P_B", 130.0, date(2026, 2, 20), 500),
+    ]
+    limits = RiskLimits(options_min_open_interest=100)
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": limits})(), client=_FakeTradingClient(contracts),
+    )
+    picked = broker.select_csp_contract("AAPL", ref_price=150.0, max_collateral=20_000.0)
+    assert picked.symbol in {"AAPL_130P_A", "AAPL_130P_B"}
+    assert picked.strike == 130.0
+
+
+# ---- order submission (idempotency) ----
+
+class _DuplicateOrderTradingClient(_FakeTradingClient):
+    """Simulates Alpaca rejecting a retried submit_order because the client_order_id
+    already exists — the real duplicate-order error shape from the API."""
+
+    def __init__(self):
+        super().__init__(contracts=[])
+        self.submit_calls = 0
+
+    def submit_order(self, order_data):
+        self.submit_calls += 1
+        raise Exception("client_order_id already exists (duplicate)")
+
+    def get_order_by_client_id(self, client_id):
+        return type("O", (), {"id": "existing-order-id", "client_order_id": client_id})()
+
+
+def test_sell_to_open_retry_returns_existing_order_on_duplicate_client_order_id():
+    client = _DuplicateOrderTradingClient()
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": RiskLimits()})(), client=client,
+    )
+    order = broker.sell_to_open(contract_symbol="AAPL_TESTPUT", client_order_id="dup-id")
+    assert order.id == "existing-order-id"
+    assert client.submit_calls == 1  # no double-fire: exactly one submit attempt
+
+
+def test_sell_to_open_reraises_non_duplicate_errors():
+    class _FailingClient(_FakeTradingClient):
+        def submit_order(self, order_data):
+            raise Exception("insufficient buying power")
+
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": RiskLimits()})(), client=_FailingClient(contracts=[]),
+    )
+    with pytest.raises(Exception, match="insufficient buying power"):
+        broker.sell_to_open(contract_symbol="AAPL_TESTPUT", client_order_id="oid1")
+
+
+def test_buy_to_close_submits_buy_side_request():
+    captured = {}
+
+    class _CapturingClient(_FakeTradingClient):
+        def submit_order(self, order_data):
+            captured["symbol"] = order_data.symbol
+            captured["side"] = order_data.side
+            captured["position_intent"] = order_data.position_intent
+            return type("O", (), {"id": "order-id"})()
+
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": RiskLimits()})(), client=_CapturingClient(contracts=[]),
+    )
+    broker.buy_to_close(contract_symbol="AAPL_TESTPUT", client_order_id="oid1")
+    assert captured["symbol"] == "AAPL_TESTPUT"
+    assert str(captured["side"]).endswith("BUY")
+    assert str(captured["position_intent"]).endswith("BUY_TO_CLOSE")
+
+
+# ---- check_spread ----
+
+class _FakeQuote:
+    def __init__(self, bid, ask):
+        self.bid_price, self.ask_price = bid, ask
+
+
+class _FakeDataClient:
+    def __init__(self, quotes: dict):
+        self._quotes = quotes
+
+    def get_option_latest_quote(self, request):
+        return self._quotes
+
+
+def test_check_spread_computes_fraction_of_mid():
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": RiskLimits()})(),
+        client=_FakeTradingClient(contracts=[]),
+        data_client=_FakeDataClient({"AAPL_P": _FakeQuote(bid=9.0, ask=11.0)}),
+    )
+    spread = broker.check_spread("AAPL_P")
+    assert spread == pytest.approx(0.2)  # (11-9) / ((11+9)/2)
+
+
+def test_check_spread_returns_none_on_non_positive_quote():
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": RiskLimits()})(),
+        client=_FakeTradingClient(contracts=[]),
+        data_client=_FakeDataClient({"AAPL_P": _FakeQuote(bid=0.0, ask=11.0)}),
+    )
+    assert broker.check_spread("AAPL_P") is None
+
+
+def test_check_spread_returns_none_on_exception():
+    class _FailingDataClient:
+        def get_option_latest_quote(self, request):
+            raise Exception("quote unavailable")
+
+    broker = AlpacaOptionsBroker(
+        config=type("C", (), {"risk": RiskLimits()})(),
+        client=_FakeTradingClient(contracts=[]),
+        data_client=_FailingDataClient(),
+    )
+    assert broker.check_spread("AAPL_P") is None
 
 
 # ---- risk gate combined cap ----
@@ -179,6 +315,31 @@ def test_options_position_insert_idempotent_on_contract_symbol(sqlite_repo):
     assert len(sqlite_repo.get_open_options_positions("AAPL")) == 1
 
 
+def test_total_options_collateral_sums_open_positions(sqlite_repo):
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_P", underlying="AAPL", option_type="put", strike=140.0,
+        expiry="2026-01-16", opening_order_id="oid1", strategy="csp_on_dip", collateral=14_000.0,
+    ))
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="MSFT_P", underlying="MSFT", option_type="put", strike=300.0,
+        expiry="2026-01-16", opening_order_id="oid2", strategy="csp_on_dip", collateral=30_000.0,
+    ))
+    assert sqlite_repo.get_total_options_collateral() == 44_000.0
+    sqlite_repo.update_options_position("AAPL_P", wheel_state="csp_expired", status="closed")
+    assert sqlite_repo.get_total_options_collateral() == 30_000.0
+
+
+def test_update_options_position_rejects_inconsistent_wheel_state_and_status(sqlite_repo):
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_P", underlying="AAPL", option_type="put", strike=140.0,
+        expiry="2026-01-16", opening_order_id="oid1", strategy="csp_on_dip", collateral=14_000.0,
+    ))
+    with pytest.raises(ValueError):
+        sqlite_repo.update_options_position("AAPL_P", wheel_state="csp_expired", status="open")
+    with pytest.raises(ValueError):
+        sqlite_repo.update_options_position("AAPL_P", wheel_state="assigned", status="closed")
+
+
 # ---- reconcile_options / run_wheel_tick integration ----
 
 class _FakeStockBroker:
@@ -239,3 +400,107 @@ def test_reconcile_options_marks_assigned_then_wheel_sells_cc(sqlite_repo, tmp_p
     cc_rows = [p for p in positions if p["wheel_state"] == "cc_open"]
     assert len(cc_rows) == 1
     assert cc_rows[0]["contract_symbol"] == "AAPL_TESTCALL"
+
+
+def test_reconcile_options_csp_expires_worthless(sqlite_repo):
+    past_expiry = (date.today() - timedelta(days=1)).isoformat()
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTPUT", underlying="AAPL", option_type="put", strike=140.0,
+        expiry=past_expiry, opening_order_id="oid1", strategy="csp_on_dip",
+        collateral=14_000.0, wheel_state="csp_open", status="open",
+    ))
+    stock_broker = _FakeStockBroker({}, {})  # no shares — put expired worthless
+    reconcile_options(_FakeOptionsBroker(), stock_broker, sqlite_repo)
+    assert sqlite_repo.get_open_options_positions("AAPL") == []
+
+
+def test_reconcile_options_called_away(sqlite_repo):
+    past_expiry = (date.today() - timedelta(days=1)).isoformat()
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTCALL", underlying="AAPL", option_type="call", strike=150.0,
+        expiry=past_expiry, opening_order_id="oid1", strategy="wheel",
+        collateral=15_000.0, wheel_state="cc_open", status="open",
+    ))
+    stock_broker = _FakeStockBroker({}, {})  # shares gone — call was exercised
+    reconcile_options(_FakeOptionsBroker(), stock_broker, sqlite_repo)
+    assert sqlite_repo.get_open_options_positions("AAPL") == []
+
+
+def test_reconcile_options_cc_expires_worthless(sqlite_repo):
+    past_expiry = (date.today() - timedelta(days=1)).isoformat()
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTCALL", underlying="AAPL", option_type="call", strike=150.0,
+        expiry=past_expiry, opening_order_id="oid1", strategy="wheel",
+        collateral=15_000.0, wheel_state="cc_open", status="open",
+    ))
+    stock_broker = _FakeStockBroker({"AAPL": 100.0}, {"AAPL": 140.0})  # shares still held
+    reconcile_options(_FakeOptionsBroker(), stock_broker, sqlite_repo)
+    assert sqlite_repo.get_open_options_positions("AAPL") == []
+
+
+def test_reconcile_options_skips_position_broker_still_reports_open(sqlite_repo):
+    past_expiry = (date.today() - timedelta(days=1)).isoformat()
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTPUT", underlying="AAPL", option_type="put", strike=140.0,
+        expiry=past_expiry, opening_order_id="oid1", strategy="csp_on_dip",
+        collateral=14_000.0, wheel_state="csp_open", status="open",
+    ))
+    stock_broker = _FakeStockBroker({}, {})
+
+    class _StaleBroker(_FakeOptionsBroker):
+        def open_option_positions(self):
+            return [{"symbol": "AAPL_TESTPUT"}]
+
+    reconcile_options(_StaleBroker(), stock_broker, sqlite_repo)
+    positions = sqlite_repo.get_open_options_positions("AAPL")
+    assert len(positions) == 1
+    assert positions[0]["wheel_state"] == "csp_open"
+
+
+# ---- duplicate CSP entry guard ----
+
+def test_csp_entry_blocked_when_underlying_already_has_open_position(sqlite_repo, tmp_path):
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTPUT", underlying="AAPL", option_type="put", strike=140.0,
+        expiry=(date.today() + timedelta(days=30)).isoformat(), opening_order_id="oid1",
+        strategy="wheel", collateral=14_000.0, wheel_state="csp_open", status="open",
+    ))
+    signal = Signal(symbol="AAPL", side="buy", strength=1.0, reason="dip")
+    config = type("C", (), {
+        "autonomy": "auto",
+        "risk": RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1),
+    })()
+    gate = RiskGate(config.risk)
+    ks = KillSwitch(tmp_path / "kill_switch.flag")
+    state = AccountState(
+        equity=100_000, positions={}, open_order_symbols=frozenset(),
+        trades_today=0, daily_pnl_pct=0.0, cash=50_000,
+    )
+    result = _execute_csp_entry(
+        signal=signal, run_id=1, strategy=DipRecovery("AAPL"), config=config,
+        options_broker=_FakeOptionsBroker(), repo=sqlite_repo, gate=gate,
+        kill_switch=ks, state=state, asof=None, ref_price=150.0,
+    )
+    assert result.outcome == "blocked"
+    assert "already has an open" in result.risk_decision.reason
+    # only the original position — no second CSP was sold
+    assert len(sqlite_repo.get_open_options_positions("AAPL")) == 1
+
+
+def test_reconcile_options_noop_when_stock_state_stale(sqlite_repo):
+    sqlite_repo.record_options_position(OptionsPositionRow(
+        contract_symbol="AAPL_TESTPUT", underlying="AAPL", option_type="put", strike=140.0,
+        expiry=(date.today() - timedelta(days=1)).isoformat(), opening_order_id="oid1",
+        strategy="csp_on_dip", collateral=14_000.0, wheel_state="csp_open", status="open",
+    ))
+
+    class _StaleStockBroker:
+        def reconcile(self):
+            return AccountState(
+                equity=0, positions={}, open_order_symbols=frozenset(),
+                trades_today=0, daily_pnl_pct=None, stale=True,
+            )
+
+    reconcile_options(_FakeOptionsBroker(), _StaleStockBroker(), sqlite_repo)
+    positions = sqlite_repo.get_open_options_positions("AAPL")
+    assert positions[0]["wheel_state"] == "csp_open"
