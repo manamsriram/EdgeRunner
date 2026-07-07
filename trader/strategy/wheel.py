@@ -150,7 +150,7 @@ def run_wheel_tick(config, options_broker, stock_broker, repo, gate, kill_switch
             contract = options_broker.select_cc_contract(underlying, ref_price, shares_held)
             if contract is None:
                 continue
-            collateral = shares_held * ref_price
+            collateral = 100.0 * ref_price
             right = "call"
         else:  # sell_csp — restart after being called away
             budget = config.risk.max_options_allocation_pct * stock_state.equity - stock_state.options_collateral
