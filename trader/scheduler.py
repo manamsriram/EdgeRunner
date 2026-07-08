@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from trader.alerts import send_alert
@@ -150,6 +150,20 @@ def start_scheduler(
     bandit_update_date: date | None = None
     signal_precomputed_date: date | None = None
     bandit_enabled = config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live
+
+    # Repair the in-memory signal cache immediately on process start. A mid-day
+    # restart (Render redeploy/crash) wipes _premarket_signals, and the in-loop
+    # precompute below only refires on the day's first closed tick — so without
+    # this, every open-market tick until then recomputes strategy.generate()
+    # against today's still-forming daily bar, causing repeated flip-flop
+    # entries on the same symbol. Freeze the fetch at yesterday's close (never
+    # today's partial bar) but file the cache under today's date so the
+    # market-open read path in run_pipeline hits immediately.
+    from trader.pipeline import precompute_signals as _startup_precompute
+    _yesterday_close = datetime.combine(
+        date.today() - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+    )
+    _startup_precompute(config, current_strategies, _yesterday_close, cache_date=date.today())
 
     while True:
         try:
@@ -297,7 +311,9 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
     strategies: list[Strategy] = []
     for sym in symbols:
         strategies.append(SuperTrend(symbol=sym))
-        strategies.append(DipRecovery(symbol=sym))
+        # smooth_window=3 damps single-bar drawdown noise before it crosses the
+        # dip_pct entry trigger, cutting re-entries on choppy dip/recover cycles.
+        strategies.append(DipRecovery(symbol=sym, smooth_window=3))
     return strategies
 
 

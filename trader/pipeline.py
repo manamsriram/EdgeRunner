@@ -372,15 +372,22 @@ def precompute_signals(
     strategies: list,
     asof: datetime,
     bars_cache: dict | None = None,
+    cache_date: "object | None" = None,
 ) -> int:
     """Compute and cache buy/sell signals for all equity strategies after market close.
 
     Safe to call from the scheduler's post-close tick. Returns count of signals cached.
     Crypto and intraday strategies are skipped — they run on live bars, not daily bars.
+
+    `cache_date` overrides the cache key date (defaults to `asof.date()`). Used on
+    scheduler startup to repair a wiped in-memory cache mid-day: bars are fetched
+    only through `asof` (kept at yesterday's close to avoid today's still-forming
+    daily bar) but the result is filed under today's date so the market-open read
+    path finds it immediately instead of recomputing off a live-moving bar.
     """
     import pandas as pd
     from datetime import date as _date
-    today = asof.date() if hasattr(asof, "date") else asof
+    today = cache_date if cache_date is not None else (asof.date() if hasattr(asof, "date") else asof)
     end = asof
     start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
     cached = 0
