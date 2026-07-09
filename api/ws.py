@@ -12,7 +12,7 @@ import logging
 import jwt
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.deps import COOKIE_NAME, get_config, get_repo
+from api.deps import get_config, get_repo
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,14 @@ async def proposal_poller() -> None:
 
 
 async def ws_handler(websocket: WebSocket) -> None:
-    """WebSocket endpoint — auth-gated, auto-reconnect friendly."""
+    """WebSocket endpoint — auth-gated, auto-reconnect friendly.
+
+    Token arrives as a query param, not an Authorization header — the browser
+    WebSocket API can't set custom headers on the handshake.
+    """
     secret = get_config().auth_secret
     if secret:
-        token = websocket.cookies.get(COOKIE_NAME)
+        token = websocket.query_params.get("token")
         if not token:
             await websocket.close(code=1008)
             return

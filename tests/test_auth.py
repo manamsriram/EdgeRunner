@@ -1,4 +1,4 @@
-"""Session cookie auth: wrong/missing/expired/valid tokens all resolve correctly."""
+"""Bearer token auth: wrong/missing/expired/valid tokens all resolve correctly."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -11,8 +11,8 @@ from starlette.requests import Request
 from api import deps
 
 
-def _request(cookie: str | None) -> Request:
-    headers = [(b"cookie", f"{deps.COOKIE_NAME}={cookie}".encode())] if cookie else []
+def _request(bearer: str | None) -> Request:
+    headers = [(b"authorization", f"Bearer {bearer}".encode())] if bearer else []
     scope = {"type": "http", "headers": headers}
     return Request(scope)
 
@@ -28,20 +28,20 @@ def test_no_secret_configured_is_open(monkeypatch):
     assert deps.get_current_user(_request(None)) == "admin"
 
 
-def test_missing_cookie_rejected(monkeypatch):
+def test_missing_header_rejected(monkeypatch):
     monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
     with pytest.raises(HTTPException) as exc:
         deps.get_current_user(_request(None))
     assert exc.value.status_code == 401
 
 
-def test_valid_cookie_accepted(monkeypatch):
+def test_valid_token_accepted(monkeypatch):
     monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
     token = _token("s3cr3t")
     assert deps.get_current_user(_request(token)) == "admin"
 
 
-def test_expired_cookie_rejected(monkeypatch):
+def test_expired_token_rejected(monkeypatch):
     monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
     token = _token("s3cr3t", expired=True)
     with pytest.raises(HTTPException) as exc:

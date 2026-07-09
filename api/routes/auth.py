@@ -1,12 +1,16 @@
-"""Single-user session auth: a long-lived JWT cookie, no login form.
+"""Single-user session auth: a long-lived JWT bearer token, no login form.
 
 Bootstrap once per browser: POST the `AUTH_SECRET` value as a JSON body to
-`/api/auth/session` (e.g. via curl — never as a URL query param, which would
-land in server access logs, browser history, and Referer headers). That sets
-an HttpOnly cookie signed with the same secret; every other route verifies
-it via `get_current_user`. No password, no username — the secret you POST
-*is* the credential, so treat it like one (long random value, HTTPS only,
-never committed).
+`/api/auth/session` (e.g. via curl or the browser console — never as a URL
+query param, which would land in server access logs, browser history, and
+Referer headers). The response body carries the token; the frontend stores
+it in localStorage and sends it as `Authorization: Bearer <token>` on every
+request — a cookie doesn't work here since the frontend (Vercel) and backend
+(Render) are different domains, and browsers increasingly block or partition
+third-party cookies regardless of SameSite/Secure settings.
+
+No password, no username — the secret you POST *is* the credential, so
+treat it like one (long random value, HTTPS only, never committed).
 """
 from __future__ import annotations
 
@@ -15,10 +19,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.deps import COOKIE_NAME, get_config
+from api.deps import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ class _SessionRequest(BaseModel):
 
 
 @router.post("/session")
-def create_session(body: _SessionRequest, response: Response):
+def create_session(body: _SessionRequest):
     secret = get_config().auth_secret
     if not secret:
         raise HTTPException(status_code=503, detail="AUTH_SECRET not configured on server")
@@ -45,20 +49,5 @@ def create_session(body: _SessionRequest, response: Response):
         secret,
         algorithm="HS256",
     )
-    response.set_cookie(
-        key=COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=_SESSION_DAYS * 24 * 3600,
-        path="/",
-    )
-    logger.info("session cookie issued")
-    return {"ok": True}
-
-
-@router.post("/logout")
-def logout(response: Response):
-    response.delete_cookie(COOKIE_NAME, path="/")
-    return {"ok": True}
+    logger.info("session token issued")
+    return {"ok": True, "token": token}

@@ -1,9 +1,24 @@
 import axios from 'axios'
 
+// Bearer token, not a cookie: frontend (Vercel) and backend (Render) are different
+// domains, and browsers increasingly block/partition third-party cookies regardless
+// of SameSite/Secure — that silently breaks cookie-based auth on split-domain setups.
+export const AUTH_TOKEN_KEY = 'er_token'
+export const getAuthToken = () => localStorage.getItem(AUTH_TOKEN_KEY)
+export const setAuthToken = (token: string) => localStorage.setItem(AUTH_TOKEN_KEY, token)
+export const clearAuthToken = () => localStorage.removeItem(AUTH_TOKEN_KEY)
+
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/',
-  withCredentials: true, // send the session cookie on cross-origin requests to the backend
-  headers: { 'X-Requested-With': 'edgerunner' }, // CSRF guard: forms can't set this, only our own JS can
+})
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken()
+  if (token) {
+    config.headers = config.headers ?? {}
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
 })
 
 // ---- proposals ----

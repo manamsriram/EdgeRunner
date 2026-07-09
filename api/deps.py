@@ -14,8 +14,6 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-COOKIE_NAME = "er_session"
-
 
 # ---- singletons ----
 
@@ -42,7 +40,11 @@ def get_broker():
 
 
 def get_current_user(request: Request) -> str:
-    """Verifies the signed session cookie set by POST /api/auth/session.
+    """Verifies the `Authorization: Bearer <token>` header set by POST /api/auth/session.
+
+    Bearer header rather than a cookie: frontend (Vercel) and backend (Render) are
+    different domains, and browsers increasingly block/partition third-party cookies
+    regardless of SameSite=None/Secure, which silently breaks cookie-based auth here.
 
     If AUTH_SECRET isn't configured, auth is off (dev default) — logged once
     per process so it's never silently open in a deployed environment.
@@ -52,8 +54,9 @@ def get_current_user(request: Request) -> str:
         logger.warning("AUTH_SECRET not set — API is unauthenticated")
         return "admin"
 
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
+    auth_header = request.headers.get("authorization") or ""
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])

@@ -276,44 +276,18 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-from fastapi.responses import JSONResponse
-
-
-class _CsrfMiddleware(BaseHTTPMiddleware):
-    """The session cookie is SameSite=None (required: frontend and backend are on
-    different domains), so a plain cross-site <form> POST would carry it — CORS
-    doesn't stop that, since simple form submissions never trigger a preflight.
-    Requiring this custom header blocks that: forms can't set custom headers, and
-    genuine cross-origin fetch/XHR is already rejected by CORS (allow_origins is a
-    specific origin, not "*"), so only our own frontend's JS can satisfy this.
-    """
-
-    async def dispatch(self, request, call_next):
-        if (
-            request.method not in ("GET", "HEAD", "OPTIONS")
-            and request.url.path.startswith("/api")
-            and request.url.path != "/api/auth/session"
-            and request.headers.get("x-requested-with") != "edgerunner"
-        ):
-            return JSONResponse({"detail": "missing CSRF header"}, status_code=403)
-        return await call_next(request)
-
-
-app.add_middleware(_CsrfMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 
 # ---- CORS (dev only — React dev server on port 5173) ----
+# No CSRF guard needed: auth is a bearer token in the Authorization header, not a
+# cookie, so the browser never attaches it automatically to a cross-site request —
+# there's nothing for a forged form/script on another site to ride along on.
 _FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[_FRONTEND_ORIGIN],
-    allow_credentials=True,
     allow_methods=["*"],
-    # NOTE: "*" is not treated as a wildcard here once allow_credentials=True — the
-    # fetch spec requires an exact header list for credentialed requests, so a
-    # literal "*" fails preflight for any request carrying a custom header (e.g. the
-    # CSRF guard below) or Content-Type: application/json. List them explicitly.
-    allow_headers=["Content-Type", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # ---- API routers ----
