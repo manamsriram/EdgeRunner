@@ -122,6 +122,12 @@ class KillSwitch:
     def engaged(self) -> bool:
         return self._path.exists()
 
+    def note(self) -> str | None:
+        try:
+            return self._path.read_text().strip()
+        except FileNotFoundError:
+            return None
+
     def engage(self, note: str = "") -> None:
         # Write-then-replace so a reader never sees a half-written flag.
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")

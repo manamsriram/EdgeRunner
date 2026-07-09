@@ -24,18 +24,23 @@ def _kill_switch():
 @router.get("/kill-switch")
 def kill_switch_status(username: str = Depends(get_current_user)):
     ks = _kill_switch()
-    return {"engaged": ks.engaged()}
+    return {"engaged": ks.engaged(), "note": ks.note()}
 
 
 @router.post("/kill-switch/engage")
 def engage_kill_switch(username: str = Depends(get_current_user)):
-    _kill_switch().engage("dashboard")
+    from datetime import datetime, timezone
+
+    note = f"dashboard by {username} at {datetime.now(timezone.utc).isoformat()}"
+    _kill_switch().engage(note)
+    logger.warning("kill switch engaged by %s", username)
     return {"engaged": True}
 
 
 @router.post("/kill-switch/disengage")
 def disengage_kill_switch(username: str = Depends(get_current_user)):
     _kill_switch().disengage()
+    logger.warning("kill switch disengaged by %s", username)
     return {"engaged": False}
 
 

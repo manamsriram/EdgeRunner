@@ -75,6 +75,9 @@ export default function Controls() {
             {engaged ? 'ENGAGED - Trading Halted' : 'Disengaged - Trading Active'}
           </span>
         </div>
+        {engaged && ks?.note && (
+          <p className="text-zinc-500 text-xs mb-3 font-mono">{ks.note}</p>
+        )}
         <div className="flex gap-3">
           <button
             onClick={handleEngage}

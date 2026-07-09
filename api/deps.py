@@ -1,14 +1,20 @@
 """Shared FastAPI dependencies — singletons for config, repo, and broker."""
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from functools import lru_cache
 
+import jwt
 from dotenv import load_dotenv
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+COOKIE_NAME = "er_session"
 
 
 # ---- singletons ----
@@ -36,8 +42,24 @@ def get_broker():
 
 
 def get_current_user(request: Request) -> str:
-    """Single-user app — no auth needed."""
-    return "admin"
+    """Verifies the signed session cookie set by POST /api/auth/session.
+
+    If AUTH_SECRET isn't configured, auth is off (dev default) — logged once
+    per process so it's never silently open in a deployed environment.
+    """
+    secret = get_config().auth_secret
+    if not secret:
+        logger.warning("AUTH_SECRET not set — API is unauthenticated")
+        return "admin"
+
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="invalid or expired session")
+    return payload["sub"]
 
 
 # ---- query history ----

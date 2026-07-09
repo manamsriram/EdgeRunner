@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routes.analysis import router as analysis_router
+from api.routes.auth import router as auth_router
 from api.routes.calendar import router as calendar_router
 from api.routes.performance import router as performance_router
 from api.routes.controls import router as controls_router
@@ -275,6 +276,30 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+from fastapi.responses import JSONResponse
+
+
+class _CsrfMiddleware(BaseHTTPMiddleware):
+    """The session cookie is SameSite=None (required: frontend and backend are on
+    different domains), so a plain cross-site <form> POST would carry it — CORS
+    doesn't stop that, since simple form submissions never trigger a preflight.
+    Requiring this custom header blocks that: forms can't set custom headers, and
+    genuine cross-origin fetch/XHR is already rejected by CORS (allow_origins is a
+    specific origin, not "*"), so only our own frontend's JS can satisfy this.
+    """
+
+    async def dispatch(self, request, call_next):
+        if (
+            request.method not in ("GET", "HEAD", "OPTIONS")
+            and request.url.path.startswith("/api")
+            and request.url.path != "/api/auth/session"
+            and request.headers.get("x-requested-with") != "edgerunner"
+        ):
+            return JSONResponse({"detail": "missing CSRF header"}, status_code=403)
+        return await call_next(request)
+
+
+app.add_middleware(_CsrfMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 
 # ---- CORS (dev only — React dev server on port 5173) ----
@@ -288,6 +313,7 @@ app.add_middleware(
 )
 
 # ---- API routers ----
+app.include_router(auth_router, prefix="/api")
 app.include_router(proposals_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")
 app.include_router(controls_router, prefix="/api")

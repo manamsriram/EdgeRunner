@@ -123,6 +123,7 @@ class Config:
     finnhub_api_key: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
+    auth_secret: str | None = None             # signs session JWT + gates /api/auth/session bootstrap
 
     @property
     def alpaca_base_url(self) -> str:
@@ -167,6 +168,7 @@ def load_config() -> Config:
         groq_api_key=os.getenv("GROQ_API_KEY") or None,
         portfolio_db_path=_db,
         kill_switch_path=_ks,
+        auth_secret=os.getenv("AUTH_SECRET") or None,
         risk=RiskLimits(
             # Dynamic universe: allowlist=None opens the gate to any screened symbol.
             # Static mode: allowlist populated from RISK_ALLOWLIST or the DEFAULT_ALLOWLIST.

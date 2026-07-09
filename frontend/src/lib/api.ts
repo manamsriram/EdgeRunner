@@ -2,6 +2,8 @@ import axios from 'axios'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/',
+  withCredentials: true, // send the session cookie on cross-origin requests to the backend
+  headers: { 'X-Requested-With': 'edgerunner' }, // CSRF guard: forms can't set this, only our own JS can
 })
 
 // ---- proposals ----
@@ -22,7 +24,8 @@ export const getPerformance = () => api.get<PerformanceMetrics>('/api/performanc
 export const getCalendar = () => api.get<CalendarDay[]>('/api/calendar')
 
 // ---- controls ----
-export const getKillSwitch = () => api.get<{ engaged: boolean }>('/api/controls/kill-switch')
+export const getKillSwitch = () =>
+  api.get<{ engaged: boolean; note: string | null }>('/api/controls/kill-switch')
 export const engageKillSwitch = () => api.post('/api/controls/kill-switch/engage')
 export const disengageKillSwitch = () => api.post('/api/controls/kill-switch/disengage')
 export const getAutonomy = () => api.get<{ mode: string }>('/api/controls/autonomy')

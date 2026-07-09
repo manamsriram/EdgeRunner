@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import jwt
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.deps import get_repo
+from api.deps import COOKIE_NAME, get_config, get_repo
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +65,17 @@ async def proposal_poller() -> None:
 
 async def ws_handler(websocket: WebSocket) -> None:
     """WebSocket endpoint — auth-gated, auto-reconnect friendly."""
-    token = websocket.cookies.get("access_token")
-    if not token:
-        await websocket.close(code=1008)
-        return
+    secret = get_config().auth_secret
+    if secret:
+        token = websocket.cookies.get(COOKIE_NAME)
+        if not token:
+            await websocket.close(code=1008)
+            return
+        try:
+            jwt.decode(token, secret, algorithms=["HS256"])
+        except jwt.PyJWTError:
+            await websocket.close(code=1008)
+            return
 
     await manager.connect(websocket)
     try:
