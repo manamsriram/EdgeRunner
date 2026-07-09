@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,29 +38,38 @@ _analysis_semaphore = asyncio.Semaphore(1)
 # Postgres/Redis if this ever runs with >1 worker.
 _RATE_LIMIT = 5           # requests
 _RATE_WINDOW_S = 600      # per 10 minutes
-_hits: dict[str, deque[float]] = defaultdict(deque)
+_MAX_TRACKED_IPS = 10_000  # bound worst-case memory if many distinct IPs hit us
+_hits: "OrderedDict[str, deque[float]]" = OrderedDict()
 
 
 def _client_ip(request: Request) -> str:
+    # Render (our only reverse proxy) appends the real client IP as the LAST hop;
+    # anything earlier in the list is client-supplied and trivially spoofable, so
+    # taking the first entry would let a caller rotate a fake IP per request and
+    # bypass the limit entirely.
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
 def _check_rate_limit(ip: str) -> None:
     now = time.monotonic()
-    hits = _hits[ip]
+    hits = _hits.pop(ip, None) or deque()
     while hits and now - hits[0] > _RATE_WINDOW_S:
         hits.popleft()
     if len(hits) >= _RATE_LIMIT:
         retry_after = int(_RATE_WINDOW_S - (now - hits[0])) + 1
+        _hits[ip] = hits  # keep it (don't drop state on a rejected request)
         raise HTTPException(
             status_code=429,
             detail=f"rate limit exceeded — max {_RATE_LIMIT} analyses per {_RATE_WINDOW_S // 60} min",
             headers={"Retry-After": str(retry_after)},
         )
     hits.append(now)
+    _hits[ip] = hits  # re-insert at the end — makes _hits LRU-ordered by last activity
+    while len(_hits) > _MAX_TRACKED_IPS:
+        _hits.popitem(last=False)  # evict the least-recently-active IP
 
 
 class AnalysisRequest(BaseModel):
