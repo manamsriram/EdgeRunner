@@ -12,13 +12,15 @@ import logging
 import subprocess
 import sys
 import tempfile
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from api.deps import get_current_user, save_query
+from api.deps import save_query
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,36 @@ ANALYSIS_TIMEOUT_S = 120.0
 # One analysis child at a time — two concurrent LangChain subprocesses would blow
 # the 512MB container cap.
 _analysis_semaphore = asyncio.Semaphore(1)
+
+# Per-IP rate limit: endpoint is public and each call is a real LLM spend, so cap
+# how often any one caller can trigger it. In-memory fixed window — fine for a
+# single-process deploy; ponytail: not shared across workers/restarts, move to
+# Postgres/Redis if this ever runs with >1 worker.
+_RATE_LIMIT = 5           # requests
+_RATE_WINDOW_S = 600      # per 10 minutes
+_hits: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(ip: str) -> None:
+    now = time.monotonic()
+    hits = _hits[ip]
+    while hits and now - hits[0] > _RATE_WINDOW_S:
+        hits.popleft()
+    if len(hits) >= _RATE_LIMIT:
+        retry_after = int(_RATE_WINDOW_S - (now - hits[0])) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"rate limit exceeded — max {_RATE_LIMIT} analyses per {_RATE_WINDOW_S // 60} min",
+            headers={"Retry-After": str(retry_after)},
+        )
+    hits.append(now)
 
 
 class AnalysisRequest(BaseModel):
@@ -56,12 +88,15 @@ def _run_analysis_subprocess(query: str) -> str:
 
 
 @router.post("")
-async def run_analysis(body: AnalysisRequest, username: str = Depends(get_current_user)):
-    """Run the stock analysis agent in a subprocess (non-blocking).
+async def run_analysis(body: AnalysisRequest, request: Request):
+    """Run the stock analysis agent in a subprocess (non-blocking). Public endpoint —
+    one query at a time (see `_analysis_semaphore`) bounds cost/memory regardless of caller,
+    and `_check_rate_limit` caps how often any one IP can trigger a (paid) LLM call.
 
     Returns an SSE stream: first a `chunk` event with the full response, then a `done`
     event. The frontend reads this via fetch() + ReadableStream.
     """
+    _check_rate_limit(_client_ip(request))
 
     async def event_stream():
         loop = asyncio.get_event_loop()
@@ -71,15 +106,15 @@ async def run_analysis(body: AnalysisRequest, username: str = Depends(get_curren
                     None, _run_analysis_subprocess, body.query
                 )
             try:
-                save_query(username, body.query, result)
+                save_query("public", body.query, result)
             except Exception:
-                logger.warning("failed to save query for %s", username)
+                logger.warning("failed to save query")
             yield f"data: {json.dumps({'chunk': result})}\n\n"
         except subprocess.TimeoutExpired:
-            logger.warning("analysis timed out for user %s", username)
+            logger.warning("analysis timed out")
             yield f"data: {json.dumps({'error': 'analysis timed out after 120s'})}\n\n"
         except Exception:
-            logger.exception("analysis failed for user %s", username)
+            logger.exception("analysis failed")
             yield f"data: {json.dumps({'error': 'analysis failed'})}\n\n"
         finally:
             yield f"data: {json.dumps({'done': True})}\n\n"

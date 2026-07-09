@@ -6,9 +6,9 @@ import logging
 import math
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from api.deps import get_broker, get_config, get_current_user, get_repo
+from api.deps import get_broker, get_config, get_repo
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ _EMPTY_RESPONSE = {
 
 
 @router.get("")
-async def get_performance(username: str = Depends(get_current_user)):
+async def get_performance():
     now = time.monotonic()
     if _cache.get("computed_at", 0) + _CACHE_TTL > now:
         return _cache["result"]
