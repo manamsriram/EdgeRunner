@@ -309,7 +309,11 @@ app.add_middleware(
     allow_origins=[_FRONTEND_ORIGIN],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    # NOTE: "*" is not treated as a wildcard here once allow_credentials=True — the
+    # fetch spec requires an exact header list for credentialed requests, so a
+    # literal "*" fails preflight for any request carrying a custom header (e.g. the
+    # CSRF guard below) or Content-Type: application/json. List them explicitly.
+    allow_headers=["Content-Type", "X-Requested-With"],
 )
 
 # ---- API routers ----
