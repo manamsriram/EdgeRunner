@@ -60,7 +60,7 @@ def get_current_user(request: Request) -> str:
     if scheme.lower() != "bearer" or not token:
         logger.warning(
             "no bearer token on request (path=%s, auth_header_present=%s)",
-            request.url.path, bool(auth_header),
+            request.scope.get("path", "?"), bool(auth_header),
         )
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
