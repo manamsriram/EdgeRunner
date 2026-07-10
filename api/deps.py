@@ -61,7 +61,9 @@ def get_current_user(request: Request) -> str:
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as exc:
+        header = jwt.get_unverified_header(token)
+        logger.warning("JWT verification failed: %s (header alg=%s)", exc, header.get("alg"))
         raise HTTPException(status_code=401, detail="invalid or expired session")
     return payload.get("email") or payload["sub"]
 
