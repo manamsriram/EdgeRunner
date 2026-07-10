@@ -40,18 +40,19 @@ def get_broker():
 
 
 def get_current_user(request: Request) -> str:
-    """Verifies the `Authorization: Bearer <token>` header set by POST /api/auth/session.
+    """Verifies a Supabase Auth JWT sent as `Authorization: Bearer <token>`.
 
-    Bearer header rather than a cookie: frontend (Vercel) and backend (Render) are
-    different domains, and browsers increasingly block/partition third-party cookies
-    regardless of SameSite=None/Secure, which silently breaks cookie-based auth here.
+    Frontend signs in via supabase-js (supabase.auth.signInWithPassword); the
+    resulting session's access_token is what arrives here. Verified against the
+    project's JWT secret (Settings → API → JWT Settings in the Supabase dashboard) —
+    Supabase signs these HS256 with `aud: "authenticated"`.
 
-    If AUTH_SECRET isn't configured, auth is off (dev default) — logged once
+    If SUPABASE_JWT_SECRET isn't configured, auth is off (dev default) — logged once
     per process so it's never silently open in a deployed environment.
     """
-    secret = get_config().auth_secret
+    secret = get_config().supabase_jwt_secret
     if not secret:
-        logger.warning("AUTH_SECRET not set — API is unauthenticated")
+        logger.warning("SUPABASE_JWT_SECRET not set — API is unauthenticated")
         return "admin"
 
     auth_header = request.headers.get("authorization") or ""
@@ -59,10 +60,10 @@ def get_current_user(request: Request) -> str:
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        payload = jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="invalid or expired session")
-    return payload["sub"]
+    return payload.get("email") or payload["sub"]
 
 
 # ---- query history ----

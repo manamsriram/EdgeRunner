@@ -69,14 +69,14 @@ async def ws_handler(websocket: WebSocket) -> None:
     Token arrives as a query param, not an Authorization header — the browser
     WebSocket API can't set custom headers on the handshake.
     """
-    secret = get_config().auth_secret
+    secret = get_config().supabase_jwt_secret
     if secret:
         token = websocket.query_params.get("token")
         if not token:
             await websocket.close(code=1008)
             return
         try:
-            jwt.decode(token, secret, algorithms=["HS256"])
+            jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
         except jwt.PyJWTError:
             await websocket.close(code=1008)
             return

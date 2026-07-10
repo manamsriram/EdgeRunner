@@ -8,6 +8,7 @@ import Portfolio from './pages/Portfolio'
 import Controls from './pages/Controls'
 import Performance from './pages/Performance'
 import ProtectedLayout from './components/ProtectedLayout'
+import RequireAuth from './components/RequireAuth'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 55_000, retry: 1 } },
@@ -22,9 +23,9 @@ export default function App() {
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/calendar" element={<Calendar />} />
-            <Route path="/approvals" element={<Approvals />} />
+            <Route path="/approvals" element={<RequireAuth><Approvals /></RequireAuth>} />
             <Route path="/analysis" element={<Analysis />} />
-            <Route path="/controls" element={<Controls />} />
+            <Route path="/controls" element={<RequireAuth><Controls /></RequireAuth>} />
             <Route path="/" element={<Navigate to="/calendar" replace />} />
           </Route>
         </Routes>

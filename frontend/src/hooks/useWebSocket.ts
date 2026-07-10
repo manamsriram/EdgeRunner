@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { getAuthToken } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
-function wsUrl(): string {
+async function wsUrl(): Promise<string> {
   const apiUrl = import.meta.env.VITE_API_URL
-  const token = getAuthToken()
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
   const query = token ? `?token=${encodeURIComponent(token)}` : ''
   if (apiUrl) {
     // VITE_API_URL is the Render backend origin (e.g. https://foo.onrender.com) —
@@ -23,9 +24,11 @@ export function useWebSocket(onMessage: (msg: unknown) => void) {
     let retryDelay = 1000
     let stopped = false
 
-    const connect = () => {
+    const connect = async () => {
       if (stopped) return
-      ws = new WebSocket(wsUrl())
+      const url = await wsUrl()
+      if (stopped) return
+      ws = new WebSocket(url)
 
       ws.onmessage = (e) => {
         try {

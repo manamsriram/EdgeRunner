@@ -1,4 +1,4 @@
-"""Bearer token auth: wrong/missing/expired/valid tokens all resolve correctly."""
+"""Supabase Auth JWT verification: wrong/missing/expired/valid tokens all resolve correctly."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -17,32 +17,36 @@ def _request(bearer: str | None) -> Request:
     return Request(scope)
 
 
-def _token(secret: str, *, expired: bool = False) -> str:
+def _token(secret: str, *, expired: bool = False, aud: str = "authenticated") -> str:
     now = datetime.now(timezone.utc)
     exp = now - timedelta(days=1) if expired else now + timedelta(days=1)
-    return jwt.encode({"sub": "admin", "iat": now, "exp": exp}, secret, algorithm="HS256")
+    return jwt.encode(
+        {"sub": "user-id-123", "email": "sriram@example.com", "aud": aud, "iat": now, "exp": exp},
+        secret,
+        algorithm="HS256",
+    )
 
 
 def test_no_secret_configured_is_open(monkeypatch):
-    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": None})())
+    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"supabase_jwt_secret": None})())
     assert deps.get_current_user(_request(None)) == "admin"
 
 
 def test_missing_header_rejected(monkeypatch):
-    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
+    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"supabase_jwt_secret": "s3cr3t"})())
     with pytest.raises(HTTPException) as exc:
         deps.get_current_user(_request(None))
     assert exc.value.status_code == 401
 
 
 def test_valid_token_accepted(monkeypatch):
-    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
+    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"supabase_jwt_secret": "s3cr3t"})())
     token = _token("s3cr3t")
-    assert deps.get_current_user(_request(token)) == "admin"
+    assert deps.get_current_user(_request(token)) == "sriram@example.com"
 
 
 def test_expired_token_rejected(monkeypatch):
-    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
+    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"supabase_jwt_secret": "s3cr3t"})())
     token = _token("s3cr3t", expired=True)
     with pytest.raises(HTTPException) as exc:
         deps.get_current_user(_request(token))
@@ -50,8 +54,16 @@ def test_expired_token_rejected(monkeypatch):
 
 
 def test_wrong_secret_rejected(monkeypatch):
-    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"auth_secret": "s3cr3t"})())
+    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"supabase_jwt_secret": "s3cr3t"})())
     token = _token("wrong-secret")
+    with pytest.raises(HTTPException) as exc:
+        deps.get_current_user(_request(token))
+    assert exc.value.status_code == 401
+
+
+def test_wrong_audience_rejected(monkeypatch):
+    monkeypatch.setattr(deps, "get_config", lambda: type("C", (), {"supabase_jwt_secret": "s3cr3t"})())
+    token = _token("s3cr3t", aud="anon")
     with pytest.raises(HTTPException) as exc:
         deps.get_current_user(_request(token))
     assert exc.value.status_code == 401

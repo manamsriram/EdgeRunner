@@ -1,19 +1,17 @@
 import axios from 'axios'
-
-// Bearer token, not a cookie: frontend (Vercel) and backend (Render) are different
-// domains, and browsers increasingly block/partition third-party cookies regardless
-// of SameSite/Secure — that silently breaks cookie-based auth on split-domain setups.
-export const AUTH_TOKEN_KEY = 'er_token'
-export const getAuthToken = () => localStorage.getItem(AUTH_TOKEN_KEY)
-export const setAuthToken = (token: string) => localStorage.setItem(AUTH_TOKEN_KEY, token)
-export const clearAuthToken = () => localStorage.removeItem(AUTH_TOKEN_KEY)
+import { supabase } from './supabase'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/',
 })
 
-api.interceptors.request.use((config) => {
-  const token = getAuthToken()
+// Bearer token from the current Supabase session, not a cookie: frontend (Vercel)
+// and backend (Render) are different domains, and browsers increasingly block or
+// partition third-party cookies regardless of SameSite/Secure. Public routes just
+// never check this header server-side, so sending it (or not) on those is harmless.
+api.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
   if (token) {
     config.headers = config.headers ?? {}
     config.headers.Authorization = `Bearer ${token}`
