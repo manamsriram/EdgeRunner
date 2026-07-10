@@ -12,7 +12,7 @@ import logging
 import jwt
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.deps import get_config, get_repo
+from api.deps import auth_enabled, get_repo, verify_supabase_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +69,13 @@ async def ws_handler(websocket: WebSocket) -> None:
     Token arrives as a query param, not an Authorization header — the browser
     WebSocket API can't set custom headers on the handshake.
     """
-    secret = get_config().supabase_jwt_secret
-    if secret:
+    if auth_enabled():
         token = websocket.query_params.get("token")
         if not token:
             await websocket.close(code=1008)
             return
         try:
-            jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
+            verify_supabase_jwt(token)
         except jwt.PyJWTError:
             await websocket.close(code=1008)
             return

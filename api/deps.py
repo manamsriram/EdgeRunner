@@ -39,20 +39,48 @@ def get_broker():
     return AlpacaBroker(get_config())
 
 
+@lru_cache(maxsize=1)
+def _jwks_client():
+    """Cached JWKS client for the Supabase project — fetches ES256 public keys.
+
+    New Supabase projects sign access tokens with asymmetric keys (ES256) served
+    from the project's JWKS endpoint, not the legacy HS256 shared secret. PyJWKClient
+    caches the fetched keys internally, so this is one network hit per key rotation.
+    """
+    url = f"{get_config().supabase_url}/auth/v1/.well-known/jwks.json"
+    return jwt.PyJWKClient(url)
+
+
+def auth_enabled() -> bool:
+    """True when a Supabase verification path is configured (URL or legacy secret)."""
+    cfg = get_config()
+    return bool(cfg.supabase_url or cfg.supabase_jwt_secret)
+
+
+def verify_supabase_jwt(token: str) -> dict:
+    """Verify a Supabase access token, returning its claims. Raises jwt.PyJWTError.
+
+    ES256 via the project's JWKS public keys when SUPABASE_URL is set (current
+    Supabase default), else legacy HS256 shared-secret. Callers must first check
+    `auth_enabled()` — this always attempts verification.
+    """
+    cfg = get_config()
+    if cfg.supabase_url:
+        key = _jwks_client().get_signing_key_from_jwt(token).key
+        return jwt.decode(token, key, algorithms=["ES256"], audience="authenticated")
+    return jwt.decode(token, cfg.supabase_jwt_secret, algorithms=["HS256"], audience="authenticated")
+
+
 def get_current_user(request: Request) -> str:
     """Verifies a Supabase Auth JWT sent as `Authorization: Bearer <token>`.
 
     Frontend signs in via supabase-js (supabase.auth.signInWithPassword); the
-    resulting session's access_token is what arrives here. Verified against the
-    project's JWT secret (Settings → API → JWT Settings in the Supabase dashboard) —
-    Supabase signs these HS256 with `aud: "authenticated"`.
-
-    If SUPABASE_JWT_SECRET isn't configured, auth is off (dev default) — logged once
-    per process so it's never silently open in a deployed environment.
+    resulting session's access_token is what arrives here, with `aud: "authenticated"`.
+    Auth off (dev default) when neither SUPABASE_URL nor SUPABASE_JWT_SECRET is set —
+    logged so it's never silently open in a deployed environment.
     """
-    secret = get_config().supabase_jwt_secret
-    if not secret:
-        logger.warning("SUPABASE_JWT_SECRET not set — API is unauthenticated")
+    if not auth_enabled():
+        logger.warning("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
         return "admin"
 
     auth_header = request.headers.get("authorization") or ""
@@ -64,7 +92,7 @@ def get_current_user(request: Request) -> str:
         )
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
+        payload = verify_supabase_jwt(token)
     except jwt.PyJWTError as exc:
         header = jwt.get_unverified_header(token)
         logger.warning("JWT verification failed: %s (header alg=%s)", exc, header.get("alg"))

@@ -123,7 +123,8 @@ class Config:
     finnhub_api_key: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
-    supabase_jwt_secret: str | None = None      # verifies Supabase Auth JWTs on /controls, /proposals
+    supabase_jwt_secret: str | None = None      # legacy HS256 verify for Supabase Auth JWTs
+    supabase_url: str | None = None             # e.g. https://<ref>.supabase.co — ES256 JWKS verify
 
     @property
     def alpaca_base_url(self) -> str:
@@ -169,6 +170,7 @@ def load_config() -> Config:
         portfolio_db_path=_db,
         kill_switch_path=_ks,
         supabase_jwt_secret=os.getenv("SUPABASE_JWT_SECRET") or None,
+        supabase_url=(os.getenv("SUPABASE_URL") or "").rstrip("/") or None,
         risk=RiskLimits(
             # Dynamic universe: allowlist=None opens the gate to any screened symbol.
             # Static mode: allowlist populated from RISK_ALLOWLIST or the DEFAULT_ALLOWLIST.
