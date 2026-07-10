@@ -58,6 +58,10 @@ def get_current_user(request: Request) -> str:
     auth_header = request.headers.get("authorization") or ""
     scheme, _, token = auth_header.partition(" ")
     if scheme.lower() != "bearer" or not token:
+        logger.warning(
+            "no bearer token on request (path=%s, auth_header_present=%s)",
+            request.url.path, bool(auth_header),
+        )
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
