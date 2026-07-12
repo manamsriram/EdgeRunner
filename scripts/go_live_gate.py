@@ -68,7 +68,10 @@ def _run_combo(symbol: str, strategy_cls, oos_start: datetime, oos_end: datetime
 
     strategy = strategy_cls(symbol)
     cost_model = CostModel(slippage_bps=5.0)
-    result = run_backtest(bars, strategy, cost_model=cost_model)
+    # Mirror production: every live equity position carries a stop, widened by the
+    # strategy's multiplier (DipRecovery). A stop-less OOS test overstates the edge.
+    stop_pct = config.risk.stop_loss_pct * getattr(strategy, "stop_loss_multiplier", 1.0)
+    result = run_backtest(bars, strategy, cost_model=cost_model, stop_loss_pct=stop_pct)
 
     strat_metrics = compute_metrics(result.equity_curve, result.trades)
     bh_metrics = compute_metrics(result.buy_hold_curve, [])

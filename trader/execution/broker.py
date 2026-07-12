@@ -206,10 +206,16 @@ class AlpacaBroker:
             logger.warning("get_portfolio_history failed: %s", exc)
             return None
 
-    def get_account_activities(self, activity_type: str = "FILL") -> list[dict]:
+    def get_account_activities(
+        self, activity_type: str = "FILL", raise_on_error: bool = False
+    ) -> list[dict]:
         """Fetch account activities as plain dicts. alpaca-py's TradingClient does not
-        consistently expose this endpoint across SDK versions. Returns [] on any error
-        — callers must handle empty list.
+        consistently expose this endpoint across SDK versions.
+
+        By default returns [] on any error, so public read endpoints (performance,
+        calendar) degrade gracefully. Pass `raise_on_error=True` from the nightly
+        learning path so a fetch failure fails loud instead of silently training the
+        bandit on zero fills (an API hiccup ≠ "no trades happened").
 
         Each returned dict: {"symbol", "side", "qty", "price", "ts", "order_id"}.
         "order_id" is Alpaca's own order id — matches our orders.broker_order_id,
@@ -266,6 +272,8 @@ class AlpacaBroker:
             return result
         except Exception as exc:
             logger.warning("get_account_activities failed: %s", exc)
+            if raise_on_error:
+                raise
             return []
 
     # ---- reconciliation (source of truth) ----
@@ -520,6 +528,16 @@ class AlpacaBroker:
             if time.monotonic() >= deadline:
                 return None
             time.sleep(poll_interval)
+
+    def get_order(self, client_order_id: str) -> Any | None:
+        """Look up an order at the broker by client id. Returns None when the lookup
+        fails (network error or unknown id) — callers treat None as "status unknown,
+        try again later" rather than evidence the order is gone."""
+        try:
+            return self._ensure_client().get_order_by_client_id(client_order_id)
+        except Exception as exc:
+            logger.warning("order lookup failed for %s: %s", client_order_id, exc)
+            return None
 
     def cancel_open_stops(self, symbol: str) -> None:
         """Cancel open GTC stop-sell orders for symbol. Best-effort — logs failures."""

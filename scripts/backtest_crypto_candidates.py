@@ -32,6 +32,7 @@ DEFAULT_CRYPTO_SYMBOLS = [
 ]
 DEFAULT_YEARS = 2
 CRYPTO_SLIPPAGE_BPS = 10.0
+CRYPTO_TAKER_FEE_BPS = 25.0  # Alpaca crypto taker fee — real cost, not fee-free
 
 DIP_GRID = [
     (0.10, 0.05),  # equity defaults, for reference
@@ -70,7 +71,8 @@ def _run(strategy, bars: pd.DataFrame):
 
     if len(bars) < 60:
         return None
-    result = run_backtest(bars, strategy, cost_model=CostModel(slippage_bps=CRYPTO_SLIPPAGE_BPS))
+    result = run_backtest(bars, strategy, cost_model=CostModel(
+        slippage_bps=CRYPTO_SLIPPAGE_BPS, taker_fee_bps=CRYPTO_TAKER_FEE_BPS))
     return {
         "strat": compute_metrics(result.equity_curve, result.trades),
         "bh": compute_metrics(result.buy_hold_curve, []),
@@ -201,7 +203,8 @@ def main() -> int:
         from trader.backtest.metrics import compute_metrics
         bh_result = run_backtest(
             bars, CryptoEMACrossover(symbol=sym),
-            cost_model=CostModel(slippage_bps=CRYPTO_SLIPPAGE_BPS),
+            cost_model=CostModel(slippage_bps=CRYPTO_SLIPPAGE_BPS,
+                                 taker_fee_bps=CRYPTO_TAKER_FEE_BPS),
         )
         bh_metrics = compute_metrics(bh_result.buy_hold_curve, [])
 

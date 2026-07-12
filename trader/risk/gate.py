@@ -138,6 +138,53 @@ class KillSwitch:
         self._path.unlink(missing_ok=True)
 
 
+class AutonomyOverride:
+    """A file-backed manual/auto override for the trading autonomy mode.
+
+    Mirrors KillSwitch: the override lives in a file so it survives a process crash
+    and crosses the API/scheduler thread (and standalone-process) boundary — the
+    dashboard writes it, the trading loop reads it. Absent file → no override, and
+    the loop falls back to the AUTONOMY env value. This is what makes the dashboard
+    manual/auto toggle actually change trading behaviour rather than a cosmetic global.
+    """
+
+    _VALID = {"manual", "auto"}
+
+    def __init__(self, path: str | os.PathLike[str]) -> None:
+        self._path = Path(path)
+
+    def get(self) -> str | None:
+        """Return "manual"/"auto" if a valid override is set, else None."""
+        try:
+            value = self._path.read_text().strip().lower()
+        except FileNotFoundError:
+            return None
+        return value if value in self._VALID else None
+
+    def set(self, mode: str) -> None:
+        mode = mode.strip().lower()
+        if mode not in self._VALID:
+            raise ValueError(f"invalid autonomy mode: {mode!r}")
+        # Write-then-replace so a reader never sees a half-written flag.
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp.write_text(mode)
+        os.replace(tmp, self._path)
+
+    def clear(self) -> None:
+        self._path.unlink(missing_ok=True)
+
+
+def effective_autonomy(config) -> str:
+    """The autonomy mode actually in force: file override if set, else config.autonomy.
+
+    Every decision-gate branch (manual → queue proposal, auto → submit) must read
+    this, not config.autonomy directly, or the dashboard toggle does nothing.
+    """
+    path = getattr(config, "autonomy_override_path", None)
+    override = AutonomyOverride(path).get() if path else None
+    return override or config.autonomy
+
+
 class RiskGate:
     """Stateless evaluator built from `RiskLimits`. The same instance serves the manual
     and autonomous paths — that sameness is what makes flipping AUTONOMY safe later."""

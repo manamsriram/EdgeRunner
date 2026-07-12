@@ -13,12 +13,15 @@ from api.deps import get_config, get_current_user, get_repo
 
 router = APIRouter(prefix="/controls", tags=["controls"])
 
-_autonomy_override: str | None = None
-
 
 def _kill_switch():
     from trader.risk.gate import KillSwitch
     return KillSwitch(get_config().kill_switch_path)
+
+
+def _autonomy_override():
+    from trader.risk.gate import AutonomyOverride
+    return AutonomyOverride(get_config().autonomy_override_path)
 
 
 @router.get("/kill-switch")
@@ -46,8 +49,8 @@ def disengage_kill_switch(username: str = Depends(get_current_user)):
 
 @router.get("/autonomy")
 def autonomy_mode(username: str = Depends(get_current_user)):
-    mode = _autonomy_override if _autonomy_override is not None else get_config().autonomy
-    return {"mode": mode}
+    from trader.risk.gate import effective_autonomy
+    return {"mode": effective_autonomy(get_config())}
 
 
 class AutonomyRequest(BaseModel):
@@ -56,10 +59,11 @@ class AutonomyRequest(BaseModel):
 
 @router.post("/autonomy")
 def set_autonomy_mode(body: AutonomyRequest, username: str = Depends(get_current_user)):
-    global _autonomy_override
-    _autonomy_override = body.mode
-    logger.info("autonomy mode set to %s by %s", body.mode, username)
-    return {"mode": _autonomy_override}
+    # File-backed so the running scheduler/pipeline actually reads it (a module
+    # global would only change what this API process reports, not trading behaviour).
+    _autonomy_override().set(body.mode)
+    logger.warning("autonomy mode set to %s by %s", body.mode, username)
+    return {"mode": body.mode}
 
 
 @router.get("/runs")

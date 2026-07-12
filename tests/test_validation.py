@@ -48,6 +48,26 @@ def test_permutation_pvalue_in_unit_interval() -> None:
     assert out == permutation_test(trades, n_simulations=500, seed=1)
 
 
+def test_permutation_sharpe_low_p_for_strong_edge() -> None:
+    # Varied but all-positive returns: a genuine directional edge (positive mean,
+    # finite variance) → sign-flip almost never matches the actual Sharpe, so p is
+    # near 0. The old order-shuffle gave p≈1 here — the bug this fix addresses.
+    rets = [0.03, 0.01, 0.02, 0.04, 0.015, 0.025, 0.035, 0.01, 0.02, 0.03, 0.045, 0.02]
+    trades = [_trade(f"2024-02-{d:02d}", f"2024-02-{d+1:02d}", r)
+              for d, r in zip(range(2, 14), rets)]
+    out = permutation_test(trades, n_simulations=1000, seed=1)
+    assert out["p_value_sharpe"] < 0.05
+
+
+def test_permutation_sharpe_high_p_for_no_edge() -> None:
+    # Symmetric zero-mean returns: no edge → sign-flip Sharpe ~ actual → p near 0.5.
+    rets = [0.02, -0.02] * 8
+    trades = [_trade(f"2024-03-{d:02d}", f"2024-03-{d+1:02d}", r)
+              for d, r in zip(range(2, 18), rets)]
+    out = permutation_test(trades, n_simulations=2000, seed=1)
+    assert 0.2 < out["p_value_sharpe"] < 0.8
+
+
 # ─── bootstrap_sharpe_ci ───
 
 def test_bootstrap_ci_brackets_point_estimate() -> None:

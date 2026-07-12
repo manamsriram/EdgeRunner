@@ -161,6 +161,11 @@ class PortfolioRepository(ABC):
         do not use get_orders() + client-side filtering for this."""
 
     @abstractmethod
+    def get_orders_by_status(self, status: str, since_ts: str) -> list[dict]:
+        """Orders with the given status whose ts >= since_ts (ISO-8601), oldest-first.
+        Used by order-status reconciliation to find rows stuck at 'submitted'."""
+
+    @abstractmethod
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int: ...
 
     @abstractmethod

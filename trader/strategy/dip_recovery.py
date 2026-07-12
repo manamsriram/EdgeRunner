@@ -52,6 +52,11 @@ class DipRecovery(Strategy):
                     expansion exit is left unsmoothed since exits should stay fast.
     """
 
+    # Buys into drawdown by design, so the normal 8% stop would exit almost every
+    # entry immediately. Widen to a catastrophe stop (~16%) that only fires on a
+    # thesis-breaking collapse, not the ordinary dip this strategy is built to hold.
+    stop_loss_multiplier: float = 2.0
+
     def __init__(
         self,
         symbol: str,

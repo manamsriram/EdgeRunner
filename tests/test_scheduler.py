@@ -159,7 +159,7 @@ def test_run_once_calls_pipeline_when_open(tmp_path):
 def _stub_activities(broker: AlpacaBroker, fills: list[dict]) -> dict:
     calls = {"n": 0}
 
-    def _fake(activity_type: str = "FILL"):
+    def _fake(activity_type: str = "FILL", raise_on_error: bool = False):
         calls["n"] += 1
         return fills
 

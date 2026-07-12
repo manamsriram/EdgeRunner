@@ -74,6 +74,15 @@ def test_wrong_audience_rejected(monkeypatch):
     assert exc.value.status_code == 401
 
 
+def test_malformed_token_returns_401_not_500(monkeypatch):
+    """A garbage bearer value makes get_unverified_header raise; the handler must
+    still end in a 401, never a 500."""
+    monkeypatch.setattr(deps, "get_config", lambda: _cfg(supabase_jwt_secret="s3cr3t"))
+    with pytest.raises(HTTPException) as exc:
+        deps.get_current_user(_request("not-a-jwt"))
+    assert exc.value.status_code == 401
+
+
 def test_es256_jwks_token_accepted(monkeypatch):
     """Current Supabase default: access tokens signed ES256, verified via JWKS public key."""
     from cryptography.hazmat.primitives.asymmetric import ec

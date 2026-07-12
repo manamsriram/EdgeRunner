@@ -75,6 +75,13 @@ class Strategy(ABC):
     in one place rather than relying on every subclass to behave.
     """
 
+    # Multiplier applied to the pipeline's stop-loss distance for positions this
+    # strategy owns. 1.0 = the default stop (8% equity / 5% crypto). Strategies whose
+    # thesis is buying into drawdown (DipRecovery) widen this so a normal dip doesn't
+    # stop them out, while still keeping a catastrophe stop — a widened stop is not
+    # no stop. Applies to BOTH the software stop and the broker-side GTC stop.
+    stop_loss_multiplier: float = 1.0
+
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
         self._warmed_up = False

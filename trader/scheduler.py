@@ -19,7 +19,7 @@ from trader.execution.options_broker import AlpacaOptionsBroker
 from trader.pipeline import PipelineRun, run_pipeline
 from trader.portfolio.repository import PortfolioRepository
 from trader.portfolio.postgres_repo import PostgresRepository
-from trader.risk.gate import KillSwitch, RiskGate, is_crypto_symbol
+from trader.risk.gate import KillSwitch, RiskGate, effective_autonomy, is_crypto_symbol
 from trader.strategy.wheel import WheelStrategy, reconcile_options, run_wheel_tick
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ def run_once(
         try:
             reconcile_options(options_broker, broker, repo)
             wheel_symbols = sorted({s.symbol for s in strategies if isinstance(s, WheelStrategy)})
-            if config.risk.wheel_strategy_enabled and wheel_symbols and config.autonomy == "auto":
+            if config.risk.wheel_strategy_enabled and wheel_symbols and effective_autonomy(config) == "auto":
                 gate = RiskGate(config.risk)
                 ks = KillSwitch(config.kill_switch_path)
                 run_wheel_tick(config, options_broker, broker, repo, gate, ks, wheel_symbols)
@@ -112,9 +112,12 @@ def run_nightly_bandit_update(
     # TODO: wire record_ic_observations after compute_ic_from_broker_fills
 
     try:
-        fills = broker.get_account_activities(activity_type="FILL")
+        fills = broker.get_account_activities(activity_type="FILL", raise_on_error=True)
     except Exception:
-        logger.exception("nightly bandit update: failed to fetch account activities")
+        logger.exception(
+            "nightly bandit update: failed to fetch account activities — skipping "
+            "this cycle rather than training on zero fills"
+        )
         return {}
 
     weights = update_bandit_weights(repo, fills=fills, cycle_index=cycle_index)
@@ -149,6 +152,7 @@ def start_scheduler(
     universe_date: date | None = None
     bandit_update_date: date | None = None
     signal_precomputed_date: date | None = None
+    tick_count = 0
     bandit_enabled = config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live
 
     # Repair the in-memory signal cache immediately on process start. A mid-day
@@ -204,6 +208,16 @@ def start_scheduler(
             results = run_once(config, current_strategies, broker, repo, options_broker=options_broker)
             for r in results:
                 logger.info("tick result: symbol=%s outcome=%s", r.symbol, r.outcome)
+
+            # Settle orders stuck at 'submitted' against broker truth every ~15 ticks
+            # (and on the first tick after start). Covers slow fills the 5s
+            # wait_for_fill window missed — including deferred sell outcomes.
+            if tick_count % 15 == 0:
+                from trader.pipeline import reconcile_order_statuses
+                n = reconcile_order_statuses(broker, repo)
+                if n:
+                    logger.info("order-status reconciliation updated %d order(s)", n)
+            tick_count += 1
         except Exception:
             logger.exception("unhandled error in scheduler tick — continuing")
         time.sleep(poll_minutes * 60)
