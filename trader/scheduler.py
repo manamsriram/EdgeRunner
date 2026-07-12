@@ -297,10 +297,11 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
     """Build 2-strategy stack (SuperTrend + DipRecovery) per equity symbol.
 
     Combination backtests (scripts/backtest_combos.py; 10 symbols, 2yr and 4yr
-    split-adjusted windows, independent-sleeve model matching live execution):
+    split-adjusted windows, independent-sleeve model matching live execution,
+    intra-bar stop):
 
-      ST+Dip:        2yr 37.9% / Sharpe 0.91   4yr 151.3% / Sharpe 1.00
-      All 5 (prior): 2yr 23.8% / Sharpe 0.86   4yr  89.6% / Sharpe 0.98
+      ST+Dip:        2yr 37.8% / Sharpe 0.92   4yr 159.1% / Sharpe 1.04
+      All 5 (prior): 2yr 22.2% / Sharpe 0.84   4yr  84.9% / Sharpe 0.91
 
     SuperTrend (trend-following) and DipRecovery (deep-drawdown mean reversion)
     are complementary; SmashDayB, EquityBollingerReversion and DonchianBreakout
@@ -412,10 +413,10 @@ def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[
     """Build single-strategy stack (DonchianBreakout) per crypto symbol.
 
     Pure Donchian beat every tested combo on crypto across both the 2yr and 4yr
-    windows (7 pairs, 10bps slippage):
+    windows (7 pairs, 10bps slippage + 25bps Alpaca taker fee, intra-bar stop):
 
-      2yr: 56% ret / Sharpe 0.46 / -33% dd   vs EMA+Smash+Dip 21% / 0.22 / -51%
-      4yr: 205% ret / Sharpe 0.51 / -42% dd  vs EMA+Smash+Dip 132% / 0.41 / -56%
+      2yr:  46% ret / Sharpe 0.39 / -36% dd   vs EMA+Smash+Dip -3% / 0.08 / -54%
+      4yr: 171% ret / Sharpe 0.40 / -43% dd   vs EMA+Smash+Dip 89% / 0.25 / -60%
 
     Every strategy added to it diluted returns AND worsened drawdown — the
     composite's sell-priority lets weaker strategies' sells truncate Donchian's
