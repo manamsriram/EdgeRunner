@@ -24,6 +24,10 @@ from trader.strategy.base import Strategy
 class SweepResult:
     params: dict[str, Any]
     metrics: Metrics
+    # Walk-forward consistency_rate (fraction of profitable windows) when the sweep
+    # runs with validate=True; None otherwise. Lets you re-rank on robustness — a
+    # combo with a great in-sample Sharpe but consistency ~0 is an overfit.
+    consistency: float | None = None
 
 
 def param_sweep(
@@ -34,6 +38,8 @@ def param_sweep(
     initial_cash: float = 10_000.0,
     cost_model: CostModel | None = None,
     stop_loss_pct: float | None = None,
+    validate: bool = False,
+    n_windows: int = 5,
 ) -> list[SweepResult]:
     """Exhaustive grid search over `param_grid`, ranked by `metric` descending.
 
@@ -46,6 +52,12 @@ def param_sweep(
     Combos that raise while constructing the strategy (e.g. a validated param
     outside its valid range) are skipped rather than aborting the whole sweep —
     a grid edge landing on an invalid combo shouldn't kill the search.
+
+    `validate=True` attaches each combo's walk-forward consistency_rate to its
+    SweepResult.consistency, so the top-of-grid combo can be checked for robustness
+    instead of trusted on in-sample metric alone. Only walk-forward runs here (pure
+    slicing, cheap); the expensive permutation/bootstrap resampling stays out of the
+    grid loop — run those once on the chosen combo via format_report(validate=True).
     """
     keys = list(param_grid.keys())
     results: list[SweepResult] = []
@@ -63,7 +75,12 @@ def param_sweep(
             stop_loss_pct=stop_loss_pct,
         )
         m = compute_metrics(result.equity_curve, result.trades)
-        results.append(SweepResult(params=params, metrics=m))
+        consistency = None
+        if validate:
+            from trader.backtest.validation import walk_forward
+            wf = walk_forward(result.equity_curve, result.trades, n_windows=n_windows)
+            consistency = wf.get("consistency_rate")  # None on too-short windows
+        results.append(SweepResult(params=params, metrics=m, consistency=consistency))
 
     results.sort(key=lambda r: getattr(r.metrics, metric), reverse=True)
     return results

@@ -188,6 +188,7 @@ def format_report(
     symbol: str,
     benchmark_equity: Optional[pd.Series] = None,
     bars: Optional[pd.DataFrame] = None,
+    validate: bool = False,
 ) -> str:
     """Human-readable report comparing the strategy to buy-and-hold.
 
@@ -195,6 +196,12 @@ def format_report(
     over the same date range) to include a beta row; omit for crypto or when SPY
     data is unavailable. Caveats travel with every report rather than living only
     in the docs.
+
+    `validate=True` appends a statistical-significance block (permutation p-values,
+    bootstrap Sharpe CI, walk-forward consistency) so a headline Sharpe can't be
+    read without its "is this luck?" context. Off by default — the permutation and
+    bootstrap resampling cost ~1000 recomputes each, so opt in for a single chosen
+    result, not inside a sweep.
     """
     strat = compute_metrics(result.equity_curve, result.trades)
     if bars is not None:
@@ -224,6 +231,8 @@ def format_report(
         b = _beta(result.equity_curve, benchmark_equity)
         beta_str = f"{b:.2f}" if not np.isnan(b) else "n/a"
         lines.append(f"{'beta vs SPY':<20}{beta_str:>16}{'n/a':>16}")
+    if validate:
+        lines += _validation_lines(result)
     lines += [
         "-" * 52,
         f"slippage {result.cost_model.slippage_bps:.0f}bps, "
@@ -232,3 +241,30 @@ def format_report(
         "fills are optimistic; fundamentals are not point-in-time. Price/technical only.",
     ]
     return "\n".join(lines)
+
+
+def _validation_lines(result) -> list[str]:
+    """Format the statistical-validation block. Local import avoids the
+    metrics <-> validation import cycle (validation imports TRADING_DAYS)."""
+    from trader.backtest.validation import validate_result
+
+    v = validate_result(result)
+    perm, boot, wf = v["permutation"], v["bootstrap"], v["walk_forward"]
+    out = ["-" * 52, "validation (is the edge real, or luck?)"]
+    if "error" in perm:
+        out.append(f"  permutation:   n/a ({perm['error']})")
+    else:
+        out.append(f"  permutation:   p(sharpe)={perm['p_value_sharpe']:.3f}  "
+                   f"p(maxDD)={perm['p_value_max_dd']:.3f}  (lower = less likely luck)")
+    if "error" in boot:
+        out.append(f"  bootstrap:     n/a ({boot['error']})")
+    else:
+        out.append(f"  bootstrap:     sharpe {boot['sharpe']:.2f} "
+                   f"[{boot['ci_low']:.2f}, {boot['ci_high']:.2f}] 95%CI  "
+                   f"p(<=0)={boot['p_value_positive']:.3f}")
+    if "error" in wf:
+        out.append(f"  walk-forward:  n/a ({wf['error']})")
+    else:
+        out.append(f"  walk-forward:  {wf['profitable_windows']}/{wf['n_windows']} "
+                   f"windows profitable (consistency {wf['consistency_rate']:.0%})")
+    return out

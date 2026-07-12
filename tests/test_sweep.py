@@ -51,6 +51,17 @@ def test_invalid_combo_is_skipped_not_raised() -> None:
     assert results[0].params["dip_pct"] == 0.10
 
 
+def test_validate_attaches_consistency() -> None:
+    grid = {"dip_pct": [0.05, 0.10], "expansion_pct": [0.05]}
+    plain = param_sweep(_bars(), _factory, grid)
+    assert all(r.consistency is None for r in plain)  # off by default
+
+    validated = param_sweep(_bars(), _factory, grid, validate=True, n_windows=3)
+    # Every combo carries a consistency_rate in [0, 1] (or None if too short).
+    assert all(r.consistency is None or 0.0 <= r.consistency <= 1.0
+               for r in validated)
+
+
 def test_each_combo_gets_its_own_params() -> None:
     grid = {"dip_pct": [0.05, 0.10], "expansion_pct": [0.05]}
     results = param_sweep(_bars(), _factory, grid)
