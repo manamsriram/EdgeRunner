@@ -71,3 +71,26 @@ All four intraday strategies implemented and wired. Enable via `INTRADAY_ALLOWLI
 
 ### ~~Intraday Trend (5-min Bars)~~ ✅ DONE
 `trader/strategy/intraday_trend.py` — 5-min bars, SuperTrend (ATR=14, mult=3.0) with ADX≥20 regime filter.
+
+---
+
+## Audit Remediation — PR #12 (`fix/safety-validation-audit`)
+
+Full audit 2026-07-11 (plan: `check-the-current-trading-linear-minsky.md`). P0 safety + P1 validation shipped in commit `d6b8cb1`; options enabled on paper. Remaining work → `docs/roadmap.md`.
+
+### Safety & Correctness (P0) ✅ DONE
+- **~~Sell fills unconfirmed~~** — outcome recorded only when `filled_order is not None` (uses `filled_order.filled_avg_price`); `_advance_state` skips owner pop on unconfirmed sells; new `reconcile_order_statuses(broker, repo, max_age_days=3)` upserts late-filled statuses. `pipeline.py`, `scheduler.py`, repo `get_orders_by_status`.
+- **~~Autonomy toggle cosmetic~~** — file-backed `AutonomyOverride` in `gate.py` (mirrors `KillSwitch`); `effective_autonomy(config)` read at every decision gate; `controls.py` GET/POST rewired. Dashboard "manual" now actually halts auto trading.
+- **~~No active account breaker~~** — `DAILY_LOSS_HALT_ENABLED=true` on Render/.env.example (code default stays False); breaker alert un-commented, gated on flag, once/day guard.
+- **~~DipRecovery stop contradiction~~** — `stop_loss_multiplier` class attr on `Strategy` (DipRecovery=2.0 → 16% disaster stop, software + broker GTC at same widened level). Thesis breathes, catastrophe capped.
+- **~~Fail-open startup/errors~~** — migration failure/timeout re-raises (aborts startup); `get_account_activities(raise_on_error=True)` propagates instead of silent `[]`; malformed JWT → always 401; auth debug logs demoted to DEBUG.
+
+### Validation Rigor (P1) ✅ DONE
+- **~~Permutation Sharpe inert~~** — replaced multiset shuffle with sign-flip test (H0: no directional edge); max-DD keeps order-shuffle.
+- **~~Go-live gate stop-less~~** — `go_live_gate.py` passes `stop_loss_pct * stop_loss_multiplier`; engine now exits intra-bar (gap-down fills at open, not stop).
+- **~~Sweep in-sample~~** — `param_sweep` supports `holdout_frac`; ranks on train, reports OOS metrics in `SweepResult`.
+- **~~iid bootstrap~~** — `bootstrap_sharpe_ci` uses stationary block bootstrap (block ≈ n^(1/3)).
+- **~~Crypto costs unrealistic~~** — `CostModel.taker_fee_bps` added; crypto backtests at 25bps. **Rerun deliverable still pending** (needs Alpaca keys) → `docs/roadmap.md`.
+
+### Options Activation (P3.1) ✅ DONE
+`OPTIONS_TRADING_ENABLED` / `WHEEL_STRATEGY_ENABLED` / `CSP_ON_DIP_ENABLED` = true on Render (requires `AUTONOMY=auto`). Cap held at 15% NAV (`MAX_OPTIONS_ALLOCATION_PCT`). Options depth (delta/roll/assignment) deferred → `docs/roadmap.md` P3.2.
