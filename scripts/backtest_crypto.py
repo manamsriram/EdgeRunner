@@ -32,7 +32,9 @@ def _run_combo(symbol: str, strategy_factory, start: datetime, end: datetime, co
         return None, f"{symbol}: only {len(bars)} bars (need 60)"
 
     strategy = strategy_factory(symbol)
-    cost_model = CostModel(slippage_bps=10.0)  # higher slippage for crypto
+    # Higher slippage for crypto + Alpaca crypto taker fee (~25 bps) so the numbers
+    # reflect real trading costs, not a fee-free idealization.
+    cost_model = CostModel(slippage_bps=10.0, taker_fee_bps=25.0)
     result = run_backtest(bars, strategy, cost_model=cost_model)
 
     strat = compute_metrics(result.equity_curve, result.trades)

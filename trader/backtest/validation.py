@@ -2,14 +2,18 @@
 
 Three independent, dependency-light checks (pure numpy/pandas, no scipy):
 
-  - permutation_test:   Monte-Carlo shuffle of trade ordering. The trade *multiset*
-                        is fixed; only the sequence changes. Answers "is the observed
-                        path (its Sharpe, its max drawdown) better than a random
-                        ordering of the same trades?" — the drawdown p-value in
-                        particular catches a lucky/unlucky sequence.
-  - bootstrap_sharpe_ci: Resample daily returns with replacement to put a confidence
-                        interval on Sharpe and estimate P(Sharpe <= 0). This is the
-                        "is the risk-adjusted return distinguishable from zero" test.
+  - permutation_test:   Two independent Monte-Carlo tests on the trade returns.
+                        (a) Sharpe via a SIGN-FLIP test: under H0 "no directional
+                        edge", each trade's return sign is flipped at random; the
+                        p-value is the fraction of sign-flipped samples whose Sharpe
+                        is at least the observed one. (Plain order-shuffling cannot
+                        test Sharpe — mean and std are permutation-invariant, so it
+                        always returns p≈1.) (b) Max drawdown via order-shuffle, which
+                        IS order-sensitive and catches a lucky/unlucky sequence.
+  - bootstrap_sharpe_ci: Stationary block bootstrap of daily returns to put a
+                        confidence interval on Sharpe and estimate P(Sharpe <= 0).
+                        Blocks preserve serial correlation, so the CI is not
+                        artificially tight the way iid resampling would make it.
   - walk_forward:       Split the equity curve into N sequential windows and report how
                         many are profitable. In-sample-only edges (the overfitting that
                         cost EdgeRunner its regime-adaptive and vol-targeting attempts)
@@ -56,15 +60,22 @@ def permutation_test(
     n_simulations: int = 1000,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Shuffle trade ordering; is the actual path better than random orderings?
+    """Is the actual path better than chance? Two independent Monte-Carlo tests.
 
-    Uses per-trade returns (`trade.return_pct`). Path Sharpe here is the raw
+    Uses per-trade returns (`trade.return_pct`). Path Sharpe is the raw
     (un-annualised) mean/std of the trade-return sequence — annualisation is a
-    constant factor that cancels in the p-value, and trades are not daily. The
-    max-drawdown metric is order-sensitive and the main signal of this test.
+    constant factor that cancels in the p-value, and trades are not daily.
 
-    Returns actual_sharpe, p_value_sharpe, actual_max_dd, p_value_max_dd, where a
-    p-value is the fraction of random orderings at least as extreme as the actual.
+    Sharpe (sign-flip): under H0 "no directional edge", each trade's return sign is
+    flipped with probability 0.5. p_value_sharpe is the fraction of sign-flipped
+    samples with Sharpe >= actual. A plain order-shuffle CANNOT test this — mean/std
+    are permutation-invariant, so it would report p≈1 for every strategy. Caveat: a
+    stop-loss truncates losers and lets winners run, so real trade returns are
+    asymmetric; the sign-flip null is therefore approximate, not exact.
+
+    Max drawdown (order-shuffle): drawdown depends on the sequence, so shuffling the
+    order is the right null. p_value_max_dd is the fraction of shuffles whose
+    drawdown is no worse than actual.
     """
     if len(trades) < MIN_TRADES:
         return {"error": f"need at least {MIN_TRADES} trades", "p_value_sharpe": 1.0}
@@ -74,13 +85,14 @@ def permutation_test(
     actual_max_dd = _path_max_dd(returns)
 
     rng = np.random.default_rng(seed)
+    n = returns.size
     sharpe_ge = 0
     dd_ge = 0  # count shuffles whose drawdown is no worse (>=, less negative-or-equal)
     for _ in range(n_simulations):
-        shuffled = rng.permutation(returns)
-        if _sharpe_from_returns(shuffled, annualize=False) >= actual_sharpe:
+        signs = rng.choice((-1.0, 1.0), size=n)
+        if _sharpe_from_returns(returns * signs, annualize=False) >= actual_sharpe:
             sharpe_ge += 1
-        if _path_max_dd(shuffled) >= actual_max_dd:
+        if _path_max_dd(rng.permutation(returns)) >= actual_max_dd:
             dd_ge += 1
 
     return {
@@ -100,7 +112,12 @@ def bootstrap_sharpe_ci(
     confidence: float = 0.95,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Resample daily returns with replacement to bound Sharpe and test it vs 0."""
+    """Stationary block bootstrap of daily returns to bound Sharpe and test it vs 0.
+
+    Resampling in blocks (rather than single iid draws) preserves the serial
+    correlation of an equity curve, so the confidence interval is not artificially
+    narrow. Block length defaults to ~n**(1/3) (min 2), the standard rule of thumb.
+    """
     if len(equity_curve) < 3:
         return {"error": "need at least 3 equity points"}
 
@@ -111,9 +128,20 @@ def bootstrap_sharpe_ci(
     point = _sharpe_from_returns(returns)
     rng = np.random.default_rng(seed)
     n = returns.size
+    block = max(2, round(n ** (1.0 / 3.0)))
     samples = np.empty(n_bootstrap)
     for i in range(n_bootstrap):
-        samples[i] = _sharpe_from_returns(returns[rng.integers(0, n, n)])
+        # Assemble a resample of length n by concatenating blocks that start at
+        # random indices and wrap around the series (stationary bootstrap).
+        pieces = []
+        filled = 0
+        while filled < n:
+            start = rng.integers(0, n)
+            idx = (start + np.arange(block)) % n
+            pieces.append(returns[idx])
+            filled += block
+        resample = np.concatenate(pieces)[:n]
+        samples[i] = _sharpe_from_returns(resample)
 
     alpha = (1.0 - confidence) / 2.0
     return {

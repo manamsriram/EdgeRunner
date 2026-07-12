@@ -20,7 +20,7 @@ from typing import Callable
 import pandas as pd
 
 from trader.backtest.costs import CostModel
-from trader.strategy.base import Signal, Strategy
+from trader.strategy.base import Strategy
 
 
 @dataclass
@@ -86,22 +86,39 @@ def run_backtest(
     for i in range(len(dates) - 1):
         asof = dates[i]
 
-        drawdown_from_entry = (
-            (float(bars.iloc[i]["close"]) - open_entry["price"]) / open_entry["price"]
-            if shares > 0.0 and open_entry is not None
-            else 0.0
-        )
-        if stop_loss_pct is not None and drawdown_from_entry <= -stop_loss_pct:
-            signal = Signal(
-                strategy.symbol, "sell", 1.0,
-                f"stop-loss: close down {drawdown_from_entry:.1%} from entry "
-                f"{open_entry['price']:.4f}",
-            )
-        else:
-            signal = strategy.generate(bars, asof)
-
         next_open = float(bars.iloc[i + 1]["open"])
+        next_low = float(bars.iloc[i + 1]["low"])
         fill_date = dates[i + 1]
+
+        # Intra-bar stop: a resting broker stop (as live places on every buy) fires
+        # the moment bar i+1 trades at or below the stop level — not only if the bar
+        # *closes* below it. A gap-down open fills at the open (worse than the stop),
+        # so use min(open, stop_level). This models stop frequency and gap-through
+        # tail risk that a close-based check silently misses.
+        stop_level = (
+            open_entry["price"] * (1.0 - stop_loss_pct)
+            if stop_loss_pct is not None and shares > 0.0 and open_entry is not None
+            else None
+        )
+        if stop_level is not None and next_low <= stop_level:
+            price = cost_model.fill_price(min(next_open, stop_level), "sell")
+            proceeds = shares * price
+            cash += proceeds - cost_model.commission(proceeds)
+            trades.append(Trade(
+                entry_date=open_entry["date"], entry_price=open_entry["price"],
+                exit_date=fill_date, exit_price=price, shares=shares))
+            fills.append({"date": fill_date, "side": "sell", "price": price,
+                          "shares": shares,
+                          "reason": f"stop-loss: bar low {next_low:.4f} <= stop "
+                                    f"{stop_level:.4f} (entry {open_entry['price']:.4f})"})
+            shares = 0.0
+            open_entry = None
+            mark = cash
+            equity_index.append(fill_date)
+            equity_values.append(mark)
+            continue
+
+        signal = strategy.generate(bars, asof)
 
         if signal.side == "buy" and shares == 0.0 and signal.strength > 0:
             fraction = 1.0

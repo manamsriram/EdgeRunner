@@ -38,6 +38,7 @@ def _config(tmp_path, autonomy: str = "manual", ks_name: str = "ks.flag") -> Con
         anthropic_api_key=None,
         portfolio_db_path=str(tmp_path / "portfolio.db"),
         kill_switch_path=str(tmp_path / ks_name),
+        autonomy_override_path=str(tmp_path / "autonomy_override.flag"),
         risk=RiskLimits(
             max_position_pct=0.10,
             daily_loss_limit_pct=0.03,
@@ -307,6 +308,61 @@ def test_auto_mode_fires_fill_alert(tmp_path, monkeypatch):
 
     fill_alerts = [m for m in alerts_fired if "FILL" in m and _SYMBOL in m]
     assert fill_alerts, f"Expected a FILL alert for {_SYMBOL}; got: {alerts_fired}"
+
+
+def _loss_state() -> AccountState:
+    return AccountState(
+        equity=100_000.0,
+        positions={},
+        open_order_symbols=frozenset(),
+        trades_today=0,
+        daily_pnl_pct=-0.05,  # below the 3% limit
+        stale=False,
+        cash=100_000.0,
+    )
+
+
+def _run_with_state(strategies, config, state, monkeypatch):
+    """Like _run, but forces broker.reconcile to return `state` verbatim — the fake
+    client can't express an arbitrary daily_pnl_pct, which the breaker check needs."""
+    b = _broker_for(_healthy_state(), config)
+    monkeypatch.setattr(b, "reconcile", lambda: state)
+    r = SQLiteRepository(config.portfolio_db_path)
+    import trader.pipeline as _pm
+    orig_single, orig_batch = _pm.get_daily_bars, _pm.get_daily_bars_batch
+    _pm.get_daily_bars = lambda symbol, start, end, config=None: _BARS
+    _pm.get_daily_bars_batch = lambda symbols, start, end, config=None: {s: _BARS for s in symbols}
+    try:
+        return run_pipeline(config, strategies, b, r, asof=_ASOF)
+    finally:
+        _pm.get_daily_bars, _pm.get_daily_bars_batch = orig_single, orig_batch
+
+
+def test_daily_loss_breaker_alert_fires_when_enabled(tmp_path, monkeypatch):
+    alerts_fired: list[str] = []
+    monkeypatch.setattr("trader.pipeline.send_alert",
+                        lambda message, webhook_url, **kw: alerts_fired.append(message))
+    import trader.pipeline as _pm
+    monkeypatch.setattr(_pm.run_pipeline, "_loss_alert_date", None, raising=False)
+
+    from dataclasses import replace as _replace
+    cfg = _config(tmp_path, autonomy="auto")
+    cfg = _replace(cfg, risk=_replace(cfg.risk, daily_loss_halt_enabled=True))
+
+    _run_with_state([_FixedStrategy(_SYMBOL, "buy")], cfg, _loss_state(), monkeypatch)
+    assert any("Daily-loss breaker" in m for m in alerts_fired), alerts_fired
+
+
+def test_daily_loss_breaker_alert_silent_when_disabled(tmp_path, monkeypatch):
+    alerts_fired: list[str] = []
+    monkeypatch.setattr("trader.pipeline.send_alert",
+                        lambda message, webhook_url, **kw: alerts_fired.append(message))
+    import trader.pipeline as _pm
+    monkeypatch.setattr(_pm.run_pipeline, "_loss_alert_date", None, raising=False)
+
+    cfg = _config(tmp_path, autonomy="auto")  # daily_loss_halt_enabled defaults False
+    _run_with_state([_FixedStrategy(_SYMBOL, "buy")], cfg, _loss_state(), monkeypatch)
+    assert not any("Daily-loss breaker" in m for m in alerts_fired), alerts_fired
 
 
 def test_pipeline_working_state_updated_between_symbols(tmp_path):

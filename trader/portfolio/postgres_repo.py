@@ -299,6 +299,15 @@ class PostgresRepository(PortfolioRepository):
                 row = cur.fetchone()
                 return dict(row) if row else None
 
+    def get_orders_by_status(self, status: str, since_ts: str) -> list[dict]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM orders WHERE status=%s AND ts>=%s ORDER BY id",
+                    (status, since_ts),
+                )
+                return [dict(r) for r in cur.fetchall()]
+
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int:
         with self._connect() as conn:
             with conn.cursor() as cur:

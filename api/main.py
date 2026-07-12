@@ -247,15 +247,20 @@ async def _guarded(coro, name: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail closed: a schema mismatch must abort startup, not trade against an
+    # un-migrated DB. Render restarts a crashed service (a visible crash-loop),
+    # whereas a silent continue would run the pipeline against the wrong schema.
     try:
         await asyncio.wait_for(
             asyncio.get_running_loop().run_in_executor(None, _run_migrations),
             timeout=30.0,
         )
-    except asyncio.TimeoutError:
-        logger.error("migrations timed out after 30s — continuing startup without migrations")
+    except asyncio.TimeoutError as exc:
+        logger.error("migrations timed out after 30s — aborting startup")
+        raise RuntimeError("database migrations timed out") from exc
     except Exception:
-        logger.exception("migrations failed — continuing startup")
+        logger.exception("migrations failed — aborting startup")
+        raise
     asyncio.create_task(_guarded(proposal_poller(), "proposal_poller"))
     asyncio.create_task(_guarded(_scheduler_loop(), "equity_scheduler"))
     asyncio.create_task(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))

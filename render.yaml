@@ -18,6 +18,18 @@ services:
         value: auto
       - key: ALPACA_PAPER
         value: "true"
+      # Account-level circuit breaker: halt NEW buys once the day's drawdown hits
+      # DAILY_LOSS_LIMIT_PCT (default 3%). Sells/exits are never blocked.
+      - key: DAILY_LOSS_HALT_ENABLED
+        value: "true"
+      # Options wheel/CSP-on-dip (paper). Cap stays 15% of NAV (MAX_OPTIONS_ALLOCATION_PCT).
+      # Options only run under AUTONOMY=auto (manual options mode is unimplemented).
+      - key: OPTIONS_TRADING_ENABLED
+        value: "true"
+      - key: WHEEL_STRATEGY_ENABLED
+        value: "true"
+      - key: CSP_ON_DIP_ENABLED
+        value: "true"
       - key: SECURE_COOKIES
         value: "true"
       # Set these as secrets in the Render dashboard — never commit them:

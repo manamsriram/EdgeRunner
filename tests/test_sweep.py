@@ -62,6 +62,33 @@ def test_validate_attaches_consistency() -> None:
                for r in validated)
 
 
+def test_holdout_off_by_default() -> None:
+    grid = {"dip_pct": [0.05, 0.10], "expansion_pct": [0.05]}
+    results = param_sweep(_bars(), _factory, grid)
+    assert all(r.holdout_metrics is None for r in results)
+
+
+def test_holdout_reports_oos_metrics_and_ranks_on_train() -> None:
+    # Longer series so both slices have shape to trade in.
+    closes = ([100.0] * MIN_BARS + [95.0, 90.0, 85.0, 90.0, 95.0, 100.0, 106.0] * 3)
+    idx = pd.bdate_range("2024-01-02", periods=len(closes))
+    bars = pd.DataFrame({"open": closes, "high": closes, "low": closes,
+                         "close": closes, "volume": [1_000_000] * len(closes)}, index=idx)
+    grid = {"dip_pct": [0.05, 0.10], "expansion_pct": [0.05]}
+    results = param_sweep(bars, _factory, grid, metric="total_return", holdout_frac=0.3)
+    # OOS metrics attached, ranking still by the (train) metric.
+    assert all(r.holdout_metrics is not None for r in results)
+    train_returns = [r.metrics.total_return for r in results]
+    assert train_returns == sorted(train_returns, reverse=True)
+
+
+def test_holdout_frac_out_of_range_raises() -> None:
+    import pytest
+    grid = {"dip_pct": [0.10], "expansion_pct": [0.05]}
+    with pytest.raises(ValueError):
+        param_sweep(_bars(), _factory, grid, holdout_frac=1.0)
+
+
 def test_each_combo_gets_its_own_params() -> None:
     grid = {"dip_pct": [0.05, 0.10], "expansion_pct": [0.05]}
     results = param_sweep(_bars(), _factory, grid)

@@ -80,13 +80,13 @@ def get_current_user(request: Request) -> str:
     logged so it's never silently open in a deployed environment.
     """
     if not auth_enabled():
-        logger.warning("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
+        logger.debug("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
         return "admin"
 
     auth_header = request.headers.get("authorization") or ""
     scheme, _, token = auth_header.partition(" ")
     if scheme.lower() != "bearer" or not token:
-        logger.warning(
+        logger.debug(
             "no bearer token on request (path=%s, auth_header_present=%s)",
             request.scope.get("path", "?"), bool(auth_header),
         )
@@ -94,8 +94,13 @@ def get_current_user(request: Request) -> str:
     try:
         payload = verify_supabase_jwt(token)
     except jwt.PyJWTError as exc:
-        header = jwt.get_unverified_header(token)
-        logger.warning("JWT verification failed: %s (header alg=%s)", exc, header.get("alg"))
+        # A malformed token can make get_unverified_header itself raise; guard it so the
+        # handler always ends in a 401, never a 500.
+        try:
+            alg = jwt.get_unverified_header(token).get("alg")
+        except jwt.PyJWTError:
+            alg = "unparseable"
+        logger.debug("JWT verification failed: %s (header alg=%s)", exc, alg)
         raise HTTPException(status_code=401, detail="invalid or expired session")
     return payload.get("email") or payload["sub"]
 

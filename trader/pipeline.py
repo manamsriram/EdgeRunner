@@ -34,7 +34,8 @@ from trader.portfolio.repository import (
     TradeOutcomeRow,
 )
 from trader.risk.gate import (
-    KillSwitch, OptionsOrderIntent, OrderIntent, RiskDecision, RiskGate, is_crypto_symbol,
+    KillSwitch, OptionsOrderIntent, OrderIntent, RiskDecision, RiskGate,
+    effective_autonomy, is_crypto_symbol,
 )
 from trader.risk.vol_sizing import vol_scale
 from trader.strategy.dip_recovery import DipRecovery
@@ -70,6 +71,10 @@ class PipelineRun:
     order_id: str | None = None
     error: str | None = None
     is_options: bool = False  # True when this run opened a CSP/CC rather than a stock order
+    # False when the order was submitted but its fill was not confirmed within the
+    # wait_for_fill window. Unconfirmed sells must NOT clear position ownership —
+    # reconcile_order_statuses settles them later against broker truth.
+    fill_confirmed: bool = True
 
 
 def run_pipeline(
@@ -142,25 +147,28 @@ def run_pipeline(
 
     logger.info(
         "tick equity=%.2f trades_today=%d autonomy=%s",
-        state.equity, state.trades_today, config.autonomy,
+        state.equity, state.trades_today, effective_autonomy(config),
     )
 
-    # DISABLED: daily-loss breaker alert — breaker itself disabled for performance monitoring.
-    # _today = asof.date()
-    # if (
-    #     state.daily_pnl_pct is not None
-    #     and state.daily_pnl_pct <= -config.risk.daily_loss_limit_pct
-    #     and getattr(run_pipeline, "_loss_alert_date", None) != _today
-    # ):
-    #     send_alert(
-    #         f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
-    #         f"(limit {-config.risk.daily_loss_limit_pct:.2%})",
-    #         config.slack_webhook_url,
-    #         alert_email=config.alert_email,
-    #         smtp_user=config.smtp_user,
-    #         smtp_password=config.smtp_password,
-    #     )
-    #     run_pipeline._loss_alert_date = _today  # type: ignore[attr-defined]
+    # Daily-loss breaker alert — fires once per day when the account's drawdown hits
+    # the limit, so a halted book is visible instead of silent. The gate already
+    # enforces the halt (RiskGate rejects new buys); this only notifies. Gated on the
+    # same flag as the halt so monitoring-only deployments (halt off) stay quiet.
+    if (
+        config.risk.daily_loss_halt_enabled
+        and state.daily_pnl_pct is not None
+        and state.daily_pnl_pct <= -config.risk.daily_loss_limit_pct
+        and getattr(run_pipeline, "_loss_alert_date", None) != asof.date()
+    ):
+        send_alert(
+            f"Daily-loss breaker tripped: {state.daily_pnl_pct:.2%} "
+            f"(limit {-config.risk.daily_loss_limit_pct:.2%}) — new buys halted",
+            config.slack_webhook_url,
+            alert_email=config.alert_email,
+            smtp_user=config.smtp_user,
+            smtp_password=config.smtp_password,
+        )
+        run_pipeline._loss_alert_date = asof.date()  # type: ignore[attr-defined]
 
     from trader.strategy.base import IntradayStrategy
 
@@ -338,11 +346,20 @@ def _advance_state(state, result, strategy, repo):
             except Exception:
                 logger.warning("failed to persist owner for %s/%s", result.symbol, pool)
         elif result.signal.side == "sell":
-            new_owners.pop(owner_key, None)
-            try:
-                repo.clear_position_owner(result.symbol, pool)
-            except Exception:
-                logger.warning("failed to clear owner for %s/%s", result.symbol, pool)
+            if result.fill_confirmed:
+                new_owners.pop(owner_key, None)
+                try:
+                    repo.clear_position_owner(result.symbol, pool)
+                except Exception:
+                    logger.warning("failed to clear owner for %s/%s", result.symbol, pool)
+            else:
+                # Sell submitted but fill unconfirmed — keep ownership so the owning
+                # strategy can still manage the position if the order never fills.
+                # reconcile_order_statuses clears the owner once the fill is verified.
+                logger.warning(
+                    "sell for %s/%s unconfirmed — retaining position owner",
+                    result.symbol, pool,
+                )
     if pool == "intraday":
         new_intraday = state.intraday_deployed + (
             approved_notional if result.signal and result.signal.side == "buy" else 0.0
@@ -365,6 +382,89 @@ def _advance_state(state, result, strategy, repo):
             position_owners=new_owners,
             deployed_notional=new_deployed,
         )
+
+
+def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
+    """Settle repo orders stuck at 'submitted' against broker truth.
+
+    The tick path only waits ~5s for a fill; anything slower stays 'submitted' in the
+    audit trail forever, and an unconfirmed sell defers its trade outcome and owner
+    clearing (see _advance_state). This job closes that loop: for each stuck order it
+    asks the broker for the real status, upserts it, and for late-FILLED sells records
+    the deferred outcome and clears position ownership. Returns rows updated.
+    """
+    since = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    try:
+        stuck = repo.get_orders_by_status("submitted", since)
+    except Exception:
+        logger.exception("order-status reconciliation: repo query failed")
+        return 0
+    if not stuck:
+        return 0
+
+    updated = 0
+    for row in stuck:
+        coid = row["client_order_id"]
+        order = broker.get_order(coid)
+        if order is None:
+            continue  # lookup failed — status unknown, retry next pass
+        status = str(getattr(order, "status", "")).lower()
+        if status == "filled":
+            new_status = "filled"
+        elif status in {"canceled", "cancelled", "expired", "rejected"}:
+            new_status = "canceled" if status == "cancelled" else status
+        else:
+            continue  # still live (new/accepted/partially_filled) — leave as submitted
+
+        repo.record_order(OrderRow(
+            client_order_id=coid, symbol=row["symbol"], side=row["side"],
+            notional=row["notional"], status=new_status,
+        ))
+        updated += 1
+        logger.info(
+            "order reconciliation: %s %s %s -> %s",
+            row["symbol"], row["side"], coid, new_status,
+        )
+
+        if new_status != "filled" or row["side"] != "sell":
+            continue
+
+        # Late-filled sell: the position is really gone. Record the deferred outcome
+        # (best-effort — entry fill price comes from the opening buy order at the
+        # broker) and clear ownership for both pools (long/flat: a sell is a full exit).
+        exit_price = float(getattr(order, "filled_avg_price", 0) or 0)
+        last_buy = repo.get_last_buy_order(row["symbol"])
+        entry_price = 0.0
+        if last_buy:
+            buy_order = broker.get_order(last_buy["client_order_id"])
+            entry_price = float(getattr(buy_order, "filled_avg_price", 0) or 0)
+        if exit_price > 0 and entry_price > 0:
+            try:
+                repo.record_trade_outcome(TradeOutcomeRow(
+                    symbol=row["symbol"],
+                    strategy=row.get("strategy_name") or "unknown",
+                    regime=row.get("regime") or "unknown",
+                    side="buy", entry_price=entry_price, exit_price=exit_price,
+                    pnl_pct=(exit_price - entry_price) / entry_price,
+                    exit_reason="reconciled-exit",
+                    entry_overlay_rationale=(last_buy or {}).get("entry_rationale"),
+                    closed_at=datetime.now(timezone.utc).isoformat(),
+                ))
+            except Exception:
+                logger.warning("reconciliation: outcome record failed for %s", row["symbol"])
+        else:
+            logger.warning(
+                "reconciliation: missing fill prices for %s (entry=%.2f exit=%.2f) — "
+                "outcome not recorded", row["symbol"], entry_price, exit_price,
+            )
+        for pool in ("daily", "intraday"):
+            try:
+                repo.clear_position_owner(row["symbol"], pool)
+            except Exception:
+                logger.warning(
+                    "reconciliation: failed to clear owner for %s/%s", row["symbol"], pool
+                )
+    return updated
 
 
 def precompute_signals(
@@ -413,6 +513,30 @@ def precompute_signals(
     return cached
 
 
+def _stop_multiplier_for_owner(owner_name: str | None) -> float:
+    """Resolve the stop-loss multiplier of the strategy class that owns a position.
+
+    The owner is stored as a class name string; walk the Strategy subclass tree to
+    find its stop_loss_multiplier (DipRecovery widens it to a catastrophe stop).
+    Unknown/absent owner → 1.0 (the normal stop). Governs both software and broker stop.
+    """
+    if not owner_name:
+        return 1.0
+    from trader.strategy.base import Strategy
+
+    seen = set()
+    stack = list(Strategy.__subclasses__())
+    while stack:
+        cls = stack.pop()
+        if cls in seen:
+            continue
+        seen.add(cls)
+        if cls.__name__ == owner_name:
+            return float(getattr(cls, "stop_loss_multiplier", 1.0))
+        stack.extend(cls.__subclasses__())
+    return 1.0
+
+
 def _prepare_signal(
     *,
     config,
@@ -433,7 +557,7 @@ def _prepare_signal(
     from trader.strategy.base import Signal
 
     symbol = strategy.symbol
-    run_id = repo.record_run(strategy=type(strategy).__name__, mode=config.autonomy)
+    run_id = repo.record_run(strategy=type(strategy).__name__, mode=effective_autonomy(config))
     signal = None
 
     try:
@@ -474,15 +598,17 @@ def _prepare_signal(
 
         current_price = (live_prices or {}).get(symbol) or float(bars["close"].iloc[-1])
         entry_price = state.avg_entry_prices.get(symbol, 0.0)
-        _stop_exempt = state.position_owners.get((symbol, _pool)) == "DipRecovery"
+        _owner = state.position_owners.get((symbol, _pool))
+        _base_stop = (
+            config.risk.crypto_stop_loss_pct if is_crypto_symbol(symbol)
+            else config.risk.stop_loss_pct
+        )
+        _stop_pct = _base_stop * _stop_multiplier_for_owner(_owner)
         if (
-            not _stop_exempt
-            and entry_price > 0
+            entry_price > 0
             and symbol in state.positions
             and state.positions[symbol] > 0
-            and (current_price - entry_price) / entry_price <= -(
-                config.risk.crypto_stop_loss_pct if is_crypto_symbol(symbol) else config.risk.stop_loss_pct
-            )
+            and (current_price - entry_price) / entry_price <= -_stop_pct
         ):
             signal = Signal(
                 symbol,
@@ -666,9 +792,10 @@ def _execute_signal(
                 kill_switch=kill_switch, state=state, asof=asof, ref_price=ref_price,
             )
 
+        autonomy = effective_autonomy(config)
         # For auto-mode sells: cancel broker-side stop before gate evaluation so the
         # open stop order doesn't appear in open_order_symbols and block the sell.
-        if signal.side == "sell" and config.autonomy == "auto" and not is_crypto_symbol(symbol):
+        if signal.side == "sell" and autonomy == "auto" and not is_crypto_symbol(symbol):
             broker.cancel_open_stops(symbol)
             from dataclasses import replace as _replace_for_gate
             state = _replace_for_gate(state, open_order_symbols=state.open_order_symbols - {symbol})
@@ -693,7 +820,7 @@ def _execute_signal(
                 risk_decision=risk_decision, outcome="blocked",
             )
 
-        if config.autonomy == "manual":
+        if autonomy == "manual":
             proposal_id = repo.create_proposal(ProposalRow(
                 symbol=symbol, side=signal.side,
                 notional=risk_decision.approved_notional,
@@ -744,11 +871,12 @@ def _execute_signal(
             entry_rationale=signal.reason if signal.side == "buy" else None,
         ))
 
-        # Record the closed-trade outcome for the cooldown guard and overlay memory.
-        # Submission already succeeded above, so this never fires for a rejected/failed
-        # order. ref_price approximates the fill price — sells have no wait_for_fill
-        # step in this codebase (only buys do, to place the protective stop).
-        if signal.side == "sell":
+        # Record the closed-trade outcome for the cooldown guard and overlay memory —
+        # but only once the sell's fill is confirmed. An unconfirmed sell may never
+        # fill (halted stock, rejected order); recording it anyway would write a
+        # phantom closed trade and orphan the still-held position. Unconfirmed sells
+        # stay 'submitted' and are settled later by reconcile_order_statuses.
+        if signal.side == "sell" and filled_order is not None:
             entry_price = state.avg_entry_prices.get(symbol, 0.0)
             if entry_price > 0:
                 if signal.reason.startswith("stop-loss:"):
@@ -757,24 +885,36 @@ def _execute_signal(
                     exit_reason = "eod-exit"
                 else:
                     exit_reason = "signal-exit"
+                exit_price = float(
+                    getattr(filled_order, "filled_avg_price", None) or ref_price
+                )
                 last_buy = repo.get_last_buy_order(symbol)
                 entry_rationale = last_buy.get("entry_rationale") if last_buy else None
                 try:
                     repo.record_trade_outcome(TradeOutcomeRow(
                         symbol=symbol, strategy=type(strategy).__name__, regime=regime,
-                        side="buy", entry_price=entry_price, exit_price=ref_price,
-                        pnl_pct=(ref_price - entry_price) / entry_price,
+                        side="buy", entry_price=entry_price, exit_price=exit_price,
+                        pnl_pct=(exit_price - entry_price) / entry_price,
                         exit_reason=exit_reason, entry_overlay_rationale=entry_rationale,
                         closed_at=datetime.now(timezone.utc).isoformat(),
                     ))
                 except Exception:
                     logger.warning("failed to record trade outcome for %s", symbol)
+        elif signal.side == "sell":
+            logger.warning(
+                "%s sell not confirmed filled in time — outcome deferred to "
+                "order-status reconciliation", symbol,
+            )
 
         # Place a broker-side GTC stop to protect new long positions. Wait for the
         # buy to actually fill first — submitting a stop-sell before the fill lands
         # reads as a short sale and gets rejected by Alpaca for non-shortable assets.
         if signal.side == "buy" and not is_crypto_symbol(symbol):
-            stop_price = ref_price * (1 - config.risk.stop_loss_pct)
+            # Widen the broker stop by the buying strategy's multiplier so it matches
+            # the software stop — a DipRecovery entry gets its catastrophe stop, not
+            # the default 8% that would knife it out of a normal dip.
+            _stop_pct = config.risk.stop_loss_pct * getattr(strategy, "stop_loss_multiplier", 1.0)
+            stop_price = ref_price * (1 - _stop_pct)
             # filled_order already computed above (fill-status persistence step).
             if filled_order is None:
                 logger.warning(
@@ -812,6 +952,7 @@ def _execute_signal(
             risk_decision=risk_decision,
             outcome="executed",
             order_id=client_order_id,
+            fill_confirmed=filled_order is not None,
         )
 
     except Exception:
@@ -850,7 +991,7 @@ def _execute_csp_entry(
     symbol = signal.symbol
     strategy_tag = "wheel" if isinstance(strategy, WheelStrategy) else "csp_on_dip"
 
-    if config.autonomy != "auto":
+    if effective_autonomy(config) != "auto":
         return PipelineRun(
             run_id=run_id, symbol=symbol, signal=signal,
             risk_decision=RiskDecision.reject(
@@ -1019,7 +1160,7 @@ def _run_pair(
 
     sym_a = strategy.symbol_a
     sym_b = strategy.symbol_b
-    run_id = repo.record_run(strategy=type(strategy).__name__, mode=config.autonomy)
+    run_id = repo.record_run(strategy=type(strategy).__name__, mode=effective_autonomy(config))
 
     _blocked_a = PipelineRun(
         run_id=run_id, symbol=sym_a, signal=None,
@@ -1080,7 +1221,7 @@ def _run_pair(
                             risk_decision=RiskDecision.reject(combined_reason), outcome="blocked"),
             )
 
-        if config.autonomy == "manual":
+        if effective_autonomy(config) == "manual":
             pid_a = repo.create_proposal(ProposalRow(
                 symbol=sym_a, side=pair_signal.side_a,
                 notional=decision_a.approved_notional, ref_price=price_a,

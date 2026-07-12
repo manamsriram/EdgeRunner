@@ -105,6 +105,7 @@ class Config:
     anthropic_api_key: str | None
     portfolio_db_path: str                   # SQLite store for orders/trades/proposals
     kill_switch_path: str                    # file flag that halts the order path
+    autonomy_override_path: str = "autonomy_override.flag"  # file flag overriding AUTONOMY at runtime
     risk: RiskLimits = field(default_factory=RiskLimits)
     alpaca_options_paper: bool = True        # separate flag: options can stay paper after stock goes live
     database_url: str | None = None              # Postgres DSN; None → SQLite
@@ -158,6 +159,7 @@ class Config:
 def load_config() -> Config:
     _db = (os.getenv("PORTFOLIO_DB_PATH") or "").strip() or "users.db"
     _ks = (os.getenv("KILL_SWITCH_PATH") or "").strip() or "kill_switch.flag"
+    _ao = (os.getenv("AUTONOMY_OVERRIDE_PATH") or "").strip() or "autonomy_override.flag"
     return Config(
         alpaca_api_key=os.getenv("ALPACA_API_KEY"),
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY"),
@@ -169,6 +171,7 @@ def load_config() -> Config:
         groq_api_key=os.getenv("GROQ_API_KEY") or None,
         portfolio_db_path=_db,
         kill_switch_path=_ks,
+        autonomy_override_path=_ao,
         supabase_jwt_secret=os.getenv("SUPABASE_JWT_SECRET") or None,
         supabase_url=(os.getenv("SUPABASE_URL") or "").rstrip("/") or None,
         risk=RiskLimits(

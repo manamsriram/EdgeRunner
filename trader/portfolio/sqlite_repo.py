@@ -316,6 +316,14 @@ class SQLiteRepository(PortfolioRepository):
             ).fetchone()
             return dict(row) if row else None
 
+    def get_orders_by_status(self, status: str, since_ts: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE status=? AND ts>=? ORDER BY id",
+                (status, since_ts),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int:
         with self._connect() as conn:
             cur = conn.execute(
