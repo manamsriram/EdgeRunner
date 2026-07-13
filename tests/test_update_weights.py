@@ -8,7 +8,11 @@ from __future__ import annotations
 import pytest
 
 from trader.learning.bandit_weights import DEFAULT_WEIGHT
-from trader.learning.update_weights import compute_pnls_from_fills, update_bandit_weights
+from trader.learning.update_weights import (
+    compute_ic_from_broker_fills,
+    compute_pnls_from_fills,
+    update_bandit_weights,
+)
 from trader.portfolio.repository import OrderRow
 from trader.portfolio.sqlite_repo import SQLiteRepository
 
@@ -98,6 +102,65 @@ def test_multiple_strategies_bucketed_separately():
     result = compute_pnls_from_fills(orders=orders, fills=fills)
     assert result[("A", "calm")] == [pytest.approx(100.0)]
     assert result[("B", "calm")] == [pytest.approx(-100.0)]
+
+
+# ---- compute_ic_from_broker_fills ----
+
+def _round_trip(bid, sid, strategy, regime, symbol, strength, buy_px, sell_px, qty=1):
+    """Order dicts + fills for one closed round-trip with a known entry strength."""
+    orders = [
+        {"broker_order_id": bid, "strategy_name": strategy, "regime": regime,
+         "symbol": symbol, "signal_strength": strength},
+        {"broker_order_id": sid, "strategy_name": strategy, "regime": regime,
+         "symbol": symbol, "signal_strength": strength},
+    ]
+    fills = [
+        {"order_id": bid, "symbol": symbol, "side": "buy",  "qty": qty, "price": buy_px},
+        {"order_id": sid, "symbol": symbol, "side": "sell", "qty": qty, "price": sell_px},
+    ]
+    return orders, fills
+
+
+def test_ic_empty_when_no_fills():
+    assert compute_ic_from_broker_fills(orders=[], fills=[]) == {}
+
+
+def test_ic_skips_arm_with_fewer_than_five_pairs():
+    orders, fills = [], []
+    for i in range(4):  # only 4 round-trips → below compute_ic floor of 5
+        o, f = _round_trip(f"b{i}", f"s{i}", "Donchian", "calm", "AAPL",
+                           strength=0.5, buy_px=100.0, sell_px=110.0)
+        orders += o
+        fills += f
+    assert compute_ic_from_broker_fills(orders=orders, fills=fills) == {}
+
+
+def test_ic_skips_fills_with_missing_strength():
+    orders = [
+        {"broker_order_id": "b1", "strategy_name": "Donchian", "regime": "calm",
+         "symbol": "AAPL", "signal_strength": None},
+        {"broker_order_id": "s1", "strategy_name": "Donchian", "regime": "calm",
+         "symbol": "AAPL", "signal_strength": None},
+    ]
+    fills = [
+        {"order_id": "b1", "symbol": "AAPL", "side": "buy",  "qty": 1, "price": 100.0},
+        {"order_id": "s1", "symbol": "AAPL", "side": "sell", "qty": 1, "price": 110.0},
+    ]
+    assert compute_ic_from_broker_fills(orders=orders, fills=fills) == {}
+
+
+def test_ic_positive_when_strength_predicts_return():
+    # Higher entry strength → higher realized return: IC should be strongly positive.
+    orders, fills = [], []
+    for i in range(6):
+        strength = 0.1 * (i + 1)          # 0.1 .. 0.6
+        sell_px = 100.0 * (1 + strength)  # return pct == strength → perfect corr
+        o, f = _round_trip(f"b{i}", f"s{i}", "Donchian", "calm", "AAPL",
+                           strength=strength, buy_px=100.0, sell_px=sell_px)
+        orders += o
+        fills += f
+    ic = compute_ic_from_broker_fills(orders=orders, fills=fills)
+    assert ic[("Donchian", "calm")] == pytest.approx(1.0)
 
 
 # ---- update_bandit_weights ----

@@ -108,8 +108,11 @@ def run_nightly_bandit_update(
     if not (config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live):
         return {}
 
-    from trader.learning.update_weights import record_ic_observations, update_bandit_weights  # noqa: F401 — record_ic_observations wired here when bars_cache available
-    # TODO: wire record_ic_observations after compute_ic_from_broker_fills
+    from trader.learning.update_weights import (
+        compute_ic_from_broker_fills,
+        record_ic_observations,
+        update_bandit_weights,
+    )
 
     try:
         fills = broker.get_account_activities(activity_type="FILL", raise_on_error=True)
@@ -119,6 +122,15 @@ def run_nightly_bandit_update(
             "this cycle rather than training on zero fills"
         )
         return {}
+
+    # Record today's IC first so this cycle's weight nudge sees it (ICIR still needs
+    # >= 3 observations, so the nudge stays zero for the first few nights).
+    # ponytail: re-fetches orders that update_bandit_weights fetches again — one extra
+    # read on a once-a-day job; pass orders through if it ever matters.
+    ic_by_arm = compute_ic_from_broker_fills(repo.get_orders(), fills)
+    if ic_by_arm:
+        record_ic_observations(repo, ic_by_arm)
+        logger.info("nightly bandit update: recorded IC for %d arm(s)", len(ic_by_arm))
 
     weights = update_bandit_weights(repo, fills=fills, cycle_index=cycle_index)
     logger.info("nightly bandit update: refreshed %d arm(s)", len(weights))

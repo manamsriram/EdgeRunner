@@ -106,4 +106,4 @@ Roadmap hygiene tier shipped in commit `b4bb372` (see `docs/roadmap.md`).
 - **~~P2.2 Dead-code sweep~~** — deleted pairs pipeline (`run_pair_pipeline`/`_run_pair`/`_notional_for_side`; kept `_fetch_bars`), `record_trade`/`TradeRow` write path (DB `trades` table kept), `InsufficientQtyError`, unused imports; commented rollback stacks → `git show <hash>^` pointers; `_rank_key` precomputes regime once per item.
 - **~~P2.4 Auth observability~~** — `get_current_user` bumps a process-global 401 counter + rate-limited WARNING summary, so a burst is countable above the DEBUG per-request logs.
 
-Remaining deferred (gated/blocked → `docs/roadmap.md`): **P2.3** IC observation producer (turn on `BANDIT_WEIGHTING_SHADOW` first), **P3.2** options depth (needs paper data), **P4** real-money go-live. (**P1.4** crypto-cost rerun done 2026-07-12.)
+Remaining deferred (gated/blocked → `docs/roadmap.md`): **P3.2** options depth (needs paper data), **P4** real-money go-live. (**P1.4** crypto-cost rerun done 2026-07-12. **P2.3** IC producer code done 2026-07-12 — dormant until `BANDIT_WEIGHTING_SHADOW=true`.)

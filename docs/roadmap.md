@@ -103,10 +103,15 @@ Run full `pytest` after **each** deletion group; commit per group.
 
 </details>
 
-### P2.3 IC observation wiring (defer until bandit shadow on)
+### P2.3 IC observation wiring ✅ DONE (code) — awaiting `BANDIT_WEIGHTING_SHADOW=true`
 
-`scheduler.py:112` TODO — information-coefficient observation recording is unwired.
-Only build when `BANDIT_WEIGHTING_SHADOW=true`. No action until then.
+Producer `compute_ic_from_broker_fills` added (`update_weights.py`) — FIFO-joins fills to
+orders, pairs each closed round-trip's entry `signal_strength` with its return pct per
+`(strategy, regime)` arm, runs `compute_ic`. Wired in `run_nightly_bandit_update`
+(`scheduler.py`): records IC before the weight update so the nudge sees tonight's value
+(ICIR still needs ≥3 nights → nudge stays 0 at first). Tests in `test_update_weights.py`.
+**Dormant until `BANDIT_WEIGHTING_SHADOW=true` on Render** — nightly job early-returns while
+off. Shadow only records + logs; no trading effect until `BANDIT_WEIGHTING_LIVE`.
 
 ### P2.4 `api/deps.py` observability (background-review finding) ✅ DONE
 
