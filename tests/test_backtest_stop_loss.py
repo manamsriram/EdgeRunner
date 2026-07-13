@@ -87,7 +87,8 @@ def test_stop_fires_on_entry_bar_when_low_breaches():
     assert trade.entry_price == 100.0
     assert trade.exit_price == 92.0
     assert trade.entry_date == dates[1] == trade.exit_date  # opened and stopped, same bar
-    assert "entry-bar" in [f for f in result.fills if f["side"] == "sell"][0]["reason"]
+    sell_fill = next(f for f in result.fills if f["side"] == "sell")
+    assert "entry-bar" in sell_fill["reason"]
 
 
 def test_no_stop_loss_by_default():
