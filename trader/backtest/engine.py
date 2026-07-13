@@ -90,8 +90,9 @@ def run_backtest(
     for i in range(len(dates) - 1):
         asof = dates[i]
 
-        next_open = float(bars.iloc[i + 1]["open"])
-        next_low = float(bars.iloc[i + 1]["low"])
+        next_row = bars.iloc[i + 1]
+        next_open = float(next_row["open"])
+        next_low = float(next_row.get("low", next_row["close"]))
         fill_date = dates[i + 1]
 
         # Intra-bar stop: a resting broker stop (as live places on every non-crypto
