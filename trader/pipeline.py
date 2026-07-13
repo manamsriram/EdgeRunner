@@ -34,7 +34,7 @@ from trader.portfolio.repository import (
 )
 from trader.risk.gate import (
     KillSwitch, OptionsOrderIntent, OrderIntent, RiskDecision, RiskGate,
-    effective_autonomy, is_crypto_symbol,
+    effective_autonomy, is_crypto_symbol, is_option_symbol,
 )
 from trader.risk.vol_sizing import vol_scale
 from trader.strategy.dip_recovery import DipRecovery
@@ -295,7 +295,7 @@ def run_pipeline(
         # Compute each item's sort key once — classify_regime() is expensive and
         # sort would otherwise re-run it O(n log n) times per comparison.
         def _rank_key(item):
-            raw, strat, sig, bars, _, pool = item
+            raw, strat, _sig, bars, _, _pool = item
             arm = (type(strat).__name__, classify_regime(bars))
             w, _ = _bandit_w.get(arm, (1.0, 0))
             effective = raw * w
@@ -420,7 +420,13 @@ def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
     updated = 0
     for row in stuck:
         coid = row["client_order_id"]
-        order = broker.get_order(coid)
+        try:
+            order = broker.get_order(coid)
+        except Exception:
+            # A transient broker error on one row must not abort the whole batch —
+            # the orphaned sells this job settles may be later in the list.
+            logger.warning("reconciliation: broker lookup failed for %s — retry next pass", coid)
+            continue
         if order is None:
             continue  # lookup failed — status unknown, retry next pass
         status = str(getattr(order, "status", "")).lower()
@@ -447,18 +453,31 @@ def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
             row["symbol"], row["side"], coid, new_status,
         )
 
-        if new_status != "filled" or row["side"] != "sell":
+        # Options orders (CSP sell-to-open) also land here as side="sell"/"submitted",
+        # but a sell-to-open is an ENTRY, not an equity exit — the equity outcome/owner
+        # logic below would mishandle it. Their status is already upserted above; the
+        # wheel-state/assignment reconciliation is reconcile_options' job (P3.2).
+        if new_status != "filled" or row["side"] != "sell" or is_option_symbol(row["symbol"]):
             continue
 
         # Late-filled sell: the position is really gone. Record the deferred outcome
         # (best-effort — entry fill price comes from the opening buy order at the
         # broker) and clear ownership for both pools (long/flat: a sell is a full exit).
         exit_price = float(getattr(order, "filled_avg_price", 0) or 0)
-        last_buy = repo.get_last_buy_order(row["symbol"])
-        entry_price = 0.0
-        if last_buy:
-            buy_order = broker.get_order(last_buy["client_order_id"])
-            entry_price = float(getattr(buy_order, "filled_avg_price", 0) or 0)
+        try:
+            last_buy = repo.get_last_buy_order(row["symbol"])
+            entry_price = 0.0
+            if last_buy:
+                buy_order = broker.get_order(last_buy["client_order_id"])
+                entry_price = float(getattr(buy_order, "filled_avg_price", 0) or 0)
+        except Exception:
+            # Entry-price lookup is best-effort — a failure here must not abort the
+            # batch or skip the ownership cleanup below; just defer the outcome record.
+            logger.warning(
+                "reconciliation: entry-price lookup failed for %s — outcome deferred",
+                row["symbol"],
+            )
+            last_buy, entry_price = None, 0.0
         if exit_price > 0 and entry_price > 0:
             try:
                 repo.record_trade_outcome(TradeOutcomeRow(
@@ -478,12 +497,20 @@ def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
                 "reconciliation: missing fill prices for %s (entry=%.2f exit=%.2f) — "
                 "outcome not recorded", row["symbol"], entry_price, exit_price,
             )
-        for pool in ("daily", "intraday"):
+        # Clear ownership only for the pool this order's strategy actually owns; a symbol
+        # can be held independently in both the daily and intraday pools, and clearing
+        # both would wrongly release the other strategy's position.
+        strategy_name = row.get("strategy_name")
+        for (sym, pool), owner in repo.get_position_owners().items():
+            if sym != row["symbol"]:
+                continue
+            if strategy_name is not None and owner != strategy_name:
+                continue  # different strategy owns this pool — leave it
             try:
-                repo.clear_position_owner(row["symbol"], pool)
+                repo.clear_position_owner(sym, pool)
             except Exception:
                 logger.warning(
-                    "reconciliation: failed to clear owner for %s/%s", row["symbol"], pool
+                    "reconciliation: failed to clear owner for %s/%s", sym, pool
                 )
     return updated
 
@@ -814,10 +841,14 @@ def _execute_signal(
             )
 
         autonomy = effective_autonomy(config)
-        # For auto-mode sells: cancel broker-side stop before gate evaluation so the
-        # open stop order doesn't appear in open_order_symbols and block the sell.
-        if signal.side == "sell" and autonomy == "auto" and not is_crypto_symbol(symbol):
-            broker.cancel_open_stops(symbol)
+        # For auto-mode sells: exclude the symbol's resting stop from open_order_symbols so
+        # it doesn't read as an in-flight order that blocks the sell during gate eval. This
+        # is a local view only — the live stop is NOT canceled until the sell is approved,
+        # so a gate rejection leaves the position protected.
+        _sell_needs_stop_cancel = (
+            signal.side == "sell" and autonomy == "auto" and not is_crypto_symbol(symbol)
+        )
+        if _sell_needs_stop_cancel:
             from dataclasses import replace as _replace_for_gate
             state = _replace_for_gate(state, open_order_symbols=state.open_order_symbols - {symbol})
 
@@ -857,6 +888,11 @@ def _execute_signal(
             today, symbol, signal.side, type(strategy).__name__
         )
         qty = state.positions.get(symbol, 0.0) if signal.side == "sell" else None
+        # Now that the sell is approved, cancel the resting protective stop so it can't
+        # double-sell alongside this order. Deferred to here (post-approval) so a rejected
+        # sell never strips the stop off a position we're still holding.
+        if _sell_needs_stop_cancel:
+            broker.cancel_open_stops(symbol)
         order = broker.submit(
             symbol=symbol, side=signal.side,
             client_order_id=client_order_id,
@@ -935,7 +971,6 @@ def _execute_signal(
             # the software stop — a DipRecovery entry gets its catastrophe stop, not
             # the default 8% that would knife it out of a normal dip.
             _stop_pct = config.risk.stop_loss_pct * getattr(strategy, "stop_loss_multiplier", 1.0)
-            stop_price = ref_price * (1 - _stop_pct)
             # filled_order already computed above (fill-status persistence step).
             if filled_order is None:
                 logger.warning(
@@ -943,6 +978,10 @@ def _execute_signal(
                     "software stop remains active", symbol,
                 )
             else:
+                # Anchor the stop to the actual fill, not the pre-trade ref price, so the
+                # configured stop distance holds even when the fill slipped from ref.
+                fill_px = float(getattr(filled_order, "filled_avg_price", None) or ref_price)
+                stop_price = fill_px * (1 - _stop_pct)
                 filled_qty = float(getattr(filled_order, "filled_qty", 0) or 0)
                 stop_qty = filled_qty if filled_qty > 0 else round(
                     risk_decision.approved_notional / ref_price, 6

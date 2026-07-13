@@ -62,7 +62,9 @@ def run_backtest(
     is force-sold intra-bar at that level — or at the open if the bar gaps down
     through it (`min(open, stop_level)`, the worse fill). Detection is intra-bar,
     not close-based, and the strategy is not consulted on a bar where the stop
-    fires. This models the equity path (live places a GTC stop on every non-crypto
+    fires. The entry bar itself is checked too: a position that opens and then
+    breaches its stop on the same bar exits that bar (live's resting stop would
+    fire the moment the fill lands). This models the equity path (live places a GTC stop on every non-crypto
     buy); crypto/software stops are polled each tick (~60s equity, ~5min crypto),
     so for those the modeled loss is a lower bound. None disables it.
 
@@ -142,6 +144,25 @@ def run_backtest(
                 fills.append({"date": fill_date, "side": "buy", "price": price,
                               "shares": shares, "reason": signal.reason,
                               "signal_strength": getattr(signal, "strength", None)})
+
+                # The resting stop is live the instant the fill lands. If this same
+                # entry bar's low already breaches it, it fires intra-bar (live would
+                # too) — otherwise a same-bar gap-through is silently missed until i+2.
+                if stop_loss_pct is not None:
+                    entry_stop = price * (1.0 - stop_loss_pct)
+                    if next_low <= entry_stop:
+                        exit_price = cost_model.fill_price(min(next_open, entry_stop), "sell")
+                        proceeds = shares * exit_price
+                        cash += proceeds - cost_model.commission(proceeds)
+                        trades.append(Trade(
+                            entry_date=open_entry["date"], entry_price=open_entry["price"],
+                            exit_date=fill_date, exit_price=exit_price, shares=shares))
+                        fills.append({"date": fill_date, "side": "sell", "price": exit_price,
+                                      "shares": shares,
+                                      "reason": f"stop-loss: entry-bar low {next_low:.4f} <= "
+                                                f"stop {entry_stop:.4f} (entry {price:.4f})"})
+                        shares = 0.0
+                        open_entry = None
 
         elif signal.side == "sell" and shares > 0.0:
             price = cost_model.fill_price(next_open, "sell")

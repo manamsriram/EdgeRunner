@@ -96,7 +96,7 @@ def run_nightly_bandit_update(
     broker: AlpacaBroker,
     repo: PortfolioRepository,
     cycle_index: int = 0,
-) -> dict[tuple[str, str], float]:
+) -> "dict[tuple[str, str], float] | None":
     """Nightly EWMA bandit-weight refresh from the day's realized fills.
 
     No-op unless bandit weighting is enabled (shadow or live) — avoids hitting the
@@ -121,7 +121,7 @@ def run_nightly_bandit_update(
             "nightly bandit update: failed to fetch account activities — skipping "
             "this cycle rather than training on zero fills"
         )
-        return {}
+        return None  # signal failure so the caller retries instead of marking the day done
 
     # Record today's IC first so this cycle's weight nudge sees it (ICIR still needs
     # >= 3 observations, so the nudge stays zero for the first few nights).
@@ -214,8 +214,10 @@ def start_scheduler(
                         (ci for _, ci in repo.get_all_bandit_weights().values()),
                         default=0,
                     )
-                    run_nightly_bandit_update(config, broker, repo, cycle_index=cycle_index)
-                    bandit_update_date = today
+                    result = run_nightly_bandit_update(config, broker, repo, cycle_index=cycle_index)
+                    # None = fetch failed; leave the date unset so the next closed tick retries.
+                    if result is not None:
+                        bandit_update_date = today
 
             results = run_once(config, current_strategies, broker, repo, options_broker=options_broker)
             for r in results:

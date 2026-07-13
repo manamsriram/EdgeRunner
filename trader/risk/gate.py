@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,15 @@ _NO_OP_EPSILON = 10.0
 def is_crypto_symbol(symbol: str) -> bool:
     """Return True for crypto pairs (contain '/': BTC/USD, ETH/USDT, etc.)."""
     return "/" in symbol
+
+
+def is_option_symbol(symbol: str) -> bool:
+    """Return True for OCC option symbols (e.g. AAPL260116P00150000).
+
+    OCC format ends with YYMMDD + [C|P] + 8-digit strike; plain equity/crypto
+    tickers never match. Used to keep options orders out of the equity
+    reconciliation path (a CSP sell-to-open is an entry, not an equity exit)."""
+    return bool(re.search(r"\d{6}[CP]\d{8}$", symbol))
 
 
 @dataclass(frozen=True)

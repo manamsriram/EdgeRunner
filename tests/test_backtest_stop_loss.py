@@ -69,6 +69,27 @@ def test_stop_fills_at_stop_level_when_no_gap():
     assert result.trades[0].exit_price == 92.0
 
 
+def test_stop_fires_on_entry_bar_when_low_breaches():
+    # Entry fills at bar 1 open (100), stop level 92. Bar 1's own low is 90, breaching
+    # the stop on the very bar the position opened — live's resting stop would fire here,
+    # so the engine must too (not wait until the next bar). Open 100 > stop → fill at 92.
+    dates = pd.date_range("2023-01-02", periods=4, freq="B")
+    df = pd.DataFrame({
+        "open":  [100, 100, 96, 96],
+        "high":  [101, 101, 97, 97],
+        "low":   [ 99,  90, 95, 95],
+        "close": [100,  95, 96, 96],
+        "volume": 1_000_000,
+    }, index=dates)
+    result = run_backtest(df, _BuyOnce("X"), cost_model=_NO_COSTS, stop_loss_pct=0.08)
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.0
+    assert trade.exit_price == 92.0
+    assert trade.entry_date == dates[1] == trade.exit_date  # opened and stopped, same bar
+    assert "entry-bar" in [f for f in result.fills if f["side"] == "sell"][0]["reason"]
+
+
 def test_no_stop_loss_by_default():
     result = run_backtest(_bars(_DECLINE), _BuyOnce("X"), cost_model=_NO_COSTS)
     assert result.trades == []               # held to the end, never sold

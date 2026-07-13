@@ -251,6 +251,18 @@ async def _guarded(coro, name: str):
         logger.exception("%s crashed", name)
 
 
+# asyncio.create_task only holds a weak reference; without a strong ref the loop can
+# garbage-collect a still-running background task. Keep them alive for the process.
+_background_tasks: set = set()
+
+
+def _spawn(coro):
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Fail closed: a schema mismatch must abort startup, not trade against an
@@ -267,7 +279,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("migrations failed — aborting startup")
         raise
-    asyncio.create_task(_guarded(proposal_poller(), "proposal_poller"))
+    _spawn(_guarded(proposal_poller(), "proposal_poller"))
     # The schedulers run in-process and assume exactly one process. With WEB_CONCURRENCY>1
     # (uvicorn/gunicorn --workers N) every worker would run its own scheduler and
     # double-submit orders. Refuse to start them; the web tier still serves.
@@ -278,8 +290,8 @@ async def lifespan(app: FastAPI):
             os.getenv("WEB_CONCURRENCY"),
         )
     else:
-        asyncio.create_task(_guarded(_scheduler_loop(), "equity_scheduler"))
-        asyncio.create_task(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
+        _spawn(_guarded(_scheduler_loop(), "equity_scheduler"))
+        _spawn(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
         logger.info("proposal poller, equity scheduler, and crypto scheduler started")
     yield
 
