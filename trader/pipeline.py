@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 _ALPACA_MIN_ORDER = 10.0
 from datetime import datetime, timedelta, timezone
@@ -25,7 +25,6 @@ from trader.execution.broker import AlpacaBroker, client_order_id_for
 from trader.execution.options_broker import AlpacaOptionsBroker, options_client_order_id_for
 from trader.overlay import apply_fundamental_gate, apply_overlay
 from trader.portfolio.repository import (
-    PROPOSAL_PENDING,
     OptionsPositionRow,
     OrderRow,
     ProposalRow,
@@ -43,7 +42,7 @@ from trader.strategy.regime import classify_regime
 from trader.strategy.wheel import WheelStrategy
 
 if TYPE_CHECKING:
-    from trader.strategy.base import PairSignal, PairStrategy, Signal, Strategy
+    from trader.strategy.base import Signal, Strategy
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +192,18 @@ def run_pipeline(
             live_prices, live_spread_pcts = get_live_prices_batch(equity_symbols, config)
         except Exception:
             logger.warning("live quote fetch failed; stop-loss uses yesterday's close")
+            # Silent staleness otherwise — stops evaluate against yesterday's close.
+            # Alert once/day so the frequency is measurable; no skip/halt yet (measure first).
+            if getattr(run_pipeline, "_quote_alert_date", None) != asof.date():
+                send_alert(
+                    "Live quote fetch failed — stop-loss evaluating against stale "
+                    "(yesterday's) close this tick",
+                    config.slack_webhook_url,
+                    alert_email=config.alert_email,
+                    smtp_user=config.smtp_user,
+                    smtp_password=config.smtp_password,
+                )
+                run_pipeline._quote_alert_date = asof.date()  # type: ignore[attr-defined]
     else:
         end = asof
         start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
@@ -281,10 +292,11 @@ def run_pipeline(
     if config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live:
         _bandit_w = repo.get_all_bandit_weights()
 
+        # Compute each item's sort key once — classify_regime() is expensive and
+        # sort would otherwise re-run it O(n log n) times per comparison.
         def _rank_key(item):
             raw, strat, sig, bars, _, pool = item
-            regime = classify_regime(bars)
-            arm = (type(strat).__name__, regime)
+            arm = (type(strat).__name__, classify_regime(bars))
             w, _ = _bandit_w.get(arm, (1.0, 0))
             effective = raw * w
             if config.risk.bandit_weighting_live:
@@ -295,7 +307,9 @@ def run_pipeline(
             )
             return raw
 
-        pending_buys.sort(key=_rank_key, reverse=True)
+        pending_buys = [item for _, item in
+                        sorted(((_rank_key(it), it) for it in pending_buys),
+                               key=lambda pair: pair[0], reverse=True)]
     else:
         pending_buys.sort(key=lambda x: x[0], reverse=True)
     for _, strategy, signal, bars, run_id, pool in pending_buys:
@@ -1115,211 +1129,6 @@ def _fetch_bars(
     return get_daily_bars(symbol, start=start, end=end, config=config)
 
 
-def run_pair_pipeline(
-    config: Config,
-    pair_strategies: "list[PairStrategy]",
-    broker: AlpacaBroker,
-    repo: PortfolioRepository,
-    asof: datetime | None = None,
-) -> list[PipelineRun]:
-    """Run one pipeline tick for pairs/stat-arb strategies.
-
-    Both legs of each pair are checked atomically: if either fails the risk gate,
-    BOTH are blocked. This prevents naked single-leg exposure on partial fill.
-    """
-    asof = asof or datetime.now(timezone.utc)
-    gate = RiskGate(config.risk)
-    kill_switch = KillSwitch(config.kill_switch_path)
-    state = broker.reconcile()
-
-    results: list[PipelineRun] = []
-    for strategy in pair_strategies:
-        result_a, result_b = _run_pair(
-            config=config,
-            strategy=strategy,
-            broker=broker,
-            repo=repo,
-            gate=gate,
-            kill_switch=kill_switch,
-            state=state,
-            asof=asof,
-        )
-        results.extend([result_a, result_b])
-        logger.info(
-            "pair pipeline %s outcome_a=%s outcome_b=%s",
-            strategy.symbol,
-            result_a.outcome,
-            result_b.outcome,
-        )
-    return results
-
-
-def _run_pair(
-    *,
-    config,
-    strategy,
-    broker,
-    repo,
-    gate,
-    kill_switch,
-    state,
-    asof,
-):
-    """Process one PairStrategy tick. Returns two PipelineRun results (one per leg)."""
-    from trader.risk.gate import AccountState
-    from trader.strategy.base import PairSignal
-
-    sym_a = strategy.symbol_a
-    sym_b = strategy.symbol_b
-    run_id = repo.record_run(strategy=type(strategy).__name__, mode=effective_autonomy(config))
-
-    _blocked_a = PipelineRun(
-        run_id=run_id, symbol=sym_a, signal=None,
-        risk_decision=RiskDecision.reject("pair leg blocked"), outcome="blocked",
-    )
-    _blocked_b = PipelineRun(
-        run_id=run_id, symbol=sym_b, signal=None,
-        risk_decision=RiskDecision.reject("pair leg blocked"), outcome="blocked",
-    )
-
-    try:
-        end = asof
-        start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
-        bars_a = _fetch_bars(sym_a, start, end, config)
-        bars_b = _fetch_bars(sym_b, start, end, config)
-
-        import pandas as pd
-        pair_signal = strategy.generate_pair(bars_a, bars_b, pd.Timestamp(asof))
-
-        if pair_signal.is_hold:
-            hold_decision = RiskDecision.reject("hold signal — no order")
-            return (
-                PipelineRun(run_id=run_id, symbol=sym_a, signal=None,
-                            risk_decision=hold_decision, outcome="hold"),
-                PipelineRun(run_id=run_id, symbol=sym_b, signal=None,
-                            risk_decision=hold_decision, outcome="hold"),
-            )
-
-        if state.stale:
-            return (
-                PipelineRun(run_id=run_id, symbol=sym_a, signal=None,
-                            risk_decision=RiskDecision.reject("account state stale"),
-                            outcome="blocked"),
-                PipelineRun(run_id=run_id, symbol=sym_b, signal=None,
-                            risk_decision=RiskDecision.reject("account state stale"),
-                            outcome="blocked"),
-            )
-
-        price_a = float(bars_a["close"].iloc[-1])
-        price_b = float(bars_b["close"].iloc[-1])
-        notional_a = _notional_for_side(pair_signal.side_a, sym_a, state, config, price_a)
-        notional_b = _notional_for_side(pair_signal.side_b, sym_b, state, config, price_b)
-
-        intent_a = OrderIntent(sym_a, pair_signal.side_a, notional_a, price_a, pair_signal.reason)
-        intent_b = OrderIntent(sym_b, pair_signal.side_b, notional_b, price_b, pair_signal.reason)
-
-        decision_a = gate.evaluate(intent_a, state, kill_switch)
-        decision_b = gate.evaluate(intent_b, state, kill_switch)
-
-        if not (decision_a.approved and decision_b.approved):
-            combined_reason = (
-                f"pair blocked: {sym_a}={decision_a.reason}, {sym_b}={decision_b.reason}"
-            )
-            return (
-                PipelineRun(run_id=run_id, symbol=sym_a, signal=None,
-                            risk_decision=RiskDecision.reject(combined_reason), outcome="blocked"),
-                PipelineRun(run_id=run_id, symbol=sym_b, signal=None,
-                            risk_decision=RiskDecision.reject(combined_reason), outcome="blocked"),
-            )
-
-        if effective_autonomy(config) == "manual":
-            pid_a = repo.create_proposal(ProposalRow(
-                symbol=sym_a, side=pair_signal.side_a,
-                notional=decision_a.approved_notional, ref_price=price_a,
-                reason=pair_signal.reason,
-            ))
-            pid_b = repo.create_proposal(ProposalRow(
-                symbol=sym_b, side=pair_signal.side_b,
-                notional=decision_b.approved_notional, ref_price=price_b,
-                reason=pair_signal.reason,
-            ))
-            return (
-                PipelineRun(run_id=run_id, symbol=sym_a, signal=None,
-                            risk_decision=decision_a, outcome="queued", proposal_id=pid_a),
-                PipelineRun(run_id=run_id, symbol=sym_b, signal=None,
-                            risk_decision=decision_b, outcome="queued", proposal_id=pid_b),
-            )
-
-        today = asof.date() if isinstance(asof, datetime) else asof
-        oid_a = client_order_id_for(today, sym_a, pair_signal.side_a, type(strategy).__name__)
-        oid_b = client_order_id_for(today, sym_b, pair_signal.side_b, type(strategy).__name__)
-
-        qty_a = state.positions.get(sym_a, 0.0) if pair_signal.side_a == "sell" else None
-        qty_b = state.positions.get(sym_b, 0.0) if pair_signal.side_b == "sell" else None
-
-        order_a = broker.submit(
-            symbol=sym_a, side=pair_signal.side_a, client_order_id=oid_a,
-            notional=decision_a.approved_notional if pair_signal.side_a == "buy" else None,
-            qty=qty_a,
-            ref_price=price_a,
-        )
-        order_b = broker.submit(
-            symbol=sym_b, side=pair_signal.side_b, client_order_id=oid_b,
-            notional=decision_b.approved_notional if pair_signal.side_b == "buy" else None,
-            qty=qty_b,
-            ref_price=price_b,
-        )
-
-        for oid, sym, side, decision in (
-            (oid_a, sym_a, pair_signal.side_a, decision_a),
-            (oid_b, sym_b, pair_signal.side_b, decision_b),
-        ):
-            broker_order_id = str(getattr(
-                order_a if sym == sym_a else order_b, "id", ""
-            ) or "") or None
-            repo.record_order(OrderRow(
-                client_order_id=oid, symbol=sym, side=side,
-                notional=decision.approved_notional, status="submitted",
-                broker_order_id=broker_order_id,
-            ))
-            # Confirm the fill and persist the real status — same upsert-on-
-            # client_order_id pattern as the single-signal path.
-            filled_order = broker.wait_for_fill(oid)
-            repo.record_order(OrderRow(
-                client_order_id=oid, symbol=sym, side=side,
-                notional=decision.approved_notional,
-                status="filled" if filled_order else "submitted",
-                broker_order_id=broker_order_id,
-            ))
-
-        return (
-            PipelineRun(run_id=run_id, symbol=sym_a, signal=None,
-                        risk_decision=decision_a, outcome="executed", order_id=oid_a),
-            PipelineRun(run_id=run_id, symbol=sym_b, signal=None,
-                        risk_decision=decision_b, outcome="executed", order_id=oid_b),
-        )
-
-    except Exception:
-        logger.exception("pair pipeline error for %s", strategy.symbol)
-        return (
-            PipelineRun(run_id=run_id, symbol=sym_a, signal=None,
-                        risk_decision=RiskDecision.reject("pipeline exception"),
-                        outcome="blocked", error="exception — see logs"),
-            PipelineRun(run_id=run_id, symbol=sym_b, signal=None,
-                        risk_decision=RiskDecision.reject("pipeline exception"),
-                        outcome="blocked", error="exception — see logs"),
-        )
-
-
-def _notional_for_side(side: str, symbol: str, state, config, ref_price: float) -> float:
-    if side == "sell":
-        held = state.positions.get(symbol, 0.0)
-        return max(held * ref_price, 1.0)
-    free_cash = max(state.cash - state.deployed_notional - config.risk.min_cash_reserve, 0.0)
-    sized = config.risk.max_crypto_position_pct * free_cash
-    return min(free_cash, max(sized, _ALPACA_MIN_ORDER))
-
-
 def _correlation_factor(symbol: str, state, bars_cache: dict) -> float:
     """Return 0.5 if symbol has >0.7 rolling-60d correlation with a held position, else 1.0.
 
@@ -1355,9 +1164,6 @@ def _notional_for(signal, state, config, ref_price: float, bars=None, corr_facto
 
     Pool routing: intraday pool uses 40% of cash (intraday_pool_pct); daily pool uses
     the remaining 60% minus min_cash_reserve.
-
-    Note: _notional_for_side() (pairs pipeline) is a separate function and is
-    intentionally left without vol-scaling for now.
     """
     if signal.side == "sell":
         held = state.positions.get(signal.symbol, 0.0)

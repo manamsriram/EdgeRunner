@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import jwt
 from fastapi import WebSocket, WebSocketDisconnect
@@ -69,22 +70,38 @@ async def ws_handler(websocket: WebSocket) -> None:
     Token arrives as a query param, not an Authorization header — the browser
     WebSocket API can't set custom headers on the handshake.
     """
+    token_exp: float | None = None
     if auth_enabled():
         token = websocket.query_params.get("token")
         if not token:
             await websocket.close(code=1008)
             return
         try:
-            verify_supabase_jwt(token)
+            claims = verify_supabase_jwt(token)
         except jwt.PyJWTError:
             await websocket.close(code=1008)
             return
+        # The socket outlives the request that authorized it; close it when the
+        # token expires instead of trusting a stale JWT for the connection's lifetime.
+        token_exp = claims.get("exp")
 
     await manager.connect(websocket)
     try:
-        # Keep connection alive; client may send pings
+        # Keep connection alive; client may send pings.
         while True:
-            await websocket.receive_text()
+            if token_exp is not None:
+                remaining = token_exp - time.time()
+                if remaining <= 0:
+                    await websocket.close(code=1008)
+                    manager.disconnect(websocket)
+                    return
+                # Wake at expiry even if the client stays silent.
+                try:
+                    await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    continue
+            else:
+                await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:

@@ -376,6 +376,38 @@ def test_daily_loss_breaker_alert_silent_when_disabled(tmp_path, monkeypatch):
     assert not any("Daily-loss breaker" in m for m in alerts_fired), alerts_fired
 
 
+def test_quote_failure_alerts_once_per_day(tmp_path, monkeypatch):
+    """When the live-quote fetch raises, stop-loss falls back to yesterday's close.
+    That staleness must alert exactly once/day and the tick must still proceed."""
+    alerts_fired: list[str] = []
+    monkeypatch.setattr("trader.pipeline.send_alert",
+                        lambda message, webhook_url, **kw: alerts_fired.append(message))
+    import trader.pipeline as _pm
+    monkeypatch.setattr(_pm.run_pipeline, "_quote_alert_date", None, raising=False)
+
+    cfg = _config(tmp_path, autonomy="auto")
+    b = _broker_for(_healthy_state(), cfg)
+    r = SQLiteRepository(cfg.portfolio_db_path)
+    orig_single, orig_batch = _pm.get_daily_bars, _pm.get_daily_bars_batch
+    orig_live = _pm.get_live_prices_batch
+    _pm.get_daily_bars = lambda symbol, start, end, config=None: _BARS
+    _pm.get_daily_bars_batch = lambda symbols, start, end, config=None: {s: _BARS for s in symbols}
+
+    def _raise(symbols, config=None):
+        raise RuntimeError("alpaca quote down")
+    _pm.get_live_prices_batch = _raise
+    try:
+        # Two ticks on the same day → exactly one alert; both ticks still return results.
+        r1 = run_pipeline(cfg, [_FixedStrategy(_SYMBOL, "buy")], b, r, asof=_ASOF)
+        r2 = run_pipeline(cfg, [_FixedStrategy(_SYMBOL, "buy")], b, r, asof=_ASOF)
+    finally:
+        _pm.get_daily_bars, _pm.get_daily_bars_batch = orig_single, orig_batch
+        _pm.get_live_prices_batch = orig_live
+
+    assert sum("stale" in m for m in alerts_fired) == 1, alerts_fired
+    assert r1 and r2  # eval proceeded on stale close despite the quote failure
+
+
 def test_pipeline_working_state_updated_between_symbols(tmp_path):
     """Both buy signals execute now that max_trades_per_day cap is disabled."""
     cfg = Config(

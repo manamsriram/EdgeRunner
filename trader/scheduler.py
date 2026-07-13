@@ -307,19 +307,9 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
     are complementary; SmashDayB, EquityBollingerReversion and DonchianBreakout
     each diluted returns at similar or worse drawdown on equities.
     """
-    # Previous 5-strategy stack — kept for easy rollback if ST+Dip underperforms
-    # live. To restore, replace the loop body below with:
-    #
-    # from trader.strategy.smash_day import SmashDayB
-    # from trader.strategy.equity_reversion import EquityBollingerReversion
-    # from trader.strategy.donchian_breakout import DonchianBreakout
-    # ...
-    #     strategies.append(SuperTrend(symbol=sym))
-    #     strategies.append(SmashDayB(symbol=sym, long_only=True))
-    #     strategies.append(EquityBollingerReversion(symbol=sym))
-    #     strategies.append(DonchianBreakout(symbol=sym))
-    #     strategies.append(DipRecovery(symbol=sym))
-
+    # Previous 5-strategy stack (SuperTrend + SmashDayB + Bollinger + Donchian + Dip)
+    # lived here before commit 3b00d29 trimmed it to ST+Dip. `git show 3b00d29^:trader/scheduler.py`
+    # to restore it if ST+Dip underperforms live.
     from trader.strategy.supertrend import SuperTrend
     from trader.strategy.dip_recovery import DipRecovery
 
@@ -424,20 +414,9 @@ def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[
     HAPullback and EquityBollingerReversion also tested negative on crypto.
     DipRecovery only helped the old EMA+Smash stack, which is now retired.
     """
-    # Previous stack (EMA crossover + SmashDayB + DipRecovery 30/10) — kept for easy
-    # rollback if pure Donchian underperforms live. To restore, replace the return
-    # below with:
-    #
-    # from trader.strategy.crypto_trend import CryptoEMACrossover
-    # from trader.strategy.smash_day import SmashDayB
-    # from trader.strategy.dip_recovery import DipRecovery
-    # strategies: list[Strategy] = []
-    # for sym in symbols:
-    #     strategies.append(CryptoEMACrossover(symbol=sym))
-    #     strategies.append(SmashDayB(symbol=sym, long_only=True))
-    #     strategies.append(DipRecovery(symbol=sym, dip_pct=0.30, expansion_pct=0.10))
-    # return strategies
-
+    # Previous stack (EMA crossover + SmashDayB + DipRecovery 30/10) lived here before
+    # commit 529f1d0 replaced it with pure Donchian. `git show 529f1d0^:trader/scheduler.py`
+    # to restore it if pure Donchian underperforms live.
     from trader.strategy.donchian_breakout import DonchianBreakout
     return [DonchianBreakout(symbol=sym) for sym in symbols]
 

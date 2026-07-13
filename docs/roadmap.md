@@ -33,7 +33,16 @@ realistic cost or the chosen strategy is an artifact.
 
 ## P2 — Hygiene & Hardening
 
-### P2.1 Concurrency & lifecycle guards
+### P2.1 Concurrency & lifecycle guards ✅ DONE
+
+Shipped: multi-worker guard (`api/main._multi_worker()` — schedulers skip + CRITICAL log
+under `WEB_CONCURRENCY>1`), bars-cache `threading.Lock` (`alpaca_bars.py`), WS token-expiry
+close at `exp` with code 1008 (`api/ws.py`), and a once/day quote-failure alert
+(`pipeline.py` — `get_live_prices_batch` now propagates instead of swallowing, so the stale
+fallback is no longer silent). Tests: `test_main_guards.py`, `test_alpaca_bars.py`,
+`test_ws.py`, `test_pipeline.py::test_quote_failure_alerts_once_per_day`.
+
+<details><summary>original P2.1 spec</summary>
 
 **Multi-worker guard.** Scheduler runs in-process via FastAPI lifespan and assumes exactly
 one process. `--workers 2` (or `WEB_CONCURRENCY>1`) would double-submit every order.
@@ -58,7 +67,19 @@ close for stop evaluation (`pipeline.py:184-186`) — silent staleness.
   Do NOT add skip/halt logic yet — measure frequency first, then decide.
 - Test: force quote fetch to raise → exactly one alert/day, eval still proceeds on stale close.
 
-### P2.2 Dead-code sweep (approved in audit)
+</details>
+
+### P2.2 Dead-code sweep (approved in audit) ✅ DONE
+
+Deleted: pairs pipeline (`run_pair_pipeline`/`_run_pair`/`_notional_for_side`, ~205 lines;
+kept `_fetch_bars`, still used by the live single-signal path), `record_trade`/`TradeRow`
+write path (DB `trades` table kept — no destructive migration), `InsufficientQtyError`,
+unused imports across touched files. Commented rollback stacks in `scheduler.py` replaced
+with `git show <hash>^` pointer comments. `_rank_key` now precomputes each regime once
+before the sort instead of per comparison. BACKLOG.md auth entry corrected (JWT verify is
+live via JWKS ES256). `buy_to_close`/`exercise_options_position` kept for P3.2.
+
+<details><summary>original P2.2 spec</summary>
 
 Run full `pytest` after **each** deletion group; commit per group.
 - **Pairs pipeline** — ~200 lines never called (`pipeline.py:966-1159`). Delete.
@@ -75,17 +96,19 @@ Run full `pytest` after **each** deletion group; commit per group.
 
 **Verify:** suite green after each group; `git grep` confirms deleted symbols have no references.
 
+</details>
+
 ### P2.3 IC observation wiring (defer until bandit shadow on)
 
 `scheduler.py:112` TODO — information-coefficient observation recording is unwired.
 Only build when `BANDIT_WEIGHTING_SHADOW=true`. No action until then.
 
-### P2.4 `api/deps.py` observability (background-review finding)
+### P2.4 `api/deps.py` observability (background-review finding) ✅ DONE
 
-Background security review tagged `api/deps.py` "sensitive-to-observability" after the P0.5
-auth-log demotion. Re-check: confirm auth failures are still countable (metric/rate-limit)
-even with logs at DEBUG. If not, emit a structured counter (not a log line) on 401.
-**Verify:** simulated 401 burst still visible in whatever metric the ops dashboard reads.
+`get_current_user` now bumps a process-global `_auth_failures` counter on every 401 and
+emits a rate-limited (once/60s) WARNING summary, so a burst is visible above the DEBUG
+per-request logs without a metrics backend. `# ponytail:` swap for Prometheus/StatsD if one
+lands. Test: `test_auth.py::test_401_increments_auth_failure_counter`.
 
 ---
 

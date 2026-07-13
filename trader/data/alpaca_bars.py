@@ -10,6 +10,7 @@ Returns a tidy OHLCV DataFrame indexed by a tz-naive daily DatetimeIndex with co
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import date, datetime
 
 import pandas as pd
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 BAR_COLUMNS = ["open", "high", "low", "close", "volume"]
 
 # Daily bars don't change intraday — cache per symbol, invalidate at day boundary.
+# Read/written from equity, crypto, and trade-stream threads.
+# ponytail: one global lock for the whole cache module; shard by symbol only if
+# lock contention shows up in profiling.
+_bars_cache_lock = threading.Lock()
 _bars_cache: dict[str, pd.DataFrame] = {}
 _bars_cache_date: date | None = None
 
@@ -82,46 +87,51 @@ def get_daily_bars_batch(
     if not symbols:
         return {}
 
-    today = end.date()
-    if _bars_cache_date != today:
-        _bars_cache = {}
-        _bars_cache_date = today
+    # Hold the lock across the whole read-fetch-write so two threads can't both
+    # fetch the same missing symbols or observe a torn/half-cleared cache at the
+    # day boundary. The network fetch inside is the slow part, but daily bars are
+    # fetched once per calendar day per symbol, so contention is negligible.
+    with _bars_cache_lock:
+        today = end.date()
+        if _bars_cache_date != today:
+            _bars_cache = {}
+            _bars_cache_date = today
 
-    missing = [s for s in symbols if s not in _bars_cache]
-    if missing:
-        from alpaca.data.historical import StockHistoricalDataClient
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame
-        from alpaca.data.enums import Adjustment, DataFeed
+        missing = [s for s in symbols if s not in _bars_cache]
+        if missing:
+            from alpaca.data.historical import StockHistoricalDataClient
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame
+            from alpaca.data.enums import Adjustment, DataFeed
 
-        config = config or load_config()
-        config.require_alpaca_credentials()
+            config = config or load_config()
+            config.require_alpaca_credentials()
 
-        client = StockHistoricalDataClient(
-            api_key=config.alpaca_api_key,
-            secret_key=config.alpaca_secret_key,
-        )
-        request = StockBarsRequest(
-            symbol_or_symbols=missing,
-            timeframe=TimeFrame.Day,
-            start=start,
-            end=end,
-            feed=DataFeed.IEX,
-            adjustment=Adjustment.ALL,
-        )
-        bars = client.get_stock_bars(request)
-        # Strip today's partial bar so only completed trading days are cached.
-        # Intraday partial bars cause stale signals on every subsequent 60s tick.
-        today_ts = pd.Timestamp.today().normalize()
-        for sym in missing:
-            try:
-                df = _to_frame(bars.df, sym)
-                _bars_cache[sym] = df[df.index < today_ts]
-            except Exception:
-                logger.warning("no bar data for %s — skipping", sym)
-        logger.debug("bars cache miss: fetched %d symbols, cache now %d", len(missing), len(_bars_cache))
+            client = StockHistoricalDataClient(
+                api_key=config.alpaca_api_key,
+                secret_key=config.alpaca_secret_key,
+            )
+            request = StockBarsRequest(
+                symbol_or_symbols=missing,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                feed=DataFeed.IEX,
+                adjustment=Adjustment.ALL,
+            )
+            bars = client.get_stock_bars(request)
+            # Strip today's partial bar so only completed trading days are cached.
+            # Intraday partial bars cause stale signals on every subsequent 60s tick.
+            today_ts = pd.Timestamp.today().normalize()
+            for sym in missing:
+                try:
+                    df = _to_frame(bars.df, sym)
+                    _bars_cache[sym] = df[df.index < today_ts]
+                except Exception:
+                    logger.warning("no bar data for %s — skipping", sym)
+            logger.debug("bars cache miss: fetched %d symbols, cache now %d", len(missing), len(_bars_cache))
 
-    return {s: _bars_cache[s] for s in symbols if s in _bars_cache}
+        return {s: _bars_cache[s] for s in symbols if s in _bars_cache}
 
 
 def get_live_prices_batch(
@@ -147,13 +157,12 @@ def get_live_prices_batch(
         api_key=config.alpaca_api_key,
         secret_key=config.alpaca_secret_key,
     )
-    try:
-        quotes = client.get_stock_latest_quote(
-            StockLatestQuoteRequest(symbol_or_symbols=symbols)
-        )
-    except Exception:
-        logger.warning("live quote fetch failed for %d symbols", len(symbols))
-        return {}, {}
+    # Let failures propagate: both pipeline callers wrap this and fall back to
+    # yesterday's close, and the equity caller alerts once/day on the stale eval.
+    # Swallowing here made that staleness silent.
+    quotes = client.get_stock_latest_quote(
+        StockLatestQuoteRequest(symbol_or_symbols=symbols)
+    )
 
     mids: dict[str, float] = {}
     spread_pcts: dict[str, float] = {}

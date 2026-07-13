@@ -238,6 +238,12 @@ def _run_migrations() -> None:
     logger.info("database migrations applied")
 
 
+def _multi_worker() -> bool:
+    """True when running with >1 web worker (WEB_CONCURRENCY). The in-process
+    schedulers assume a single process; every extra worker would double-submit orders."""
+    return os.getenv("WEB_CONCURRENCY", "1") != "1"
+
+
 async def _guarded(coro, name: str):
     try:
         await coro
@@ -262,9 +268,19 @@ async def lifespan(app: FastAPI):
         logger.exception("migrations failed — aborting startup")
         raise
     asyncio.create_task(_guarded(proposal_poller(), "proposal_poller"))
-    asyncio.create_task(_guarded(_scheduler_loop(), "equity_scheduler"))
-    asyncio.create_task(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
-    logger.info("proposal poller, equity scheduler, and crypto scheduler started")
+    # The schedulers run in-process and assume exactly one process. With WEB_CONCURRENCY>1
+    # (uvicorn/gunicorn --workers N) every worker would run its own scheduler and
+    # double-submit orders. Refuse to start them; the web tier still serves.
+    if _multi_worker():
+        logger.critical(
+            "WEB_CONCURRENCY=%s (>1) — schedulers NOT started to avoid duplicate orders; "
+            "run the scheduler in a single-worker process",
+            os.getenv("WEB_CONCURRENCY"),
+        )
+    else:
+        asyncio.create_task(_guarded(_scheduler_loop(), "equity_scheduler"))
+        asyncio.create_task(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
+        logger.info("proposal poller, equity scheduler, and crypto scheduler started")
     yield
 
 

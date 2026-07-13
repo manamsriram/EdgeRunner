@@ -83,6 +83,18 @@ def test_malformed_token_returns_401_not_500(monkeypatch):
     assert exc.value.status_code == 401
 
 
+def test_401_increments_auth_failure_counter(monkeypatch):
+    """Per-request auth logs are DEBUG; a 401 must still bump the process counter so a
+    burst is countable above DEBUG without a per-request log line."""
+    monkeypatch.setattr(deps, "get_config", lambda: _cfg(supabase_jwt_secret="s3cr3t"))
+    monkeypatch.setattr(deps, "_auth_failures", 0)
+    monkeypatch.setattr(deps, "_last_auth_warn", 0.0)
+    for _ in range(3):
+        with pytest.raises(HTTPException):
+            deps.get_current_user(_request("not-a-jwt"))
+    assert deps._auth_failures == 3
+
+
 def test_es256_jwks_token_accepted(monkeypatch):
     """Current Supabase default: access tokens signed ES256, verified via JWKS public key."""
     from cryptography.hazmat.primitives.asymmetric import ec
