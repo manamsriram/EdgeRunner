@@ -89,7 +89,7 @@ Full audit 2026-07-11 (plan: `check-the-current-trading-linear-minsky.md`). P0 s
 - **~~Permutation Sharpe inert~~** — replaced multiset shuffle with sign-flip test (H0: no directional edge); max-DD keeps order-shuffle.
 - **~~Go-live gate stop-less~~** — `go_live_gate.py` passes `stop_loss_pct * stop_loss_multiplier`; engine now exits intra-bar (gap-down fills at open, not stop).
 - **~~Sweep in-sample~~** — `param_sweep` supports `holdout_frac`; ranks on train, reports OOS metrics in `SweepResult`.
-- **~~iid bootstrap~~** — `bootstrap_sharpe_ci` uses stationary block bootstrap (block ≈ n^(1/3)).
+- **~~iid bootstrap~~** — `bootstrap_sharpe_ci` uses circular block bootstrap (block ≈ n^(1/3)).
 - **~~Crypto costs unrealistic~~** — `CostModel.taker_fee_bps` added; crypto backtests at 25bps. **Rerun deliverable still pending** (needs Alpaca keys) → `docs/roadmap.md`.
 
 ### Options Activation (P3.1) ✅ DONE

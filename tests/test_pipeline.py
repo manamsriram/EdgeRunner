@@ -175,13 +175,18 @@ def _run(strategies, config, state=None):
     import trader.pipeline as _pm
     original_single = _pm.get_daily_bars
     original_batch = _pm.get_daily_bars_batch
+    original_live = _pm.get_live_prices_batch
     _pm.get_daily_bars = lambda symbol, start, end, config=None: _BARS
     _pm.get_daily_bars_batch = lambda symbols, start, end, config=None: {s: _BARS for s in symbols}
+    # Stub the live-quote fetch: unpatched it makes a real Alpaca HTTP call with the
+    # dummy "k"/"s" creds — a network hit that hangs (no timeout) when Alpaca is unreachable.
+    _pm.get_live_prices_batch = lambda symbols, config=None: ({}, {})
     try:
         return run_pipeline(config, strategies, b, r, asof=_ASOF), r, b
     finally:
         _pm.get_daily_bars = original_single
         _pm.get_daily_bars_batch = original_batch
+        _pm.get_live_prices_batch = original_live
 
 
 # ---- tests ----
@@ -276,13 +281,16 @@ def test_pipeline_stale_reconciliation_blocks_all(tmp_path):
     import trader.pipeline as _pm
     original_single = _pm.get_daily_bars
     original_batch = _pm.get_daily_bars_batch
+    original_live = _pm.get_live_prices_batch
     _pm.get_daily_bars = lambda symbol, start, end, config=None: _BARS
     _pm.get_daily_bars_batch = lambda symbols, start, end, config=None: {s: _BARS for s in symbols}
+    _pm.get_live_prices_batch = lambda symbols, config=None: ({}, {})
     try:
         results = run_pipeline(cfg, [_FixedStrategy(_SYMBOL, "buy")], b, r, asof=_ASOF)
     finally:
         _pm.get_daily_bars = original_single
         _pm.get_daily_bars_batch = original_batch
+        _pm.get_live_prices_batch = original_live
 
     result = results[0]
     assert result.outcome == "blocked"
@@ -330,12 +338,15 @@ def _run_with_state(strategies, config, state, monkeypatch):
     r = SQLiteRepository(config.portfolio_db_path)
     import trader.pipeline as _pm
     orig_single, orig_batch = _pm.get_daily_bars, _pm.get_daily_bars_batch
+    orig_live = _pm.get_live_prices_batch
     _pm.get_daily_bars = lambda symbol, start, end, config=None: _BARS
     _pm.get_daily_bars_batch = lambda symbols, start, end, config=None: {s: _BARS for s in symbols}
+    _pm.get_live_prices_batch = lambda symbols, config=None: ({}, {})
     try:
         return run_pipeline(config, strategies, b, r, asof=_ASOF)
     finally:
         _pm.get_daily_bars, _pm.get_daily_bars_batch = orig_single, orig_batch
+        _pm.get_live_prices_batch = orig_live
 
 
 def test_daily_loss_breaker_alert_fires_when_enabled(tmp_path, monkeypatch):

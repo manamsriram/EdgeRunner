@@ -13,12 +13,15 @@ the single most important thing wrong.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from trader.config import RiskLimits
+
+logger = logging.getLogger(__name__)
 
 Side = str  # "buy" | "sell"
 
@@ -154,12 +157,24 @@ class AutonomyOverride:
         self._path = Path(path)
 
     def get(self) -> str | None:
-        """Return "manual"/"auto" if a valid override is set, else None."""
+        """The override in force, or None when no override file is present.
+
+        Fail-safe: a file that exists but is unreadable or holds an unrecognized
+        value resolves to "manual", never None. Returning None would let
+        effective_autonomy fall back to config.autonomy (possibly "auto") — a
+        corrupted brake must not silently release into autonomous trading.
+        """
         try:
             value = self._path.read_text().strip().lower()
         except FileNotFoundError:
             return None
-        return value if value in self._VALID else None
+        except OSError as exc:
+            logger.warning("autonomy override unreadable (%s) — forcing manual", exc)
+            return "manual"
+        if value in self._VALID:
+            return value
+        logger.warning("autonomy override file has invalid content %r — forcing manual", value)
+        return "manual"
 
     def set(self, mode: str) -> None:
         mode = mode.strip().lower()

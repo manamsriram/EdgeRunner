@@ -10,7 +10,7 @@ Three independent, dependency-light checks (pure numpy/pandas, no scipy):
                         test Sharpe — mean and std are permutation-invariant, so it
                         always returns p≈1.) (b) Max drawdown via order-shuffle, which
                         IS order-sensitive and catches a lucky/unlucky sequence.
-  - bootstrap_sharpe_ci: Stationary block bootstrap of daily returns to put a
+  - bootstrap_sharpe_ci: Circular block bootstrap of daily returns to put a
                         confidence interval on Sharpe and estimate P(Sharpe <= 0).
                         Blocks preserve serial correlation, so the CI is not
                         artificially tight the way iid resampling would make it.
@@ -112,7 +112,7 @@ def bootstrap_sharpe_ci(
     confidence: float = 0.95,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Stationary block bootstrap of daily returns to bound Sharpe and test it vs 0.
+    """Circular block bootstrap of daily returns to bound Sharpe and test it vs 0.
 
     Resampling in blocks (rather than single iid draws) preserves the serial
     correlation of an equity curve, so the confidence interval is not artificially
@@ -131,8 +131,10 @@ def bootstrap_sharpe_ci(
     block = max(2, round(n ** (1.0 / 3.0)))
     samples = np.empty(n_bootstrap)
     for i in range(n_bootstrap):
-        # Assemble a resample of length n by concatenating blocks that start at
-        # random indices and wrap around the series (stationary bootstrap).
+        # Assemble a resample of length n by concatenating fixed-length blocks that
+        # start at random indices and wrap around the series (circular block
+        # bootstrap — fixed block length, not the random geometric length of a true
+        # stationary bootstrap).
         pieces = []
         filled = 0
         while filled < n:

@@ -80,7 +80,10 @@ def get_current_user(request: Request) -> str:
     logged so it's never silently open in a deployed environment.
     """
     if not auth_enabled():
-        logger.debug("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
+        # WARNING, not debug: this grants admin to every request. On a deployed box
+        # (missing SUPABASE_URL is the documented Render footgun) this line is the only
+        # signal the whole API is open — it must survive the default INFO log level.
+        logger.warning("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
         return "admin"
 
     auth_header = request.headers.get("authorization") or ""

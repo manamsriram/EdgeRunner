@@ -42,7 +42,9 @@ def test_override_roundtrip_and_clear(tmp_path):
     assert ov.get() is None
 
 
-def test_override_ignores_garbage(tmp_path):
+def test_override_garbage_forces_manual(tmp_path):
+    # Fail-safe: a present-but-unrecognized override file must NOT release the brake
+    # to None (fail-open) — it resolves to "manual", the safe state.
     path = tmp_path / "auto.flag"
     path.write_text("bogus")
-    assert AutonomyOverride(str(path)).get() is None
+    assert AutonomyOverride(str(path)).get() == "manual"
