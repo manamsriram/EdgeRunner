@@ -23,7 +23,7 @@ from trader.learning.bandit_weights import (
     thompson_sample,
     update_arm,
 )
-from trader.learning.ic_metrics import compute_icir, ic_weight_nudge
+from trader.learning.ic_metrics import compute_ic, compute_icir, ic_weight_nudge
 from trader.portfolio.repository import PortfolioRepository
 
 
@@ -76,6 +76,68 @@ def compute_pnls_from_fills(
         buy_queues[key] = buy_q
 
     return dict(pnls)
+
+
+def compute_ic_from_broker_fills(
+    orders: list[dict],
+    fills: list[dict],
+) -> dict[tuple[str, str], float]:
+    """Pair each closed round-trip's entry signal strength with its realized return
+    per (strategy, regime) arm, then compute IC (Pearson corr) per arm.
+
+    Mirrors compute_pnls_from_fills' FIFO buy/sell matching, but carries the entry
+    signal_strength alongside each buy unit and measures scale-free return pct
+    (sell/buy - 1) instead of dollar P&L, so corr(strength, return) is comparable
+    across symbols. Returns only arms with >= 5 paired round-trips (compute_ic floor).
+    """
+    order_lookup: dict[str, dict] = {
+        o["broker_order_id"]: o
+        for o in orders
+        if o.get("broker_order_id") and o.get("strategy_name") and o.get("regime")
+    }
+
+    # FIFO buy queue per (strategy, regime, symbol): each unit is (buy_price, strength)
+    buy_queues: dict[tuple, list[tuple[float, float]]] = defaultdict(list)
+    sell_prices: dict[tuple, list[tuple[float, float]]] = defaultdict(list)  # (qty, price)
+
+    for fill in fills:
+        order = order_lookup.get(fill.get("order_id", ""))
+        if order is None:
+            continue
+        strength = order.get("signal_strength")
+        if strength is None:
+            continue  # can't pair a return with a missing strength
+        key = (order["strategy_name"], order["regime"], fill["symbol"])
+        if fill["side"] == "buy":
+            buy_queues[key].extend([(float(fill["price"]), float(strength))] * int(fill["qty"]))
+        elif fill["side"] == "sell":
+            sell_prices[key].append((float(fill["qty"]), float(fill["price"])))
+
+    pairs: dict[tuple[str, str], tuple[list[float], list[float]]] = defaultdict(
+        lambda: ([], [])
+    )
+    for key, sells in sell_prices.items():
+        strategy, regime, _ = key
+        arm = (strategy, regime)
+        buy_q = buy_queues.get(key, [])
+        strengths, returns = pairs[arm]
+        for qty, sell_price in sells:
+            n = int(qty)
+            matched = min(n, len(buy_q))
+            for buy_price, strength in buy_q[:matched]:
+                if buy_price == 0:
+                    continue
+                strengths.append(strength)
+                returns.append(sell_price / buy_price - 1.0)
+            buy_q = buy_q[matched:]
+        buy_queues[key] = buy_q
+
+    ic_by_arm: dict[tuple[str, str], float] = {}
+    for arm, (strengths, returns) in pairs.items():
+        ic = compute_ic(strengths, returns)
+        if ic is not None:
+            ic_by_arm[arm] = ic
+    return ic_by_arm
 
 
 def update_bandit_weights(
