@@ -40,14 +40,6 @@ class OrderRow:
 
 
 @dataclass(frozen=True)
-class TradeRow:
-    symbol: str
-    side: str
-    qty: float
-    price: float
-
-
-@dataclass(frozen=True)
 class TradeOutcomeRow:
     """A closed round-trip trade, written once a sell fills. Feeds the symbol
     cooldown guard (RiskGate) and the overlay's trade-memory prompt context."""
@@ -131,9 +123,6 @@ class PortfolioRepository(ABC):
     def record_order(self, order: OrderRow) -> int:
         """Persist an order. Idempotent on `client_order_id`: a repeat returns the
         existing row's id and does not insert a duplicate."""
-
-    @abstractmethod
-    def record_trade(self, trade: TradeRow) -> int: ...
 
     @abstractmethod
     def create_proposal(self, proposal: ProposalRow) -> int: ...

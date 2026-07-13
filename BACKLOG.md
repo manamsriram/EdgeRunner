@@ -17,8 +17,12 @@ Atomic `UPDATE proposals SET status='approved' WHERE id=? AND status='pending'` 
 ### ~~SQLite removal~~ ✅ DONE
 All production paths (api, scheduler, scripts) now require `DATABASE_URL` (Supabase). SQLite kept in `sqlite_repo.py` for tests only.
 
-### ~~Backend Auth Removal~~ ✅ DONE
-Single-user app — `get_current_user()` returns `"admin"` unconditionally. Auth router and JWT removed.
+### ~~Backend Auth Removal~~ ✅ DONE (superseded)
+Originally the login *router* was removed (single-user app). Auth was later re-added as
+**stateless JWT verification**: `get_current_user()` verifies a Supabase access token
+(ES256 via the project JWKS, legacy HS256 fallback — `api/deps.py`, commit `e85326f`).
+When neither `SUPABASE_URL` nor `SUPABASE_JWT_SECRET` is set it falls open to `"admin"`
+and logs a WARNING. There is no login router; the frontend signs in via supabase-js.
 
 ### ~~Database Migrations (Alembic)~~ ✅ DONE
 `alembic>=1.13` added. `migrations/versions/001_baseline.py` captures full schema (idempotent). Live DB stamped at `001`. `_run_migrations()` in FastAPI lifespan runs `alembic upgrade head` before schedulers start. Future schema changes: `alembic revision -m "desc"` + `op.execute("ALTER TABLE ...")` in the migration file.

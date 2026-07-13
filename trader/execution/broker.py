@@ -29,14 +29,6 @@ from trader.risk.gate import AccountState
 logger = logging.getLogger(__name__)
 
 
-class InsufficientQtyError(RuntimeError):
-    """Raised when Alpaca rejects a buy because shares are held by an open order.
-
-    This is a normal, non-fatal condition: the position already exists and its
-    stop-sell is locking the shares.  The pipeline should skip this tick rather
-    than surface a full traceback.
-    """
-
 # ponytail: full reconcile at most every 5 min when trade stream is running
 _RECONCILE_CACHE_TTL = 300.0
 

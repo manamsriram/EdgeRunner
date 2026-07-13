@@ -14,7 +14,6 @@ from trader.portfolio.repository import (
     ProposalRow,
     SignalRow,
     TradeOutcomeRow,
-    TradeRow,
 )
 from trader.portfolio.sqlite_repo import SQLiteRepository
 
@@ -24,13 +23,11 @@ def repo(tmp_path) -> SQLiteRepository:
     return SQLiteRepository(str(tmp_path / "portfolio.db"))
 
 
-def test_run_signal_trade_roundtrip(repo):
+def test_run_signal_roundtrip(repo):
     run_id = repo.record_run("ma_crossover", "manual", "test")
     assert run_id > 0
     sig_id = repo.record_signal(SignalRow(run_id, "AAPL", "buy", 0.8, "sma cross"))
     assert sig_id > 0
-    trade_id = repo.record_trade(TradeRow("AAPL", "buy", 10.0, 150.0))
-    assert trade_id > 0
 
 
 def test_order_idempotent_on_client_order_id(repo):

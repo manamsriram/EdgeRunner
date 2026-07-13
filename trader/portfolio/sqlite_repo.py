@@ -21,7 +21,6 @@ from trader.portfolio.repository import (
     ProposalRow,
     SignalRow,
     TradeOutcomeRow,
-    TradeRow,
     validate_options_transition,
 )
 
@@ -245,14 +244,6 @@ class SQLiteRepository(PortfolioRepository):
                 (order.client_order_id,),
             ).fetchone()
             return int(row["id"])
-
-    def record_trade(self, trade: TradeRow) -> int:
-        with self._connect() as conn:
-            cur = conn.execute(
-                "INSERT INTO trades (ts, symbol, side, qty, price) VALUES (?, ?, ?, ?, ?)",
-                (_now(), trade.symbol, trade.side, trade.qty, trade.price),
-            )
-            return int(cur.lastrowid)
 
     def create_proposal(self, proposal: ProposalRow) -> int:
         with self._connect() as conn:

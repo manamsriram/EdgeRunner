@@ -6,7 +6,6 @@ idempotent schema init. Uses psycopg2 (sync) to match the blocking call sites.
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 
 import psycopg2
@@ -20,7 +19,6 @@ from trader.portfolio.repository import (
     ProposalRow,
     SignalRow,
     TradeOutcomeRow,
-    TradeRow,
     validate_options_transition,
 )
 
@@ -217,16 +215,6 @@ class PostgresRepository(PortfolioRepository):
                      order.notional, order.status, order.broker_order_id,
                      order.strategy_name, order.regime, order.signal_strength,
                      order.entry_rationale),
-                )
-                return int(cur.fetchone()["id"])
-
-    def record_trade(self, trade: TradeRow) -> int:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO trades (ts, symbol, side, qty, price) "
-                    "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                    (_now(), trade.symbol, trade.side, trade.qty, trade.price),
                 )
                 return int(cur.fetchone()["id"])
 

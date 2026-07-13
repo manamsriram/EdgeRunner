@@ -12,7 +12,6 @@ from trader.portfolio.repository import (
     PortfolioRepository,
     ProposalRow,
     SignalRow,
-    TradeRow,
 )
 
 __all__ = [
@@ -20,5 +19,4 @@ __all__ = [
     "PortfolioRepository",
     "ProposalRow",
     "SignalRow",
-    "TradeRow",
 ]

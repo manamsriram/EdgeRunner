@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-import os
+import threading
+import time
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -13,6 +14,26 @@ from fastapi import HTTPException, Request
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Per-request auth-failure logs sit at DEBUG so a normal deploy (LOG_LEVEL=INFO) stays
+# quiet. That would make a 401 burst (credential-stuffing, broken client) invisible, so
+# keep a process-global counter and emit a rate-limited WARNING summary — countable
+# above DEBUG without a per-request log line or a metrics backend.
+# ponytail: in-process counter; swap for a real metric if Prometheus/StatsD lands.
+_auth_failures = 0
+_auth_failures_lock = threading.Lock()
+_last_auth_warn = 0.0
+_AUTH_WARN_INTERVAL = 60.0
+
+
+def _record_auth_failure() -> None:
+    global _auth_failures, _last_auth_warn
+    with _auth_failures_lock:
+        _auth_failures += 1
+        now = time.monotonic()
+        if now - _last_auth_warn >= _AUTH_WARN_INTERVAL:
+            logger.warning("auth failures (401) total=%d since process start", _auth_failures)
+            _last_auth_warn = now
 
 
 # ---- singletons ----
@@ -93,6 +114,7 @@ def get_current_user(request: Request) -> str:
             "no bearer token on request (path=%s, auth_header_present=%s)",
             request.scope.get("path", "?"), bool(auth_header),
         )
+        _record_auth_failure()
         raise HTTPException(status_code=401, detail="not authenticated")
     try:
         payload = verify_supabase_jwt(token)
@@ -104,6 +126,7 @@ def get_current_user(request: Request) -> str:
         except jwt.PyJWTError:
             alg = "unparseable"
         logger.debug("JWT verification failed: %s (header alg=%s)", exc, alg)
+        _record_auth_failure()
         raise HTTPException(status_code=401, detail="invalid or expired session")
     return payload.get("email") or payload["sub"]
 
