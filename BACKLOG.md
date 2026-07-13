@@ -83,7 +83,8 @@ Full audit 2026-07-11 (plan: `check-the-current-trading-linear-minsky.md`). P0 s
 - **~~Autonomy toggle cosmetic~~** — file-backed `AutonomyOverride` in `gate.py` (mirrors `KillSwitch`); `effective_autonomy(config)` read at every decision gate; `controls.py` GET/POST rewired. Dashboard "manual" now actually halts auto trading.
 - **~~No active account breaker~~** — `DAILY_LOSS_HALT_ENABLED=true` on Render/.env.example (code default stays False); breaker alert un-commented, gated on flag, once/day guard.
 - **~~DipRecovery stop contradiction~~** — `stop_loss_multiplier` class attr on `Strategy` (DipRecovery=2.0 → 16% disaster stop, software + broker GTC at same widened level). Thesis breathes, catastrophe capped.
-- **~~Fail-open startup/errors~~** — migration failure/timeout re-raises (aborts startup); `get_account_activities(raise_on_error=True)` propagates instead of silent `[]`; malformed JWT → always 401; auth debug logs demoted to DEBUG.
+- **~~Fail-open startup/errors~~** — migration failure/timeout re-raises (aborts startup); `get_account_activities(raise_on_error=True)` propagates instead of silent `[]`; malformed JWT → always 401. Per-request auth logs at DEBUG, but the **auth-off** log is WARNING (running unauthenticated grants admin to every request — must survive INFO on a misconfigured deploy).
+- **~~Review-fix hardening~~** (`f2d2b7c`) — `AutonomyOverride.get()` fails safe to `"manual"` on an unreadable/invalid flag file (never `None`, which would release the manual brake); `fill_confirmed` defaults `False`; `reconcile_order_statuses` wraps each `record_order` so one bad row can't abort the batch; `FILL` vs `SUBMITTED(unconfirmed)` alert tag. Pipeline tests made hermetic (stub `get_live_prices_batch` — was a real timeout-less Alpaca call).
 
 ### Validation Rigor (P1) ✅ DONE
 - **~~Permutation Sharpe inert~~** — replaced multiset shuffle with sign-flip test (H0: no directional edge); max-DD keeps order-shuffle.
