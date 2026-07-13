@@ -104,11 +104,11 @@ def compute_ic_from_broker_fills(
         order = order_lookup.get(fill.get("order_id", ""))
         if order is None:
             continue
-        strength = order.get("signal_strength")
-        if strength is None:
-            continue  # can't pair a return with a missing strength
         key = (order["strategy_name"], order["regime"], fill["symbol"])
         if fill["side"] == "buy":
+            strength = order.get("signal_strength")
+            if strength is None:
+                continue  # can't pair a return with a missing entry strength
             buy_queues[key].extend([(float(fill["price"]), float(strength))] * int(fill["qty"]))
         elif fill["side"] == "sell":
             sell_prices[key].append((float(fill["qty"]), float(fill["price"])))
