@@ -220,10 +220,10 @@ def _run_migrations() -> None:
     if not db_url:
         logger.warning("DATABASE_URL not set — skipping migrations")
         return
-    # Add connect_timeout so a blocked/slow DB doesn't hang startup indefinitely.
-    if "connect_timeout" not in db_url:
-        sep = "&" if "?" in db_url else "?"
-        db_url = f"{db_url}{sep}connect_timeout=10"
+    # connect_timeout is passed via connect_args, not the URL string, to avoid
+    # psycopg2 misreading "&connect_timeout=10" as part of the database name when
+    # the URL already contains a "?" (e.g. ?pgbouncer=true or ?sslmode=require).
+    _connect_args = {"connect_timeout": 10}
     from pathlib import Path
     from alembic.config import Config as AlembicConfig
     from alembic import command as alembic_command
@@ -244,7 +244,7 @@ def _run_migrations() -> None:
     lock_conn = None
     if db_url.startswith("postgres"):
         from sqlalchemy import create_engine, pool, text
-        lock_engine = create_engine(db_url, poolclass=pool.NullPool)
+        lock_engine = create_engine(db_url, poolclass=pool.NullPool, connect_args=_connect_args)
         lock_conn = lock_engine.connect()
         lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
     try:
