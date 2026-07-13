@@ -99,7 +99,7 @@ def main() -> int:
         f"  {'vs B&H':>12}"
     )
 
-    print(f"\nCrypto Backtest  |  {start.date()} → {end.date()}  |  slippage=10bps")
+    print(f"\nCrypto Backtest  |  {start.date()} → {end.date()}  |  slippage=10bps + taker=25bps")
     print(f"Symbols: {', '.join(symbols)}")
 
     all_results: dict[str, list] = {name: [] for name, _ in strategies}

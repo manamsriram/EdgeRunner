@@ -10,7 +10,18 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from trader.config import DEFAULT_ALLOWLIST, RiskLimits, _env_allowlist
-from trader.risk.gate import AccountState, KillSwitch, OrderIntent, RiskDecision, RiskGate
+from trader.risk.gate import (
+    AccountState, KillSwitch, OrderIntent, RiskDecision, RiskGate,
+    is_crypto_symbol, is_option_symbol,
+)
+
+
+def test_is_option_symbol_matches_occ_and_rejects_equity_crypto():
+    assert is_option_symbol("AAPL260116P00150000")
+    assert is_option_symbol("SPY251219C00450000")
+    assert not is_option_symbol("AAPL")
+    assert not is_option_symbol("BTC/USD")
+    assert not is_crypto_symbol("AAPL260116P00150000")  # OCC must not read as crypto
 
 LIMITS = RiskLimits(
     max_position_pct=0.10,

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -58,11 +58,14 @@ class AutonomyRequest(BaseModel):
 
 
 @router.post("/autonomy")
-def set_autonomy_mode(body: AutonomyRequest, username: str = Depends(get_current_user)):
+def set_autonomy_mode(
+    body: AutonomyRequest, request: Request, username: str = Depends(get_current_user)
+):
     # File-backed so the running scheduler/pipeline actually reads it (a module
     # global would only change what this API process reports, not trading behaviour).
     _autonomy_override().set(body.mode)
-    logger.warning("autonomy mode set to %s by %s", body.mode, username)
+    # Log the stable JWT subject id, not the email get_current_user returns (avoid PII in logs).
+    logger.warning("autonomy mode set to %s by %s", body.mode, request.state.auth_sub)
     return {"mode": body.mode}
 
 

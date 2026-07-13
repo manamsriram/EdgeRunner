@@ -563,6 +563,37 @@ def test_csp_entry_blocked_when_underlying_already_has_open_position(sqlite_repo
     assert len(sqlite_repo.get_open_options_positions("AAPL")) == 1
 
 
+def test_csp_entry_blocked_when_autonomy_manual(sqlite_repo, tmp_path):
+    # Options entries require AUTONOMY=auto (no manual-proposal executor yet). With the
+    # autonomy override forced to "manual", the gate must block before any contract is
+    # selected or sold — no options position is opened.
+    from trader.risk.gate import AutonomyOverride
+
+    override_path = tmp_path / "autonomy.flag"
+    AutonomyOverride(str(override_path)).set("manual")
+    signal = Signal(symbol="AAPL", side="buy", strength=1.0, reason="dip")
+    config = type("C", (), {
+        "autonomy": "auto",  # config says auto; the file override must win
+        "autonomy_override_path": str(override_path),
+        "risk": RiskLimits(max_options_allocation_pct=0.5, options_max_spread_pct=0.1),
+    })()
+    gate = RiskGate(config.risk)
+    ks = KillSwitch(tmp_path / "kill_switch.flag")
+    state = AccountState(
+        equity=100_000, positions={}, open_order_symbols=frozenset(),
+        trades_today=0, daily_pnl_pct=0.0, cash=50_000,
+    )
+    result = _execute_csp_entry(
+        signal=signal, run_id=1, strategy=DipRecovery("AAPL"), config=config,
+        options_broker=_FakeOptionsBroker(), repo=sqlite_repo, gate=gate,
+        kill_switch=ks, state=state, asof=None, ref_price=150.0,
+    )
+    assert result.outcome == "blocked"
+    assert "AUTONOMY=auto" in result.risk_decision.reason
+    # Gate fired before execution — no CSP was opened.
+    assert sqlite_repo.get_open_options_positions("AAPL") == []
+
+
 def test_reconcile_options_noop_when_stock_state_stale(sqlite_repo):
     sqlite_repo.record_options_position(OptionsPositionRow(
         contract_symbol="AAPL_TESTPUT", underlying="AAPL", option_type="put", strike=140.0,

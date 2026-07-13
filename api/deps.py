@@ -72,6 +72,9 @@ def _jwks_client():
     return jwt.PyJWKClient(url)
 
 
+_unauth_warned = False  # module-level: warn about open API only once, not per request
+
+
 def auth_enabled() -> bool:
     """True when a Supabase verification path is configured (URL or legacy secret)."""
     cfg = get_config()
@@ -104,7 +107,12 @@ def get_current_user(request: Request) -> str:
         # WARNING, not debug: this grants admin to every request. On a deployed box
         # (missing SUPABASE_URL is the documented Render footgun) this line is the only
         # signal the whole API is open — it must survive the default INFO log level.
-        logger.warning("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
+        # Log once, not per request, so the signal isn't drowned in its own spam.
+        global _unauth_warned
+        if not _unauth_warned:
+            logger.warning("no SUPABASE_URL or SUPABASE_JWT_SECRET set — API is unauthenticated")
+            _unauth_warned = True
+        request.state.auth_sub = "admin"
         return "admin"
 
     auth_header = request.headers.get("authorization") or ""
@@ -128,6 +136,8 @@ def get_current_user(request: Request) -> str:
         logger.debug("JWT verification failed: %s (header alg=%s)", exc, alg)
         _record_auth_failure()
         raise HTTPException(status_code=401, detail="invalid or expired session")
+    # Expose the stable subject id for audit logging without leaking the email (PII).
+    request.state.auth_sub = payload["sub"]
     return payload.get("email") or payload["sub"]
 
 
