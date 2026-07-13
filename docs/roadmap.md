@@ -9,11 +9,14 @@ the approach, and the test that proves it works.
 
 ---
 
-## P1.4 (carryover) — Crypto cost rerun
+## P1.4 (carryover) — Crypto cost rerun ✅ DONE
 
-**Status:** blocked on Alpaca API keys. `CostModel.taker_fee_bps` already merged and the
-`scheduler.py` docstrings were refreshed with realistic-cost numbers in commit `cc3a2c3`;
-only the reproducible backtest-output table (needs live keys to rerun) remains.
+**Status:** rerun 2026-07-12 with live Alpaca keys. Output table committed at
+`docs/crypto_backtest_25bps.md`; `scheduler.py` `_build_crypto_strategies_for` docstring
+numbers match it (2yr Donchian 45.6/0.39/-36.3, 4yr 170.5/0.40/-43.3). Pure Donchian
+dominates on both windows at 25bps — production choice confirmed under realistic cost.
+
+<details><summary>original P1.4 spec</summary>
 
 **Why:** Strategy-selection conclusions in `scheduler.py` docstrings and crypto notes were
 drawn at 5–10 bps. Alpaca live crypto taker is 15–25 bps. The comparison must survive
@@ -28,6 +31,8 @@ realistic cost or the chosen strategy is an artifact.
 
 **Verify:** committed backtest output table at 25 bps; docstring numbers match it.
 **Skip for now:** live sizing haircut — paper Alpaca charges no fee; revisit at real-money go-live (P4).
+
+</details>
 
 ---
 

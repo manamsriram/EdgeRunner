@@ -403,10 +403,11 @@ def _build_crypto_strategies_for(config: Config, symbols: "list[str]") -> "list[
     """Build single-strategy stack (DonchianBreakout) per crypto symbol.
 
     Pure Donchian beat every tested combo on crypto across both the 2yr and 4yr
-    windows (7 pairs, 10bps slippage + 25bps Alpaca taker fee, intra-bar stop):
+    windows (7 pairs, 10bps slippage + 25bps Alpaca taker fee, intra-bar stop).
+    Rerun 2026-07-12 with live keys — full table in docs/crypto_backtest_25bps.md:
 
-      2yr:  46% ret / Sharpe 0.39 / -36% dd   vs EMA+Smash+Dip -3% / 0.08 / -54%
-      4yr: 171% ret / Sharpe 0.40 / -43% dd   vs EMA+Smash+Dip 89% / 0.25 / -60%
+      2yr:  46% ret / Sharpe 0.39 / -36% dd   vs EMA+Smash+Dip -2% / 0.08 / -54%
+      4yr: 171% ret / Sharpe 0.40 / -43% dd   vs EMA+Smash+Dip 87% / 0.25 / -60%
 
     Every strategy added to it diluted returns AND worsened drawdown — the
     composite's sell-priority lets weaker strategies' sells truncate Donchian's
