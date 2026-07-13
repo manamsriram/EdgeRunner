@@ -99,3 +99,11 @@ Full audit 2026-07-11 (plan: `check-the-current-trading-linear-minsky.md`). P0 s
 
 ### Options Activation (P3.1) ✅ DONE
 `OPTIONS_TRADING_ENABLED` / `WHEEL_STRATEGY_ENABLED` / `CSP_ON_DIP_ENABLED` = true on Render (requires `AUTONOMY=auto`). Cap held at 15% NAV (`MAX_OPTIONS_ALLOCATION_PCT`). Options depth (delta/roll/assignment) deferred → `docs/roadmap.md` P3.2.
+
+### Hygiene & Hardening (P2.1 / P2.2 / P2.4) ✅ DONE
+Roadmap hygiene tier shipped in commit `b4bb372` (see `docs/roadmap.md`).
+- **~~P2.1 Concurrency & lifecycle guards~~** — multi-worker guard (`_multi_worker()`; schedulers skip + CRITICAL log under `WEB_CONCURRENCY>1`), `threading.Lock` on the daily-bars cache, WS closes at JWT `exp` (code 1008), once/day quote-failure alert (`get_live_prices_batch` now propagates instead of swallowing so the stale-close fallback is no longer silent).
+- **~~P2.2 Dead-code sweep~~** — deleted pairs pipeline (`run_pair_pipeline`/`_run_pair`/`_notional_for_side`; kept `_fetch_bars`), `record_trade`/`TradeRow` write path (DB `trades` table kept), `InsufficientQtyError`, unused imports; commented rollback stacks → `git show <hash>^` pointers; `_rank_key` precomputes regime once per item.
+- **~~P2.4 Auth observability~~** — `get_current_user` bumps a process-global 401 counter + rate-limited WARNING summary, so a burst is countable above the DEBUG per-request logs.
+
+Remaining deferred (gated/blocked → `docs/roadmap.md`): **P1.4** crypto-cost rerun (needs Alpaca keys), **P2.3** IC observation producer (turn on `BANDIT_WEIGHTING_SHADOW` first), **P3.2** options depth (needs paper data), **P4** real-money go-live.
