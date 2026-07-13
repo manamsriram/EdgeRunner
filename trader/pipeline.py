@@ -71,10 +71,11 @@ class PipelineRun:
     order_id: str | None = None
     error: str | None = None
     is_options: bool = False  # True when this run opened a CSP/CC rather than a stock order
-    # False when the order was submitted but its fill was not confirmed within the
-    # wait_for_fill window. Unconfirmed sells must NOT clear position ownership —
-    # reconcile_order_statuses settles them later against broker truth.
-    fill_confirmed: bool = True
+    # Fail-safe default False: a run is "unconfirmed" until a code path proves the fill.
+    # Only the sell path consults this (to decide whether to clear position ownership);
+    # an unconfirmed sell must NOT clear ownership — reconcile_order_statuses settles it
+    # later against broker truth. Buy/hold/blocked runs never read it.
+    fill_confirmed: bool = False
 
 
 def run_pipeline(
@@ -416,10 +417,16 @@ def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
         else:
             continue  # still live (new/accepted/partially_filled) — leave as submitted
 
-        repo.record_order(OrderRow(
-            client_order_id=coid, symbol=row["symbol"], side=row["side"],
-            notional=row["notional"], status=new_status,
-        ))
+        try:
+            repo.record_order(OrderRow(
+                client_order_id=coid, symbol=row["symbol"], side=row["side"],
+                notional=row["notional"], status=new_status,
+            ))
+        except Exception:
+            # One bad row must not abandon the rest of the batch — the orphaned sells
+            # this job exists to settle may be later in the list.
+            logger.warning("reconciliation: status upsert failed for %s — skipping row", coid)
+            continue
         updated += 1
         logger.info(
             "order reconciliation: %s %s %s -> %s",
@@ -940,8 +947,12 @@ def _execute_signal(
                     logger.exception("stop order failed for %s — software stop remains active", symbol)
 
         _env = "paper" if config.alpaca_paper else "LIVE"
+        # "FILL" only when the fill is confirmed. An unconfirmed sell still holds the
+        # position (outcome deferred to reconciliation) — telling the operator it filled
+        # would defeat the whole fill_confirmed guard at the notification layer.
+        _tag = "FILL" if filled_order is not None else "SUBMITTED(unconfirmed)"
         send_alert(
-            f"FILL {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",
+            f"{_tag} {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",
             config.slack_webhook_url,
             alert_email=config.alert_email,
             smtp_user=config.smtp_user,

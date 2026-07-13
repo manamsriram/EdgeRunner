@@ -54,13 +54,17 @@ def run_backtest(
     stop_loss_pct: float | None = None,
     entry_fraction: Callable[[pd.DataFrame], float] | None = None,
 ) -> BacktestResult:
-    """Replay `bars` through `strategy`. `bars` must have a sorted DatetimeIndex and a
-    `close` and `open` column.
+    """Replay `bars` through `strategy`. `bars` must have a sorted DatetimeIndex and
+    `open`, `low`, and `close` columns (`low` is read for the intra-bar stop).
 
-    `stop_loss_pct` mirrors the live pipeline's stop-loss: when the decision bar's
-    close is that fraction or more below the entry fill price, the position is
-    force-sold at the next open, overriding the strategy's signal (the strategy is
-    not consulted on that bar, matching `_prepare_signal`). None disables it.
+    `stop_loss_pct` mirrors the live pipeline's resting broker stop: if the next
+    bar's *low* reaches the stop level (entry × (1 − stop_loss_pct)), the position
+    is force-sold intra-bar at that level — or at the open if the bar gaps down
+    through it (`min(open, stop_level)`, the worse fill). Detection is intra-bar,
+    not close-based, and the strategy is not consulted on a bar where the stop
+    fires. This models the equity path (live places a GTC stop on every non-crypto
+    buy); crypto/software stops are polled each tick (~60s equity, ~5min crypto),
+    so for those the modeled loss is a lower bound. None disables it.
 
     `entry_fraction` is an optional sizing policy (e.g. vol targeting): called with
     the bars visible at the decision (index <= asof), it returns the fraction of
@@ -90,8 +94,8 @@ def run_backtest(
         next_low = float(bars.iloc[i + 1]["low"])
         fill_date = dates[i + 1]
 
-        # Intra-bar stop: a resting broker stop (as live places on every buy) fires
-        # the moment bar i+1 trades at or below the stop level — not only if the bar
+        # Intra-bar stop: a resting broker stop (as live places on every non-crypto
+        # buy) fires the moment bar i+1 trades at or below the stop level — not if the bar
         # *closes* below it. A gap-down open fills at the open (worse than the stop),
         # so use min(open, stop_level). This models stop frequency and gap-through
         # tail risk that a close-based check silently misses.

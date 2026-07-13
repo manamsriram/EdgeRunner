@@ -11,8 +11,9 @@ the approach, and the test that proves it works.
 
 ## P1.4 (carryover) — Crypto cost rerun
 
-**Status:** blocked on Alpaca API keys. `CostModel.taker_fee_bps` already merged; only the
-rerun + doc refresh remain.
+**Status:** blocked on Alpaca API keys. `CostModel.taker_fee_bps` already merged and the
+`scheduler.py` docstrings were refreshed with realistic-cost numbers in commit `cc3a2c3`;
+only the reproducible backtest-output table (needs live keys to rerun) remains.
 
 **Why:** Strategy-selection conclusions in `scheduler.py` docstrings and crypto notes were
 drawn at 5–10 bps. Alpaca live crypto taker is 15–25 bps. The comparison must survive
