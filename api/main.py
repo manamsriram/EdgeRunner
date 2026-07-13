@@ -204,6 +204,11 @@ async def _crypto_scheduler_loop() -> None:
         await asyncio.sleep(240)
 
 
+# Arbitrary fixed key for the migration advisory lock; shared by every process so
+# only one runs alembic at a time. Must stay constant across deploys.
+_MIGRATION_LOCK_KEY = 0x4544_4752  # "EDGR"
+
+
 def _run_migrations() -> None:
     """Apply pending Alembic migrations. Skipped if DATABASE_URL is not set.
 
@@ -225,6 +230,23 @@ def _run_migrations() -> None:
     ini_path = Path(__file__).parent.parent / "alembic.ini"
     cfg = AlembicConfig(str(ini_path))
     cfg.set_main_option("sqlalchemy.url", db_url)
+
+    # Serialize the migration across processes. The lifespan handler runs this under
+    # asyncio.wait_for(timeout=30s), but wait_for cannot cancel a thread — on timeout
+    # this upgrade keeps running while Render restarts the service and a second process
+    # starts its own migration. A Postgres session advisory lock, held on a dedicated
+    # connection for the whole run, makes the overlapping process block instead of
+    # running concurrent DDL against a half-migrated schema. Closing the connection
+    # releases the lock. Non-Postgres URLs (e.g. sqlite in tests) skip locking.
+    # ponytail: the timed-out thread still holds the lock until alembic returns, so a
+    # slow migration serializes restarts one at a time rather than aborting cleanly;
+    # move to a release-phase migration step if that pile-up ever matters.
+    lock_conn = None
+    if db_url.startswith("postgres"):
+        from sqlalchemy import create_engine, pool, text
+        lock_engine = create_engine(db_url, poolclass=pool.NullPool)
+        lock_conn = lock_engine.connect()
+        lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
     try:
         alembic_command.upgrade(cfg, "head")
     except Exception:
@@ -235,6 +257,8 @@ def _run_migrations() -> None:
         # env.py calls fileConfig(alembic.ini) which resets root logger to WARNING.
         # Restore so all subsequent app INFO logs are visible.
         logging.getLogger().setLevel(logging.INFO)
+        if lock_conn is not None:
+            lock_conn.close()  # closing the session releases the advisory lock
     logger.info("database migrations applied")
 
 
