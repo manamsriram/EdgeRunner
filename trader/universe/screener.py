@@ -52,10 +52,17 @@ def fetch_dynamic_universe(config: "Config", top_n: int = 100) -> list[str]:
         s.symbol for s in movers_resp.losers if s.price >= _MIN_PRICE
     ]
 
+    from trader.risk.gate import is_leveraged_etf_symbol
+
     merged: list[str] = list(
         dict.fromkeys(active_symbols + gainer_symbols + loser_symbols)
     )
-    equities = [s for s in merged if "/" not in s][:top_n]
+    # Leveraged/inverse ETPs decay and reverse-split constantly, which the risk gate
+    # hard-blocks on buy anyway (see is_leveraged_etf_symbol) — filtered here too so
+    # they never occupy a universe slot or generate a signal that just gets rejected.
+    equities = [
+        s for s in merged if "/" not in s and not is_leveraged_etf_symbol(s)
+    ][:top_n]
 
     logger.info(
         "screener: %d most-active + %d gainers + %d losers → %d unique equities",

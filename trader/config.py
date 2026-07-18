@@ -96,6 +96,12 @@ class RiskLimits:
     # Combined cap: CSP cash-collateral + CC share-value-at-risk, capped as a fraction
     # of NAV. Checked alongside (not instead of) stock/crypto position caps in the gate.
     max_options_allocation_pct: float = 0.15  # env: MAX_OPTIONS_ALLOCATION_PCT
+    # Equity buy hard gates. Default on 2026-07-18: dynamic universe swept in
+    # sub-$5 leveraged/inverse ETPs (SOXS, TZA, DRIP, AMDD...) whose price gets
+    # blown up 10x+ by a reverse split — the split-unadjusted entry price then
+    # reads as a huge (fake) unrealized gain instead of the flat/decayed real one.
+    min_equity_price: float = 5.0           # reject equity buys below this (env: MIN_EQUITY_PRICE)
+    block_leveraged_etfs: bool = True       # env: BLOCK_LEVERAGED_ETFS
 
 
 @dataclass(frozen=True)
@@ -194,9 +200,12 @@ def load_config() -> Config:
             dynamic_universe=_env_bool("DYNAMIC_UNIVERSE", False),
             universe_size=int(os.getenv("UNIVERSE_SIZE", "100")),
             dynamic_crypto_universe=_env_bool("DYNAMIC_CRYPTO_UNIVERSE", False),
-            bandit_weighting_shadow=_env_bool("BANDIT_WEIGHTING_SHADOW", False),
+            # Defaults True here to match RiskLimits — load_config's fallback used to
+            # hardcode False, silently overriding the dataclass default (2026-07-18: the
+            # shadow/cooldown flip never actually took effect in prod because of this).
+            bandit_weighting_shadow=_env_bool("BANDIT_WEIGHTING_SHADOW", True),
             bandit_weighting_live=_env_bool("BANDIT_WEIGHTING_LIVE", False),
-            symbol_cooldown_enabled=_env_bool("SYMBOL_COOLDOWN_ENABLED", False),
+            symbol_cooldown_enabled=_env_bool("SYMBOL_COOLDOWN_ENABLED", True),
             symbol_cooldown_seconds=int(os.getenv("SYMBOL_COOLDOWN_SECONDS", "3600")),
             trade_memory_shadow=_env_bool("TRADE_MEMORY_SHADOW", False),
             trade_memory_live=_env_bool("TRADE_MEMORY_LIVE", False),
@@ -209,6 +218,8 @@ def load_config() -> Config:
             crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
             min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "500.0")),
             max_spread_pct=float(os.getenv("MAX_SPREAD_PCT", "0.01")),
+            min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
+            block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
