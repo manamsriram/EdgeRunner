@@ -45,6 +45,14 @@ class FinnhubClient:
             return []
         return data[:limit]
 
+    def earnings_calendar(self, symbol: str, from_date: str, to_date: str) -> list[dict]:
+        """GET /calendar/earnings. Returns [{date, symbol, ...}]. Never raises."""
+        data = self._get("/calendar/earnings", {"symbol": symbol, "from": from_date, "to": to_date})
+        if not isinstance(data, dict):
+            return []
+        entries = data.get("earningsCalendar", [])
+        return entries if isinstance(entries, list) else []
+
     def _get(self, path: str, params: dict) -> dict | list | None:
         """Rate-limited GET. Sleeps to respect 60 req/min. Never raises."""
         try:

@@ -23,7 +23,7 @@ from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch, get_li
 from trader.data.crypto_bars import get_crypto_bars
 from trader.execution.broker import AlpacaBroker, client_order_id_for
 from trader.execution.options_broker import AlpacaOptionsBroker, options_client_order_id_for
-from trader.overlay import apply_fundamental_gate, apply_overlay
+from trader.overlay import apply_earnings_gate, apply_fundamental_gate, apply_overlay
 from trader.portfolio.repository import (
     OptionsPositionRow,
     OrderRow,
@@ -739,6 +739,22 @@ def _prepare_signal(
                         f"not {type(strategy).__name__}"
                     ),
                     outcome="blocked",
+                )
+
+        if signal.side == "buy" and not is_crypto_symbol(symbol) and not _is_intraday:
+            date_str = asof.strftime("%Y-%m-%d")
+            if not apply_earnings_gate(symbol, config, date_str):
+                veto_signal = Signal(
+                    symbol, "hold", 0.0,
+                    "[earnings gate veto] earnings release within window",
+                )
+                repo.record_signal(SignalRow(
+                    run_id=run_id, symbol=symbol,
+                    side=veto_signal.side, strength=veto_signal.strength, reason=veto_signal.reason,
+                ))
+                return PipelineRun(
+                    run_id=run_id, symbol=symbol, signal=veto_signal,
+                    risk_decision=RiskDecision.reject("earnings gate veto"), outcome="hold",
                 )
 
         is_first_entry = symbol not in state.positions or state.positions.get(symbol, 0.0) == 0.0
