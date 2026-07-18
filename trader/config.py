@@ -72,12 +72,15 @@ class RiskLimits:
     min_cash_reserve: float = 500.0         # floor kept liquid — never deployed (env: MIN_CASH_RESERVE)
     max_spread_pct: float = 0.01             # reject buys if round-trip spread cost exceeds this (env: MAX_SPREAD_PCT)
     # Contextual-bandit strategy/regime weighting — shadow mode logs only; live mode
-    # also reweights buy-signal ranking priority. Stays off until shadow logs validate it.
-    bandit_weighting_shadow: bool = False   # env: BANDIT_WEIGHTING_SHADOW
+    # also reweights buy-signal ranking priority. Live stays off until shadow logs validate it.
+    # Shadow default on 2026-07-18: SuperTrend was running an 85% stop-out rate (22/26 closed
+    # trades) with zero down-weighting because bandit_weights was never populated (shadow was off).
+    bandit_weighting_shadow: bool = True    # env: BANDIT_WEIGHTING_SHADOW
     bandit_weighting_live: bool = False     # env: BANDIT_WEIGHTING_LIVE
     # Symbol cooldown — blocks new buys on a symbol for a window after a losing exit.
     # The gate already logs every rejection reason, so enabling on paper IS the shadow test.
-    symbol_cooldown_enabled: bool = False   # env: SYMBOL_COOLDOWN_ENABLED
+    # Default on 2026-07-18: RXRX/NNBR were re-bought same-day right after a losing stop-out.
+    symbol_cooldown_enabled: bool = True    # env: SYMBOL_COOLDOWN_ENABLED
     symbol_cooldown_seconds: int = 3600     # env: SYMBOL_COOLDOWN_SECONDS
     # Trade-memory overlay context — shadow logs what would be injected; live actually
     # appends it to the LLM prompt. Same two-stage rollout shape as bandit weighting.

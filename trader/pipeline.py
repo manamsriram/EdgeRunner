@@ -741,6 +741,26 @@ def _prepare_signal(
                     outcome="blocked",
                 )
 
+        # Buy-side ownership conflict — a different strategy already holds this symbol
+        # in this pool. Without this, two arms can independently buy into the same
+        # symbol (e.g. NNBR: SuperTrend and DipRecovery both bought within 3 minutes
+        # on 2026-07-16, both got stopped out separately).
+        if signal.side == "buy":
+            owner = state.position_owners.get((symbol, _pool))
+            if owner is not None and owner != type(strategy).__name__:
+                repo.record_signal(SignalRow(
+                    run_id=run_id, symbol=symbol,
+                    side=signal.side, strength=signal.strength, reason=signal.reason,
+                ))
+                return PipelineRun(
+                    run_id=run_id, symbol=symbol, signal=signal,
+                    risk_decision=RiskDecision.reject(
+                        f"ownership conflict: {symbol} owned by {owner}, "
+                        f"not {type(strategy).__name__}"
+                    ),
+                    outcome="blocked",
+                )
+
         if signal.side == "buy" and not is_crypto_symbol(symbol) and not _is_intraday:
             date_str = asof.strftime("%Y-%m-%d")
             if not apply_earnings_gate(symbol, config, date_str):

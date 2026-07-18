@@ -276,10 +276,24 @@ def test_cooldown_allows_buy_once_elapsed():
     assert decision.approved
 
 
-def test_cooldown_disabled_by_default_ignores_recent_loss():
+def test_cooldown_enabled_by_default_blocks_recent_loss():
+    # Default flipped on 2026-07-18: revenge re-entry (RXRX/NNBR same-day rebuys after
+    # a losing stop-out) was the main driver of repeat losses on paper.
     now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
     state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
     decision = gate_default().evaluate(_buy(), state, now=now)
+    assert not decision.approved
+
+
+def test_cooldown_can_still_be_disabled_explicitly():
+    limits = RiskLimits(
+        max_position_pct=0.10,
+        allowlist=("AAPL", "MSFT"),
+        symbol_cooldown_enabled=False,
+    )
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
+    decision = RiskGate(limits).evaluate(_buy(), state, now=now)
     assert decision.approved
 
 
