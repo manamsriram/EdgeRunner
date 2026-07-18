@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 logger = logging.getLogger(__name__)
 
 from api.deps import get_broker, get_config, get_current_user, get_repo
+from api.proposals_cache import get_pending, invalidate
 from trader.execution.broker import client_order_id_for
 from trader.portfolio.repository import (
     PROPOSAL_APPROVED,
@@ -32,7 +33,9 @@ def _get_pending_proposal(proposal_id: int) -> dict | None:
 
 @router.get("")
 def list_proposals(username: str = Depends(get_current_user)):
-    return get_repo().list_pending_proposals()
+    # Read through the shared TTL cache so the dashboard's REST refresh and the
+    # WS poller's tick collapse into a single DB query per 10 s window.
+    return get_pending(get_repo())
 
 
 @router.post("/{proposal_id}/approve")
@@ -45,6 +48,9 @@ def approve(proposal_id: int, username: str = Depends(get_current_user)):
     proposal = repo.try_approve_proposal(proposal_id)
     if proposal is None:
         raise HTTPException(status_code=409, detail="proposal already resolved or not found")
+    # State changed out of PENDING — drop the cached pending list so the WS poller
+    # and any concurrent REST reader see fresh state.
+    invalidate()
 
     try:
         created_at = datetime.fromisoformat(str(proposal["created_at"]))
@@ -57,6 +63,7 @@ def approve(proposal_id: int, username: str = Depends(get_current_user)):
             ref_price = proposal["ref_price"]
             if not ref_price:
                 repo.set_proposal_status(proposal_id, PROPOSAL_PENDING)
+                invalidate()  # rolled back to PENDING — re-show in list
                 raise HTTPException(status_code=422, detail="cannot submit sell: ref_price is zero")
             # Cancel any broker-side stop order before closing the position.
             try:
@@ -112,6 +119,8 @@ def approve(proposal_id: int, username: str = Depends(get_current_user)):
             broker_order_id=str(getattr(order, "id", "") or "") or None,
         ))
         repo.set_proposal_status(proposal_id, PROPOSAL_EXECUTED)
+        invalidate()  # belt-and-suspenders; cache is already empty but racey
+                      # cross-process reads (if we ever go multi-worker) need this.
         return {"status": "executed", "proposal_id": proposal_id}
 
     except HTTPException:
@@ -119,13 +128,18 @@ def approve(proposal_id: int, username: str = Depends(get_current_user)):
     except Exception:
         logger.exception("broker submission failed for proposal %s", proposal_id)
         repo.set_proposal_status(proposal_id, PROPOSAL_PENDING)
+        invalidate()  # rolled back to PENDING — re-show in list
         raise HTTPException(status_code=502, detail="broker submission failed; see server logs")
 
 
 @router.post("/{proposal_id}/reject")
 def reject(proposal_id: int, username: str = Depends(get_current_user)):
     repo = get_repo()
+    # Existence check reads the DB directly (not the cache): we want to catch a
+    # proposal that was just approved by a concurrent request even if our cache
+    # is stale. _get_pending_proposal already does this.
     if _get_pending_proposal(proposal_id) is None:
         raise HTTPException(status_code=409, detail="proposal already resolved or not found")
     repo.set_proposal_status(proposal_id, PROPOSAL_REJECTED)
+    invalidate()
     return {"status": "rejected", "proposal_id": proposal_id}

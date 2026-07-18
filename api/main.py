@@ -303,17 +303,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("migrations failed — aborting startup")
         raise
-    _spawn(_guarded(proposal_poller(), "proposal_poller"))
-    # The schedulers run in-process and assume exactly one process. With WEB_CONCURRENCY>1
-    # (uvicorn/gunicorn --workers N) every worker would run its own scheduler and
-    # double-submit orders. Refuse to start them; the web tier still serves.
+    # The schedulers AND proposal_poller run in-process and assume exactly one
+    # process. With WEB_CONCURRENCY>1 (uvicorn/gunicorn --workers N) every
+    # worker would run its own scheduler (double-submitting orders) and its
+    # own poller (multiplying Supabase egress by N). Refuse to start them; the
+    # web tier still serves.
     if _multi_worker():
         logger.critical(
-            "WEB_CONCURRENCY=%s (>1) — schedulers NOT started to avoid duplicate orders; "
-            "run the scheduler in a single-worker process",
+            "WEB_CONCURRENCY=%s (>1) — proposal poller and schedulers NOT started "
+            "to avoid duplicate orders and N× Supabase egress; run them in a single-"
+            "worker process",
             os.getenv("WEB_CONCURRENCY"),
         )
     else:
+        _spawn(_guarded(proposal_poller(), "proposal_poller"))
         _spawn(_guarded(_scheduler_loop(), "equity_scheduler"))
         _spawn(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
         logger.info("proposal poller, equity scheduler, and crypto scheduler started")
