@@ -15,6 +15,7 @@ import pandas as pd
 
 from trader.overlay.cost_tracking import estimate_cost_usd
 from trader.overlay.llm_client import call_llm
+from trader.overlay.market_stats import compute_bar_stats
 from trader.overlay.news_context import fetch_news
 from trader.strategy.base import Signal
 
@@ -136,21 +137,14 @@ Respond ONLY with valid JSON — no markdown, no text outside the JSON object:
 
 
 def _bars_context(symbol: str, bars: pd.DataFrame) -> str:
-    if bars.empty or len(bars) < 2:
+    stats = compute_bar_stats(bars)
+    if not stats:
         return f"Insufficient bar data for {symbol}."
-    close = bars["close"]
-    last_close = float(close.iloc[-1])
-    lookback_20 = min(20, len(close) - 1)
-    pct_20d = (close.iloc[-1] / close.iloc[-(lookback_20 + 1)] - 1) * 100
-    lookback_10 = min(10, len(close) - 1)
-    returns_10 = close.pct_change().dropna().iloc[-lookback_10:]
-    vol_10d = float(returns_10.std() * (252 ** 0.5) * 100) if len(returns_10) > 1 else 0.0
-    n_days = len(close)
     return (
-        f"Market context ({symbol}, last {n_days} trading days):\n"
-        f"- Last close: ${last_close:.2f}\n"
-        f"- {lookback_20}-day price change: {pct_20d:+.1f}%\n"
-        f"- {lookback_10}-day annualized volatility: {vol_10d:.1f}%"
+        f"Market context ({symbol}, last {stats['n_days']} trading days):\n"
+        f"- Last close: ${stats['last_close']:.2f}\n"
+        f"- {stats['lookback_20']}-day price change: {stats['pct_20d']:+.1f}%\n"
+        f"- {stats['lookback_10']}-day annualized volatility: {stats['vol_10d_annualized']:.1f}%"
     )
 
 
