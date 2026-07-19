@@ -12,7 +12,7 @@ import pytest
 from trader.config import DEFAULT_ALLOWLIST, RiskLimits, _env_allowlist
 from trader.risk.gate import (
     AccountState, KillSwitch, OrderIntent, RiskDecision, RiskGate,
-    is_crypto_symbol, is_option_symbol,
+    is_crypto_symbol, is_leveraged_etf_name, is_leveraged_etf_symbol, is_option_symbol,
 )
 
 
@@ -276,10 +276,24 @@ def test_cooldown_allows_buy_once_elapsed():
     assert decision.approved
 
 
-def test_cooldown_disabled_by_default_ignores_recent_loss():
+def test_cooldown_enabled_by_default_blocks_recent_loss():
+    # Default flipped on 2026-07-18: revenge re-entry (RXRX/NNBR same-day rebuys after
+    # a losing stop-out) was the main driver of repeat losses on paper.
     now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
     state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
     decision = gate_default().evaluate(_buy(), state, now=now)
+    assert not decision.approved
+
+
+def test_cooldown_can_still_be_disabled_explicitly():
+    limits = RiskLimits(
+        max_position_pct=0.10,
+        allowlist=("AAPL", "MSFT"),
+        symbol_cooldown_enabled=False,
+    )
+    now = datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc)
+    state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
+    decision = RiskGate(limits).evaluate(_buy(), state, now=now)
     assert decision.approved
 
 
@@ -305,3 +319,63 @@ def test_kill_switch_wins_over_cooldown(tmp_path):
     state = _state(last_losing_exit_at={"AAPL": now - timedelta(minutes=1)})
     decision = _cooldown_gate().evaluate(_buy(), state, ks, now=now)
     assert decision.reason == "kill switch engaged"
+
+
+# ---- leveraged/inverse ETF blocklist + minimum equity price ----
+# Regression for 2026-07-18: dynamic universe swept in sub-$5 leveraged/inverse
+# ETPs (SOXS, TZA, DRIP, AMDD...) whose price later got blown up 10x+ by a
+# reverse split, reading as a huge fake unrealized gain against the stale
+# split-unadjusted entry price.
+
+def test_is_leveraged_etf_symbol_matches_known_tickers():
+    assert is_leveraged_etf_symbol("SOXS")
+    assert is_leveraged_etf_symbol("TZA")
+    assert not is_leveraged_etf_symbol("AAPL")  # suffix collision must not false-positive
+
+
+def test_is_leveraged_etf_name_matches_issuer_phrasing():
+    assert is_leveraged_etf_name("Direxion Daily Semiconductor Bull 3X Shares")
+    assert is_leveraged_etf_name("ProShares UltraPro QQQ")
+    assert is_leveraged_etf_name("GraniteShares 2x Long NVDA Daily ETF")
+    assert not is_leveraged_etf_name("Apple Inc")
+    assert not is_leveraged_etf_name("")
+
+
+def test_leveraged_etf_blocked_by_default():
+    limits = RiskLimits(max_position_pct=0.10, allowlist=None)
+    decision = RiskGate(limits).evaluate(_buy(symbol="SOXS", ref_price=50.0), _state())
+    assert not decision.approved
+    assert "leveraged" in decision.reason.lower()
+
+
+def test_leveraged_etf_block_can_be_disabled():
+    limits = RiskLimits(max_position_pct=0.10, allowlist=None, block_leveraged_etfs=False)
+    decision = RiskGate(limits).evaluate(_buy(symbol="SOXS", ref_price=50.0), _state())
+    assert decision.approved
+
+
+def test_leveraged_etf_block_never_applies_to_sells():
+    limits = RiskLimits(max_position_pct=0.10, allowlist=None)
+    intent = OrderIntent(symbol="SOXS", side="sell", notional=500.0, ref_price=50.0)
+    decision = RiskGate(limits).evaluate(intent, _state(positions={"SOXS": 10.0}))
+    assert decision.approved
+
+
+def test_min_equity_price_blocks_penny_stock_buy():
+    limits = RiskLimits(max_position_pct=0.10, allowlist=None)
+    decision = RiskGate(limits).evaluate(_buy(symbol="XYZ", ref_price=0.75), _state())
+    assert not decision.approved
+    assert "below minimum" in decision.reason.lower()
+
+
+def test_min_equity_price_allows_buy_at_or_above_threshold():
+    limits = RiskLimits(max_position_pct=0.10, allowlist=None, min_equity_price=5.0)
+    decision = RiskGate(limits).evaluate(_buy(symbol="XYZ", ref_price=5.0), _state())
+    assert decision.approved
+
+
+def test_min_equity_price_never_blocks_sells():
+    limits = RiskLimits(max_position_pct=0.10, allowlist=None)
+    intent = OrderIntent(symbol="XYZ", side="sell", notional=50.0, ref_price=0.75)
+    decision = RiskGate(limits).evaluate(intent, _state(positions={"XYZ": 100.0}))
+    assert decision.approved

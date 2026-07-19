@@ -98,6 +98,28 @@ def apply_fundamental_gate(
     )
 
 
+def apply_earnings_gate(
+    symbol: str,
+    config=None,
+    date_str: str = "",
+) -> bool:
+    """Hard earnings-calendar gate for equity buys. True = approved.
+
+    Non-load-bearing: returns True when Finnhub isn't configured or the
+    calendar lookup fails. Skip for crypto — no earnings events.
+    """
+    if config is None:
+        return True
+    finnhub_client = _get_finnhub_client(config)
+    if finnhub_client is None:
+        return True
+
+    from trader.overlay.earnings_gate import check_earnings_gate
+
+    days_ahead = int(os.getenv("EARNINGS_GATE_DAYS_AHEAD", "2"))
+    return check_earnings_gate(symbol, finnhub_client, date_str, days_ahead=days_ahead)
+
+
 def apply_overlay(
     signal: Signal, bars: pd.DataFrame, config=None,
     repo=None, strategy_name: str | None = None, regime: str | None = None,

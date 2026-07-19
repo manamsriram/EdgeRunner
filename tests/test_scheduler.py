@@ -205,7 +205,10 @@ def _seed_round_trips(repo, strategy, regime, symbol, n=20):
 
 def test_nightly_bandit_skips_when_bandit_disabled(tmp_path):
     """Neither shadow nor live → function returns {} without calling broker."""
+    from dataclasses import replace as _replace
     cfg = _config(ks_path=str(tmp_path / "ks.flag"), db_path=str(tmp_path / "portfolio.db"))
+    # shadow defaults on as of 2026-07-18 — force both off to exercise the disabled path.
+    cfg = _replace(cfg, risk=_replace(cfg.risk, bandit_weighting_shadow=False, bandit_weighting_live=False))
     broker = AlpacaBroker(
         cfg, client=FakeClockClient(),
         request_builder=lambda **kw: kw,

@@ -45,6 +45,58 @@ def is_option_symbol(symbol: str) -> bool:
     return bool(re.search(r"\d{6}[CP]\d{8}$", symbol))
 
 
+# Daily leveraged/inverse ETFs and ETNs. These decay and reverse-split constantly
+# (routinely 1-for-4 to 1-for-20) — a split multiplies the print by the ratio
+# without adjusting a resting avg-entry cost basis, so a real (or flat/losing)
+# position can read as a multi-hundred-percent "gain" purely from the split. An
+# exact-match blocklist, not a suffix/prefix heuristic — bull/bear ticker
+# conventions collide with ordinary tickers (e.g. "AAPL" ends in "L").
+_LEVERAGED_ETF_SYMBOLS: frozenset[str] = frozenset({
+    # Broad index 3x
+    "TQQQ", "SQQQ", "SPXL", "SPXS", "SPXU", "UPRO", "TNA", "TZA", "URTY", "SRTY",
+    # Sector 3x (Direxion)
+    "SOXL", "SOXS", "LABU", "LABD", "NUGT", "DUST", "JNUG", "JDST", "FAS", "FAZ",
+    "YINN", "YANG", "ERX", "ERY", "GUSH", "DRIP", "NAIL", "WEBL", "WEBS", "TPOR",
+    "RETL", "PILL", "MEXX", "INDL", "CURE", "TECL", "TECS", "DFEN", "DPST", "UTSL",
+    # Rates / bonds 3x
+    "TMF", "TMV", "TYD", "TYO",
+    # Volatility
+    "UVXY", "SVXY", "VXX", "VIXY", "UVIX", "SVIX",
+    # Single-stock leveraged (2026 crop — proliferates fast, kept best-effort)
+    "TSLL", "TSLQ", "TSLZ", "NVDL", "NVDD", "NVDU", "AMDL", "AMDD", "AMDU",
+    "MSFU", "MSFD", "AAPU", "AAPD", "GGLL", "GGLS", "METU", "METD", "MSTU", "MSTX",
+    "CONL", "COIU", "COIN2X", "SMCX", "PLTU",
+    # Recently observed in this book (2026-07): decay-prone single-stock/theme
+    # leveraged products that don't fit a clean naming pattern.
+    "BMNU", "RKLZ",
+})
+
+
+def is_leveraged_etf_symbol(symbol: str) -> bool:
+    """Return True for known daily-leveraged/inverse ETFs, ETNs, and single-stock
+    leveraged products — see `_LEVERAGED_ETF_SYMBOLS` for why these get a hard block."""
+    return symbol in _LEVERAGED_ETF_SYMBOLS
+
+
+# Fund-name keywords issuers use for daily-leveraged/inverse products (Direxion,
+# ProShares, GraniteShares, etc. all use these consistently in the *name*, e.g.
+# "Direxion Daily Semiconductor Bull 3X Shares" or "ProShares UltraPro QQQ").
+# Ordinary equity/company names don't collide with these the way tickers do —
+# catches new launches the exact-match symbol list hasn't caught up to yet.
+_LEVERAGED_ETF_NAME_KEYWORDS: tuple[str, ...] = (
+    "2x", "3x", "ultrapro", "ultrashort", "ultra ", "daily bull", "daily bear",
+    "leveraged", "inverse",
+)
+
+
+def is_leveraged_etf_name(name: str) -> bool:
+    """Return True if a fund's name matches known leveraged/inverse issuer phrasing.
+    Best-effort supplement to `is_leveraged_etf_symbol` for products not yet in the
+    exact-match list — see `_LEVERAGED_ETF_NAME_KEYWORDS`."""
+    lowered = name.lower()
+    return any(kw in lowered for kw in _LEVERAGED_ETF_NAME_KEYWORDS)
+
+
 @dataclass(frozen=True)
 class AccountState:
     """Everything the gate needs about the account, sourced from broker reconciliation.
@@ -249,6 +301,20 @@ class RiskGate:
         _active_allowlist = limits.crypto_allowlist if _is_crypto else limits.allowlist
         if _active_allowlist is not None and intent.symbol not in _active_allowlist:
             return RiskDecision.reject(f"{intent.symbol} not in allowlist")
+
+        # 1b. Equity buy hard gates — leveraged/inverse ETF blocklist + minimum price.
+        #     Sells always pass (must be able to exit an existing/legacy position);
+        #     options and crypto are out of scope for both checks.
+        if intent.side == "buy" and not _is_crypto and not is_option_symbol(intent.symbol):
+            if limits.block_leveraged_etfs and is_leveraged_etf_symbol(intent.symbol):
+                return RiskDecision.reject(
+                    f"{intent.symbol} is a leveraged/inverse ETF — blocked (reverse-split risk)"
+                )
+            if intent.ref_price < limits.min_equity_price:
+                return RiskDecision.reject(
+                    f"{intent.symbol} price ${intent.ref_price:.2f} below minimum "
+                    f"${limits.min_equity_price:.2f}"
+                )
 
         # 2. Pending order — positions don't reflect an in-flight order; refuse to stack.
         if intent.symbol in state.open_order_symbols:

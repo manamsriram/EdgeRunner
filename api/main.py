@@ -220,10 +220,10 @@ def _run_migrations() -> None:
     if not db_url:
         logger.warning("DATABASE_URL not set — skipping migrations")
         return
-    # Add connect_timeout so a blocked/slow DB doesn't hang startup indefinitely.
-    if "connect_timeout" not in db_url:
-        sep = "&" if "?" in db_url else "?"
-        db_url = f"{db_url}{sep}connect_timeout=10"
+    # connect_timeout is passed via connect_args, not the URL string, to avoid
+    # psycopg2 misreading "&connect_timeout=10" as part of the database name when
+    # the URL already contains a "?" (e.g. ?pgbouncer=true or ?sslmode=require).
+    _connect_args = {"connect_timeout": 10}
     from pathlib import Path
     from alembic.config import Config as AlembicConfig
     from alembic import command as alembic_command
@@ -244,7 +244,7 @@ def _run_migrations() -> None:
     lock_conn = None
     if db_url.startswith("postgres"):
         from sqlalchemy import create_engine, pool, text
-        lock_engine = create_engine(db_url, poolclass=pool.NullPool)
+        lock_engine = create_engine(db_url, poolclass=pool.NullPool, connect_args=_connect_args)
         lock_conn = lock_engine.connect()
         lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
     try:
@@ -303,17 +303,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("migrations failed — aborting startup")
         raise
-    _spawn(_guarded(proposal_poller(), "proposal_poller"))
-    # The schedulers run in-process and assume exactly one process. With WEB_CONCURRENCY>1
-    # (uvicorn/gunicorn --workers N) every worker would run its own scheduler and
-    # double-submit orders. Refuse to start them; the web tier still serves.
+    # The schedulers AND proposal_poller run in-process and assume exactly one
+    # process. With WEB_CONCURRENCY>1 (uvicorn/gunicorn --workers N) every
+    # worker would run its own scheduler (double-submitting orders) and its
+    # own poller (multiplying Supabase egress by N). Refuse to start them; the
+    # web tier still serves.
     if _multi_worker():
         logger.critical(
-            "WEB_CONCURRENCY=%s (>1) — schedulers NOT started to avoid duplicate orders; "
-            "run the scheduler in a single-worker process",
+            "WEB_CONCURRENCY=%s (>1) — proposal poller and schedulers NOT started "
+            "to avoid duplicate orders and N× Supabase egress; run them in a single-"
+            "worker process",
             os.getenv("WEB_CONCURRENCY"),
         )
     else:
+        _spawn(_guarded(proposal_poller(), "proposal_poller"))
         _spawn(_guarded(_scheduler_loop(), "equity_scheduler"))
         _spawn(_guarded(_crypto_scheduler_loop(), "crypto_scheduler"))
         logger.info("proposal poller, equity scheduler, and crypto scheduler started")

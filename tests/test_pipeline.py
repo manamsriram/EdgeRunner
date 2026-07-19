@@ -512,6 +512,24 @@ def test_sell_still_blocked_when_owner_strategy_active(tmp_path):
     assert "ownership conflict" in sell_result.risk_decision.reason
 
 
+def test_buy_blocked_when_symbol_owned_by_other_strategy(tmp_path):
+    """Two strategies must not independently buy into the same symbol/pool. Regression
+    for 2026-07-16: SuperTrend and DipRecovery both bought NNBR three minutes apart,
+    then both got stopped out separately."""
+    cfg = _config(tmp_path, autonomy="manual")
+    SQLiteRepository(cfg.portfolio_db_path).set_position_owner(_SYMBOL, "_OtherStrategy")
+
+    results, _, _ = _run(
+        [_FixedStrategy(_SYMBOL, "buy"), _OtherStrategy(_SYMBOL, "hold")],
+        cfg,
+        state=_held_state(),
+    )
+
+    buy_result = next(r for r in results if r.signal and r.signal.side == "buy")
+    assert buy_result.outcome == "blocked"
+    assert "ownership conflict" in buy_result.risk_decision.reason
+
+
 # ---- bandit weighting ----
 
 class _StratA(_FixedStrategy):
