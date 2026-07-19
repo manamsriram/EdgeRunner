@@ -31,6 +31,9 @@ def fetch_dynamic_universe(config: "Config", top_n: int = 100) -> list[str]:
     from alpaca.data.enums import MostActivesBy
     from alpaca.data.historical.screener import ScreenerClient
     from alpaca.data.requests import MarketMoversRequest, MostActivesRequest
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.enums import AssetClass, AssetStatus
+    from alpaca.trading.requests import GetAssetsRequest
 
     config.require_alpaca_credentials()
     client = ScreenerClient(
@@ -52,16 +55,33 @@ def fetch_dynamic_universe(config: "Config", top_n: int = 100) -> list[str]:
         s.symbol for s in movers_resp.losers if s.price >= _MIN_PRICE
     ]
 
-    from trader.risk.gate import is_leveraged_etf_symbol
+    from trader.risk.gate import is_leveraged_etf_name, is_leveraged_etf_symbol
 
     merged: list[str] = list(
         dict.fromkeys(active_symbols + gainer_symbols + loser_symbols)
     )
-    # Leveraged/inverse ETPs decay and reverse-split constantly, which the risk gate
-    # hard-blocks on buy anyway (see is_leveraged_etf_symbol) — filtered here too so
-    # they never occupy a universe slot or generate a signal that just gets rejected.
+    candidates = [s for s in merged if "/" not in s and not is_leveraged_etf_symbol(s)]
+
+    # Exact-match list only catches known tickers. A single bulk asset fetch (once per
+    # universe refresh, not per-symbol) lets us also check fund *names* — issuers phrase
+    # leveraged/inverse products consistently ("Direxion Daily ... Bull 3X Shares"),
+    # which catches new launches the hand-maintained symbol list hasn't caught up to yet.
+    try:
+        trading_client = TradingClient(
+            api_key=config.alpaca_api_key,
+            secret_key=config.alpaca_secret_key,
+        )
+        assets = trading_client.get_all_assets(
+            GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)
+        )
+        names_by_symbol = {a.symbol: a.name for a in assets if a.name}
+    except Exception:
+        logger.warning("screener: asset-name fetch failed, skipping name-based leveraged-ETF filter", exc_info=True)
+        names_by_symbol = {}
+
     equities = [
-        s for s in merged if "/" not in s and not is_leveraged_etf_symbol(s)
+        s for s in candidates
+        if not is_leveraged_etf_name(names_by_symbol.get(s, ""))
     ][:top_n]
 
     logger.info(

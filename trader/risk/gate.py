@@ -78,6 +78,25 @@ def is_leveraged_etf_symbol(symbol: str) -> bool:
     return symbol in _LEVERAGED_ETF_SYMBOLS
 
 
+# Fund-name keywords issuers use for daily-leveraged/inverse products (Direxion,
+# ProShares, GraniteShares, etc. all use these consistently in the *name*, e.g.
+# "Direxion Daily Semiconductor Bull 3X Shares" or "ProShares UltraPro QQQ").
+# Ordinary equity/company names don't collide with these the way tickers do —
+# catches new launches the exact-match symbol list hasn't caught up to yet.
+_LEVERAGED_ETF_NAME_KEYWORDS: tuple[str, ...] = (
+    "2x", "3x", "ultrapro", "ultrashort", "ultra ", "daily bull", "daily bear",
+    "leveraged", "inverse",
+)
+
+
+def is_leveraged_etf_name(name: str) -> bool:
+    """Return True if a fund's name matches known leveraged/inverse issuer phrasing.
+    Best-effort supplement to `is_leveraged_etf_symbol` for products not yet in the
+    exact-match list — see `_LEVERAGED_ETF_NAME_KEYWORDS`."""
+    lowered = name.lower()
+    return any(kw in lowered for kw in _LEVERAGED_ETF_NAME_KEYWORDS)
+
+
 @dataclass(frozen=True)
 class AccountState:
     """Everything the gate needs about the account, sourced from broker reconciliation.

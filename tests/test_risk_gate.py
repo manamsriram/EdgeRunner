@@ -12,7 +12,7 @@ import pytest
 from trader.config import DEFAULT_ALLOWLIST, RiskLimits, _env_allowlist
 from trader.risk.gate import (
     AccountState, KillSwitch, OrderIntent, RiskDecision, RiskGate,
-    is_crypto_symbol, is_leveraged_etf_symbol, is_option_symbol,
+    is_crypto_symbol, is_leveraged_etf_name, is_leveraged_etf_symbol, is_option_symbol,
 )
 
 
@@ -331,6 +331,14 @@ def test_is_leveraged_etf_symbol_matches_known_tickers():
     assert is_leveraged_etf_symbol("SOXS")
     assert is_leveraged_etf_symbol("TZA")
     assert not is_leveraged_etf_symbol("AAPL")  # suffix collision must not false-positive
+
+
+def test_is_leveraged_etf_name_matches_issuer_phrasing():
+    assert is_leveraged_etf_name("Direxion Daily Semiconductor Bull 3X Shares")
+    assert is_leveraged_etf_name("ProShares UltraPro QQQ")
+    assert is_leveraged_etf_name("GraniteShares 2x Long NVDA Daily ETF")
+    assert not is_leveraged_etf_name("Apple Inc")
+    assert not is_leveraged_etf_name("")
 
 
 def test_leveraged_etf_blocked_by_default():
