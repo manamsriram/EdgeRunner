@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from trader.overlay import fundamental_gate
+from trader.overlay.fundamental_gate import parse_fundamentals_finnhub
 
 
 # ---------------------------------------------------------------------------
@@ -216,3 +217,30 @@ def test_price_context_included_in_prompt(monkeypatch):
     # call_llm(system, user_message, max_tokens, ...)
     user_message = mock_llm.call_args[0][1]
     assert "Window high" in user_message or "MA20" in user_message or "Current price" in user_message
+
+
+# ---------------------------------------------------------------------------
+# Group 6: parse_fundamentals_finnhub
+# ---------------------------------------------------------------------------
+
+def test_parse_fundamentals_finnhub_extracts_floats():
+    metrics = {
+        "peBasicExclExtraTTM": 22.5,
+        "currentEv/freeCashFlowTTM": 18.0,
+        "grossMarginTTM": 42.3,
+        "revenueGrowthTTMYoy": 12.1,
+    }
+    recs = [{"buy": 10, "hold": 4, "sell": 1, "period": "2026-06"}]
+    parsed = parse_fundamentals_finnhub(metrics, recs)
+    assert parsed["pe_ttm"] == 22.5
+    assert parsed["ev_fcf_ttm"] == 18.0
+    assert parsed["gross_margin_ttm"] == 42.3
+    assert parsed["revenue_growth_yoy"] == 12.1
+    assert parsed["analyst_buy_count"] == 10.0
+    assert parsed["analyst_hold_count"] == 4.0
+    assert parsed["analyst_sell_count"] == 1.0
+
+
+def test_parse_fundamentals_finnhub_missing_fields_omitted():
+    parsed = parse_fundamentals_finnhub({}, [])
+    assert parsed == {}

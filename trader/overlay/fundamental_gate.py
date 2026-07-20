@@ -182,6 +182,30 @@ def fetch_fundamentals_finnhub(symbol: str, client) -> str:
         return ""
 
 
+def parse_fundamentals_finnhub(metrics: dict, recs: list[dict]) -> dict[str, float]:
+    """Extract the same fields fetch_fundamentals_finnhub formats to text, as floats.
+    Missing fields are simply absent — callers apply their own defaults."""
+    out: dict[str, float] = {}
+    pe = metrics.get("peBasicExclExtraTTM", metrics.get("peTTM"))
+    if pe is not None:
+        out["pe_ttm"] = float(pe)
+    ev_fcf = metrics.get("currentEv/freeCashFlowTTM")
+    if ev_fcf is not None:
+        out["ev_fcf_ttm"] = float(ev_fcf)
+    gross_margin = metrics.get("grossMarginTTM")
+    if gross_margin is not None:
+        out["gross_margin_ttm"] = float(gross_margin)
+    rev_growth = metrics.get("revenueGrowthTTMYoy")
+    if rev_growth is not None:
+        out["revenue_growth_yoy"] = float(rev_growth)
+    if recs:
+        latest = recs[0]
+        out["analyst_buy_count"] = float(latest.get("buy", 0))
+        out["analyst_hold_count"] = float(latest.get("hold", 0))
+        out["analyst_sell_count"] = float(latest.get("sell", 0))
+    return out
+
+
 def check_fundamental_gate(
     symbol: str,
     bars: pd.DataFrame,
