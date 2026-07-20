@@ -585,6 +585,115 @@ def _stop_multiplier_for_owner(owner_name: str | None) -> float:
     return 1.0
 
 
+# 60-second in-process cache so _log_decision_features and apply_claude_overlay
+# can both call into the underlying Finnhub helpers without doubling external
+# API volume on the same tick. Finnhub free-tier is ~60 calls/min — without
+# this, a tick with N equity strategies that pass the overlay gate would issue
+# 2N news + 2N fundamentals calls (one each from the overlay + one each from
+# here). The TTL is short enough that the next minute sees fresh data, but
+# long enough to dedupe same-tick calls. Reset on process restart; the cache is
+# best-effort, not authoritative.
+import time as _time
+_NEWS_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+_FUNDAMENTALS_CACHE: dict[str, tuple[float, tuple[dict, list[dict]]]] = {}
+_FETCH_TTL_S = 60.0
+# Cheap bound so a long-running session touching hundreds of symbols doesn't
+# grow these dicts without limit. When exceeded, drop the entire cache — a
+# worst-case minute of stale data followed by a flood of fresh fetches, which
+# is bounded by Finnhub's rate-limit anyway. Conservative floor — the cache
+# only matters when it absorbs same-tick doubles, so 256 (way more than any
+# realistic per-minute symbol count) is fine.
+_MAX_FETCH_CACHE_ENTRIES = 256
+
+
+def _news_cache_put(key: tuple[str, str], value: dict, now: float) -> None:
+    if len(_NEWS_CACHE) > _MAX_FETCH_CACHE_ENTRIES:
+        _NEWS_CACHE.clear()
+    _NEWS_CACHE[key] = (now, value)
+
+
+def _fundamentals_cache_put(symbol: str, value: tuple[dict, list[dict]], now: float) -> None:
+    if len(_FUNDAMENTALS_CACHE) > _MAX_FETCH_CACHE_ENTRIES:
+        _FUNDAMENTALS_CACHE.clear()
+    _FUNDAMENTALS_CACHE[symbol] = (now, value)
+
+
+def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name, regime, mode) -> None:
+    """Best-effort feature-snapshot log. Never raises — must not affect the overlay.
+
+    Re-derives news/sentiment/fundamentals via the same Finnhub client singletons
+    the overlay uses, behind a 60-second in-process cache so the tick-overlap
+    doubling is absorbed. The cache is preferred to threading pre-fetched
+    objects through apply_overlay's signature because it keeps Phase 1
+    additive — no overlay-signature change.
+    """
+    try:
+        from trader.ml_overlay.features import build_feature_vector
+        from trader.overlay import _get_finnhub_client, _get_sentiment_client
+        from trader.overlay.news_context import _fetch_finnhub_articles_classified
+        from trader.overlay.fundamental_gate import parse_fundamentals_finnhub
+        from trader.portfolio.repository import DecisionFeaturesRow
+
+        finnhub_client = _get_finnhub_client(config)
+        news_categories: dict = {}
+        finnhub_key = getattr(config, "finnhub_api_key", None)
+        if finnhub_key:
+            try:
+                cache_key = (signal.symbol, finnhub_key)
+                cached_news = _NEWS_CACHE.get(cache_key)
+                if cached_news is not None and (_time.monotonic() - cached_news[0]) < _FETCH_TTL_S:
+                    news_categories = cached_news[1]
+                else:
+                    news_categories = _fetch_finnhub_articles_classified(signal.symbol, finnhub_key)
+                    _news_cache_put(cache_key, news_categories, _time.monotonic())
+            except Exception:
+                news_categories = {}
+
+        sentiment = None
+        if "/" in signal.symbol:
+            sentiment_client = _get_sentiment_client(config, finnhub_client)
+            if sentiment_client is not None:
+                # SentimentClient.get_sentiment has its own 4-hour in-process
+                # cache in trader/data/sentiment_client.py; no cache layer needed here.
+                sentiment = sentiment_client.get_sentiment(signal.symbol)
+
+        fundamentals: dict = {}
+        if finnhub_client is not None and "/" not in signal.symbol:
+            try:
+                cached_f = _FUNDAMENTALS_CACHE.get(signal.symbol)
+                if cached_f is not None and (_time.monotonic() - cached_f[0]) < _FETCH_TTL_S:
+                    metrics, recs = cached_f[1]
+                else:
+                    metrics = finnhub_client.basic_financials(signal.symbol) or {}
+                    recs = finnhub_client.recommendation_trends(signal.symbol) or []
+                    _fundamentals_cache_put(signal.symbol, (metrics, recs), _time.monotonic())
+                fundamentals = parse_fundamentals_finnhub(metrics, recs)
+            except Exception:
+                fundamentals = {}
+
+        recent_outcomes = []
+        if repo is not None:
+            try:
+                recent_outcomes = repo.get_recent_outcomes(symbol=signal.symbol, limit=3)
+            except Exception:
+                recent_outcomes = []
+
+        features = build_feature_vector(
+            signal, bars, news_categories=news_categories, sentiment=sentiment,
+            fundamentals=fundamentals, recent_outcomes=recent_outcomes, regime=regime,
+        )
+
+        if repo is not None:
+            repo.record_decision_features(DecisionFeaturesRow(
+                run_id=run_id, symbol=signal.symbol, side=signal.side,
+                strategy=strategy_name, regime=regime, mode=mode,
+                signal_strength_pre_overlay=signal.strength,
+                features=features,
+            ))
+    except Exception:
+        logger.warning("decision-features logging failed for %s", signal.symbol, exc_info=True)
+
+
 def _prepare_signal(
     *,
     config,
@@ -795,9 +904,15 @@ def _prepare_signal(
                 )
 
         if not signal.reason.startswith("stop-loss:") and not signal.reason.startswith("eod-exit:") and not _is_intraday:
+            regime = classify_regime(bars)
+            _log_decision_features(
+                config=config, repo=repo, run_id=run_id, signal=signal,
+                bars=bars, strategy_name=type(strategy).__name__,
+                regime=regime, mode=effective_autonomy(config),
+            )
             signal = apply_overlay(
                 signal, bars, config,
-                repo=repo, strategy_name=type(strategy).__name__, regime=classify_regime(bars),
+                repo=repo, strategy_name=type(strategy).__name__, regime=regime,
             )
 
         repo.record_signal(SignalRow(
@@ -938,7 +1053,7 @@ def _execute_signal(
         )
         broker_order_id = str(getattr(order, "id", "") or "")
         regime = classify_regime(bars)
-        repo.record_order(OrderRow(
+        order_id = repo.record_order(OrderRow(
             client_order_id=client_order_id, symbol=symbol,
             side=signal.side, notional=risk_decision.approved_notional,
             status="submitted", broker_order_id=broker_order_id or None,
@@ -947,6 +1062,10 @@ def _execute_signal(
             signal_strength=signal.strength,
             entry_rationale=signal.reason if signal.side == "buy" else None,
         ))
+        try:
+            repo.link_order_to_decision_features(run_id=run_id, order_id=order_id)
+        except Exception:
+            logger.warning("decision-features order-link failed for %s", symbol, exc_info=True)
 
         # Confirm the fill and persist the real status. record_order upserts on
         # client_order_id (ON CONFLICT DO UPDATE status), so this updates the
@@ -1158,12 +1277,16 @@ def _execute_csp_entry(
     order = options_broker.sell_to_open(contract_symbol=contract.symbol, client_order_id=client_order_id)
     broker_order_id = str(getattr(order, "id", "") or "")
 
-    repo.record_order(OrderRow(
+    order_id = repo.record_order(OrderRow(
         client_order_id=client_order_id, symbol=contract.symbol, side="sell",
         notional=collateral, status="submitted", broker_order_id=broker_order_id or None,
         strategy_name=type(strategy).__name__, regime=None,
         signal_strength=signal.strength, entry_rationale=signal.reason,
     ))
+    try:
+        repo.link_order_to_decision_features(run_id=run_id, order_id=order_id)
+    except Exception:
+        logger.warning("decision-features order-link failed for %s", contract.symbol, exc_info=True)
 
     repo.record_options_position(OptionsPositionRow(
         contract_symbol=contract.symbol, underlying=symbol, option_type="put",

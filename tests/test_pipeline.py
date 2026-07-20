@@ -609,3 +609,124 @@ def test_bandit_off_uses_raw_strength_ordering(tmp_path):
 
     assert broker._client.submitted[0].symbol == "MSFT"
     assert broker._client.submitted[1].symbol == "AAPL"
+
+
+# ---- decision-features logging (ML-overlay Phase 1) ----
+
+from trader.portfolio.repository import DecisionFeaturesRow
+
+
+def test_prepare_signal_records_decision_feature_with_pre_overlay_strength(tmp_path):
+    """A buy signal that reaches apply_overlay must produce exactly one
+    decision_features row with signal_strength_pre_overlay == the strategy's
+    pre-overlay strength (0.42 here, NOT modified by the (no-keyed) overlay in
+    this test). The assertion pins the logging insertion point BEFORE
+    apply_overlay so the feature vector captures the strategy's view, not
+    the LLM's revised view.
+    """
+    cfg = _config(tmp_path, autonomy="auto")
+    captured: list[DecisionFeaturesRow] = []
+
+    def _capture(self, row: DecisionFeaturesRow) -> int:
+        captured.append(row)
+        return len(captured)  # synthesise an id, never used downstream here
+
+    # _run() creates the SQLiteRepository inside; patch the method on the class
+    # so every new instance picks up the stub for the duration of this run.
+    original_record = SQLiteRepository.record_decision_features
+    SQLiteRepository.record_decision_features = _capture
+    try:
+        results, _, _ = _run([_FixedStrategy(_SYMBOL, "buy", strength=0.42)], cfg)
+    finally:
+        SQLiteRepository.record_decision_features = original_record
+
+    assert results[0].outcome == "executed"
+    assert len(captured) == 1, f"expected exactly one feature snapshot, got {len(captured)}"
+    assert captured[0].symbol == _SYMBOL
+    assert captured[0].side == "buy"
+    assert captured[0].mode == "auto"
+    assert captured[0].signal_strength_pre_overlay == pytest.approx(0.42)
+
+
+def test_execute_signal_links_order_id_to_decision_feature(tmp_path):
+    """After _execute_signal runs repo.record_order, link_order_to_decision_features
+    must set decision_features.order_id = orders.id so a Phase 2 trainer can
+    join the feature vector back to the concrete fill that resulted from it.
+    Mirrors the same end-to-end pattern but verifies the linking side-effect
+    that Step 4 (and Step 4b for the CSP path) actually fire.
+    """
+    cfg = _config(tmp_path, autonomy="auto")
+    results, repo, _ = _run([_FixedStrategy(_SYMBOL, "buy", strength=0.8)], cfg)
+    assert results[0].outcome == "executed"
+
+    orders = repo.get_orders()
+    assert len(orders) == 1
+    assert orders[0]["status"] == "filled"
+    order_id = orders[0]["id"]
+
+    df = repo.get_decision_features_by_order_id(order_id)
+    assert df is not None, f"decision_features row for order_id={order_id} missing"
+    assert df["symbol"] == _SYMBOL
+    assert df["mode"] == "auto"
+    assert df["signal_strength_pre_overlay"] == pytest.approx(0.8)
+
+
+import datetime as _dt
+from dataclasses import replace as _replace
+from trader.execution.options_broker import AlpacaOptionsBroker
+from trader.pipeline import _execute_csp_entry
+from trader.strategy.dip_recovery import DipRecovery
+
+
+def test_csp_entry_links_decision_feature_to_options_order_id(tmp_path, monkeypatch):
+    """Wheel/CSP decisions must call repo.link_order_to_decision_features so
+    decision_features.order_id is set. Without this, every CSP-by-dip decision
+    stays orphan-forever — a third category beyond holds/vetoes that the spec
+    doc's "NULL for holds/vetoes" framing does NOT cover.
+
+    This test pins Step 4b ONLY. The companion logging assertion
+    (decision_features row inserted with mode='auto') is covered separately by
+    `test_prepare_signal_records_decision_feature_with_pre_overlay_strength`
+    in Step 1 — that one runs the full pipeline so `_prepare_signal`
+    invokes `_log_decision_features` (which this direct call doesn't reach).
+    """
+    cfg = _config(tmp_path, autonomy="auto")
+    cfg = _replace(cfg, risk=_replace(cfg.risk, csp_on_dip_enabled=True))
+
+    captured_links: list[tuple[int, int]] = []
+
+    class _FakeOptionsBroker(AlpacaOptionsBroker):
+        # Bypass parent's __init__ — no API keys needed for this stub.
+        def __init__(self): pass
+        def select_csp_contract(self, symbol, ref_price, max_collateral):
+            return SimpleNamespace(symbol=f"{symbol}260116P00100000",
+                                   strike=100.0, expiry=_dt.date(2026, 1, 16))
+        def check_spread(self, contract_symbol): return 0.0  # 0% spread = pass
+        def sell_to_open(self, contract_symbol, client_order_id):
+            return SimpleNamespace(id="broker-csp-1")
+
+    monkeypatch.setattr(SQLiteRepository, "link_order_to_decision_features",
+                        lambda self, run_id, order_id: captured_links.append((run_id, order_id)))
+    monkeypatch.setattr(SQLiteRepository, "get_open_options_positions",
+                        lambda self, underlying=None: [])
+    monkeypatch.setattr(SQLiteRepository, "record_options_position",
+                        lambda self, position: 1)
+
+    repo = SQLiteRepository(cfg.portfolio_db_path)
+    run_id = repo.record_run(strategy="DipRecovery", mode="auto")
+    signal = Signal(_SYMBOL, "buy", 0.7, "dip recovery entry")
+
+    result = _execute_csp_entry(
+        signal=signal, run_id=run_id, strategy=DipRecovery(symbol=_SYMBOL),
+        config=cfg, options_broker=_FakeOptionsBroker(), repo=repo,
+        gate=SimpleNamespace(evaluate_options_order=lambda *a, **k:
+                             SimpleNamespace(approved=True, reason="ok",
+                                             approved_notional=10000.0)),
+        kill_switch=SimpleNamespace(engaged=lambda: False),
+        state=_healthy_state(), asof=_ASOF, ref_price=100.0,
+    )
+
+    assert result.outcome == "executed"
+    assert result.is_options is True
+    assert len(captured_links) == 1, "link_order_to_decision_features was not called"
+    assert captured_links[0][0] == run_id
