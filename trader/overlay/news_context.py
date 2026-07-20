@@ -79,10 +79,39 @@ def fetch_news_finnhub(symbol: str, api_key: str) -> str:
         return ""
 
 
+import time as _time
+
+# 60-second TTL cache of classified articles, keyed by (symbol, api_key).
+# _fetch_finnhub_articles_classified is the single point both fetch_news_finnhub
+# (LLM prompt path, via apply_claude_overlay) and trader/pipeline.py's
+# _log_decision_features call through — caching here (rather than in either
+# caller) means the cache is shared by construction: a cold tick issues at
+# most one Finnhub `company_news` call per (symbol, api_key) per minute, no
+# matter how many times the pipeline touches a symbol this tick.
+_ARTICLES_CACHE: dict[tuple[str, str], tuple[float, dict[str, list[dict]]]] = {}
+_ARTICLES_CACHE_TTL_S = 60.0
+# Cheap bound so a long-running session touching hundreds of symbols doesn't
+# grow this dict without limit. Dropping the whole cache on overflow is fine —
+# the cache only exists to absorb same-tick doubles.
+_MAX_ARTICLES_CACHE_ENTRIES = 256
+
+
+def _reset_articles_cache() -> None:
+    """Test helper — clears the in-process classified-articles cache."""
+    _ARTICLES_CACHE.clear()
+
+
 def _fetch_finnhub_articles_classified(symbol: str, api_key: str) -> dict[str, list[dict]]:
     """Fetch raw Finnhub articles (headline + datetime) and classify them.
     Returns {} on no articles. Shared by fetch_news_finnhub (LLM prompt) and
-    the Phase 1 feature builder (trader/ml_overlay/features.py)."""
+    trader/pipeline.py::_log_decision_features (Phase 1 feature builder),
+    behind a 60-second TTL cache — see _ARTICLES_CACHE above."""
+    cache_key = (symbol, api_key)
+    now = _time.monotonic()
+    cached = _ARTICLES_CACHE.get(cache_key)
+    if cached is not None and (now - cached[0]) < _ARTICLES_CACHE_TTL_S:
+        return cached[1]
+
     from datetime import date, timedelta
     client = _get_finnhub_client(api_key)
     today = date.today().isoformat()
@@ -92,9 +121,12 @@ def _fetch_finnhub_articles_classified(symbol: str, api_key: str) -> dict[str, l
         {"headline": a["headline"], "datetime": a.get("datetime", "")}
         for a in raw_articles if a.get("headline")
     ]
-    if not articles:
-        return {}
-    return classify_news(articles)
+    result = classify_news(articles) if articles else {}
+
+    if len(_ARTICLES_CACHE) > _MAX_ARTICLES_CACHE_ENTRIES:
+        _ARTICLES_CACHE.clear()
+    _ARTICLES_CACHE[cache_key] = (now, result)
+    return result
 
 
 def fetch_news_with_fallback(symbol: str, config) -> str:

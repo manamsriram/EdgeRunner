@@ -585,53 +585,26 @@ def _stop_multiplier_for_owner(owner_name: str | None) -> float:
     return 1.0
 
 
-# 60-second in-process cache so _log_decision_features and apply_claude_overlay
-# can both call into the underlying Finnhub helpers without doubling external
-# API volume on the same tick. Finnhub free-tier is ~60 calls/min — without
-# this, a tick with N equity strategies that pass the overlay gate would issue
-# 2N news + 2N fundamentals calls (one each from the overlay + one each from
-# here). The TTL is short enough that the next minute sees fresh data, but
-# long enough to dedupe same-tick calls. Reset on process restart; the cache is
-# best-effort, not authoritative.
-import time as _time
-_NEWS_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
-_FUNDAMENTALS_CACHE: dict[str, tuple[float, tuple[dict, list[dict]]]] = {}
-_FETCH_TTL_S = 60.0
-# Cheap bound so a long-running session touching hundreds of symbols doesn't
-# grow these dicts without limit. When exceeded, drop the entire cache — a
-# worst-case minute of stale data followed by a flood of fresh fetches, which
-# is bounded by Finnhub's rate-limit anyway. Conservative floor — the cache
-# only matters when it absorbs same-tick doubles, so 256 (way more than any
-# realistic per-minute symbol count) is fine.
-_MAX_FETCH_CACHE_ENTRIES = 256
-
-
-def _news_cache_put(key: tuple[str, str], value: dict, now: float) -> None:
-    if len(_NEWS_CACHE) > _MAX_FETCH_CACHE_ENTRIES:
-        _NEWS_CACHE.clear()
-    _NEWS_CACHE[key] = (now, value)
-
-
-def _fundamentals_cache_put(symbol: str, value: tuple[dict, list[dict]], now: float) -> None:
-    if len(_FUNDAMENTALS_CACHE) > _MAX_FETCH_CACHE_ENTRIES:
-        _FUNDAMENTALS_CACHE.clear()
-    _FUNDAMENTALS_CACHE[symbol] = (now, value)
-
-
 def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name, regime, mode) -> None:
     """Best-effort feature-snapshot log. Never raises — must not affect the overlay.
 
     Re-derives news/sentiment/fundamentals via the same Finnhub client singletons
-    the overlay uses, behind a 60-second in-process cache so the tick-overlap
-    doubling is absorbed. The cache is preferred to threading pre-fetched
-    objects through apply_overlay's signature because it keeps Phase 1
-    additive — no overlay-signature change.
+    the overlay uses. News and fundamentals fetches go through
+    trader.overlay.news_context._fetch_finnhub_articles_classified and
+    trader.overlay.fundamental_gate.fetch_fundamentals_raw respectively — both
+    functions carry their own 60-second TTL cache (keyed by (symbol, api_key)
+    and symbol respectively) that is ALSO consulted by apply_claude_overlay's
+    Finnhub calls (via fetch_news_finnhub / check_fundamental_gate). Because the
+    cache lives inside the shared fetch functions rather than here, a cold tick
+    issues at most one Finnhub call per symbol per minute regardless of how many
+    times the pipeline touches that symbol — no coordination needed between this
+    function and the overlay.
     """
     try:
         from trader.ml_overlay.features import build_feature_vector
         from trader.overlay import _get_finnhub_client, _get_sentiment_client
         from trader.overlay.news_context import _fetch_finnhub_articles_classified
-        from trader.overlay.fundamental_gate import parse_fundamentals_finnhub
+        from trader.overlay.fundamental_gate import fetch_fundamentals_raw, parse_fundamentals_finnhub
         from trader.portfolio.repository import DecisionFeaturesRow
 
         finnhub_client = _get_finnhub_client(config)
@@ -639,13 +612,7 @@ def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name,
         finnhub_key = getattr(config, "finnhub_api_key", None)
         if finnhub_key:
             try:
-                cache_key = (signal.symbol, finnhub_key)
-                cached_news = _NEWS_CACHE.get(cache_key)
-                if cached_news is not None and (_time.monotonic() - cached_news[0]) < _FETCH_TTL_S:
-                    news_categories = cached_news[1]
-                else:
-                    news_categories = _fetch_finnhub_articles_classified(signal.symbol, finnhub_key)
-                    _news_cache_put(cache_key, news_categories, _time.monotonic())
+                news_categories = _fetch_finnhub_articles_classified(signal.symbol, finnhub_key)
             except Exception:
                 news_categories = {}
 
@@ -660,13 +627,7 @@ def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name,
         fundamentals: dict = {}
         if finnhub_client is not None and "/" not in signal.symbol:
             try:
-                cached_f = _FUNDAMENTALS_CACHE.get(signal.symbol)
-                if cached_f is not None and (_time.monotonic() - cached_f[0]) < _FETCH_TTL_S:
-                    metrics, recs = cached_f[1]
-                else:
-                    metrics = finnhub_client.basic_financials(signal.symbol) or {}
-                    recs = finnhub_client.recommendation_trends(signal.symbol) or []
-                    _fundamentals_cache_put(signal.symbol, (metrics, recs), _time.monotonic())
+                metrics, recs = fetch_fundamentals_raw(signal.symbol, finnhub_client)
                 fundamentals = parse_fundamentals_finnhub(metrics, recs)
             except Exception:
                 fundamentals = {}

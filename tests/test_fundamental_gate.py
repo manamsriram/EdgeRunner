@@ -14,7 +14,11 @@ import pandas as pd
 import pytest
 
 from trader.overlay import fundamental_gate
-from trader.overlay.fundamental_gate import parse_fundamentals_finnhub
+from trader.overlay.fundamental_gate import (
+    fetch_fundamentals_finnhub,
+    fetch_fundamentals_raw,
+    parse_fundamentals_finnhub,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +76,24 @@ def _gate(symbol="AAPL", bars=None, **kw):
 @pytest.fixture(autouse=True)
 def clear_cache():
     fundamental_gate._clear_cache()
+    fundamental_gate._reset_raw_fetch_cache()
     yield
     fundamental_gate._clear_cache()
+    fundamental_gate._reset_raw_fetch_cache()
+
+
+class _FakeFinnhubClient:
+    def __init__(self):
+        self.basic_financials_calls = 0
+        self.recommendation_trends_calls = 0
+
+    def basic_financials(self, symbol):
+        self.basic_financials_calls += 1
+        return {"peBasicExclExtraTTM": 22.5}
+
+    def recommendation_trends(self, symbol):
+        self.recommendation_trends_calls += 1
+        return [{"buy": 10, "hold": 4, "sell": 1, "period": "2026-06"}]
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +264,50 @@ def test_parse_fundamentals_finnhub_extracts_floats():
 def test_parse_fundamentals_finnhub_missing_fields_omitted():
     parsed = parse_fundamentals_finnhub({}, [])
     assert parsed == {}
+
+
+# ---------------------------------------------------------------------------
+# Group 7: shared raw-fetch cache — proves fetch_fundamentals_raw is the SAME
+# cache consulted by both fetch_fundamentals_finnhub (the gate's LLM prompt
+# text) and trader/pipeline.py::_log_decision_features (feature vector), not
+# two disconnected caches. Distinct from _FUNDAMENTAL_CACHE (day-granularity
+# approve/reject verdict) covered by Group 2 above.
+# ---------------------------------------------------------------------------
+
+def test_second_caller_within_ttl_reuses_cached_raw_fetch():
+    """Two independent callers hitting the same symbol within the 60s TTL
+    must result in exactly ONE underlying basic_financials/recommendation_trends
+    call pair."""
+    client = _FakeFinnhubClient()
+
+    metrics1, recs1 = fetch_fundamentals_raw("AAPL", client)
+    metrics2, recs2 = fetch_fundamentals_raw("AAPL", client)
+
+    assert client.basic_financials_calls == 1
+    assert client.recommendation_trends_calls == 1
+    assert metrics1 == metrics2
+    assert recs1 == recs2
+
+
+def test_fetch_fundamentals_finnhub_shares_raw_fetch_cache():
+    """fetch_fundamentals_finnhub (the gate's own fetch path) must consult the
+    same cache as a direct fetch_fundamentals_raw call for the same symbol —
+    proving the two call paths are genuinely unified, not independently cached."""
+    client = _FakeFinnhubClient()
+
+    fetch_fundamentals_raw("AAPL", client)  # simulates _log_decision_features
+    text = fetch_fundamentals_finnhub("AAPL", client)  # simulates check_fundamental_gate's fetch
+
+    assert client.basic_financials_calls == 1
+    assert client.recommendation_trends_calls == 1
+    assert "AAPL" in text
+
+
+def test_different_symbol_is_a_cache_miss_for_raw_fetch():
+    client = _FakeFinnhubClient()
+
+    fetch_fundamentals_raw("AAPL", client)
+    fetch_fundamentals_raw("MSFT", client)
+
+    assert client.basic_financials_calls == 2
+    assert client.recommendation_trends_calls == 2

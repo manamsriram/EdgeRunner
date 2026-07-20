@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time as _time
 
 import pandas as pd
 
@@ -30,6 +31,43 @@ _FUNDAMENTAL_CACHE: dict[tuple[str, str], dict] = {}
 def _clear_cache() -> None:
     """Test helper — clears the in-process fundamental cache."""
     _FUNDAMENTAL_CACHE.clear()
+
+
+# ---- Raw-fetch cache (metrics + recommendation trends) ----
+#
+# This is a DIFFERENT cache from _FUNDAMENTAL_CACHE above: that one stores the
+# day-granularity approve/reject *verdict* keyed by (symbol, date_str). This one
+# stores the raw Finnhub `basic_financials`/`recommendation_trends` payloads,
+# keyed by symbol only, with a 60-second TTL. fetch_fundamentals_raw is the
+# single point both fetch_fundamentals_finnhub (this gate's LLM prompt text)
+# and trader/pipeline.py::_log_decision_features (feature vector) call through,
+# so a cold tick issues at most one Finnhub metrics/recs call pair per symbol
+# per minute, no matter how many callers touch that symbol this tick.
+_RAW_FETCH_CACHE: dict[str, tuple[float, tuple[dict, list[dict]]]] = {}
+_RAW_FETCH_TTL_S = 60.0
+_MAX_RAW_FETCH_CACHE_ENTRIES = 256
+
+
+def _reset_raw_fetch_cache() -> None:
+    """Test helper — clears the in-process raw-fundamentals cache."""
+    _RAW_FETCH_CACHE.clear()
+
+
+def fetch_fundamentals_raw(symbol: str, client) -> tuple[dict, list[dict]]:
+    """Fetch (metrics, recommendation_trends) from Finnhub, behind a 60-second
+    TTL cache keyed by symbol. Shared by fetch_fundamentals_finnhub and
+    trader/pipeline.py::_log_decision_features — see _RAW_FETCH_CACHE above.
+    Raises on client failure; callers are responsible for catching."""
+    now = _time.monotonic()
+    cached = _RAW_FETCH_CACHE.get(symbol)
+    if cached is not None and (now - cached[0]) < _RAW_FETCH_TTL_S:
+        return cached[1]
+    metrics = client.basic_financials(symbol) or {}
+    recs = client.recommendation_trends(symbol) or []
+    if len(_RAW_FETCH_CACHE) > _MAX_RAW_FETCH_CACHE_ENTRIES:
+        _RAW_FETCH_CACHE.clear()
+    _RAW_FETCH_CACHE[symbol] = (now, (metrics, recs))
+    return metrics, recs
 
 
 def _log_llm_call(repo, provider: str, symbol: str, cache_hit: bool, usage) -> None:
@@ -144,8 +182,7 @@ def _parse_response(text: str) -> dict:
 def fetch_fundamentals_finnhub(symbol: str, client) -> str:
     """Fetch structured fundamentals from Finnhub. Returns '' on any failure."""
     try:
-        metrics = client.basic_financials(symbol)
-        recs = client.recommendation_trends(symbol)
+        metrics, recs = fetch_fundamentals_raw(symbol, client)
         if not metrics:
             return ""
 
