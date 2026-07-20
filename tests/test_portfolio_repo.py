@@ -215,3 +215,5 @@ def test_link_order_to_decision_features_backfills_order_id(repo):
     assert linked is not None
     assert linked["symbol"] == "AAPL"
     assert linked["mode"] == "auto"
+    assert isinstance(linked["features"], dict)
+    assert linked["features"] == {"pe_ttm": 22.5}

@@ -373,12 +373,17 @@ class SQLiteRepository(PortfolioRepository):
             )
 
     def get_decision_features_by_order_id(self, order_id: int) -> dict | None:
+        import json
         with self._connect() as conn:
             cur = conn.execute(
                 "SELECT * FROM decision_features WHERE order_id = ?", (order_id,)
             )
             row = cur.fetchone()
-            return dict(row) if row else None
+            if row is None:
+                return None
+            result = dict(row)
+            result["features"] = json.loads(result["features"])
+            return result
 
     def get_recent_outcomes(
         self,
