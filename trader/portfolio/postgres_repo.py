@@ -13,6 +13,7 @@ import psycopg2.extras
 
 from trader.portfolio.repository import (
     PROPOSAL_PENDING,
+    DecisionFeaturesRow,
     OptionsPositionRow,
     OrderRow,
     PortfolioRepository,
@@ -309,6 +310,41 @@ class PostgresRepository(PortfolioRepository):
                      outcome.exit_reason, outcome.entry_overlay_rationale, outcome.closed_at),
                 )
                 return int(cur.fetchone()["id"])
+
+    def record_decision_features(self, row: DecisionFeaturesRow) -> int:
+        import json
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO decision_features "
+                    "(run_id, ts, symbol, side, strategy, regime, mode, "
+                    "signal_strength_pre_overlay, features, backfilled) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "RETURNING id",
+                    (row.run_id, _now(), row.symbol, row.side, row.strategy,
+                     row.regime, row.mode,
+                     row.signal_strength_pre_overlay,
+                     json.dumps(row.features), row.backfilled),
+                )
+                return int(cur.fetchone()["id"])
+
+    def link_order_to_decision_features(self, run_id: int, order_id: int) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE decision_features SET order_id = %s "
+                    "WHERE run_id = %s AND order_id IS NULL",
+                    (order_id, run_id),
+                )
+
+    def get_decision_features_by_order_id(self, order_id: int) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM decision_features WHERE order_id = %s", (order_id,)
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
 
     def get_recent_outcomes(
         self,

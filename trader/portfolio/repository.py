@@ -57,6 +57,36 @@ class TradeOutcomeRow:
 
 
 @dataclass(frozen=True)
+class DecisionFeaturesRow:
+    """One overlay decision's feature snapshot, written before the LLM call.
+
+    order_id is filled in later (link_order_to_decision_features) only if this
+    decision actually produces a filled order in either the equity path or the
+    CSP/Wheel path; stays None for holds, vetoes, and orders that never fill.
+
+    `mode` distinguishes 'auto' (executed immediately) from 'manual' (queued
+    for human approval). Phase 2 trainers must filter by mode because manual
+    rows have order_id=NULL forever for a different reason than vetoes do —
+    the human just deferred, not vetoed.
+
+    The original sketch had `llm_action` / `llm_strength_post` / `llm_rationale`
+    columns too. Those were dropped (see the plan preamble) — equivalent signal
+    lives in SignalRow.reason ([overlay approved] <rationale> / [overlay veto]
+    <rationale>) and Phase 2 can parse it if needed.
+    """
+
+    run_id: int
+    symbol: str
+    side: str
+    strategy: str
+    regime: str
+    signal_strength_pre_overlay: float
+    features: dict  # JSONB (Postgres) / TEXT-as-JSON (SQLite)
+    mode: str = "auto"
+    backfilled: bool = False
+
+
+@dataclass(frozen=True)
 class OptionsPositionRow:
     """One options contract position — CSP or CC, opened by CSP-on-dip or the Wheel.
 
@@ -167,6 +197,17 @@ class PortfolioRepository(ABC):
     ) -> list[dict]:
         """Most-recent-first closed trades matching the given filters. Any of
         symbol/strategy/regime left None widens the match (no filter on that column)."""
+
+    @abstractmethod
+    def record_decision_features(self, row: DecisionFeaturesRow) -> int: ...
+
+    @abstractmethod
+    def link_order_to_decision_features(self, run_id: int, order_id: int) -> None:
+        """Back-fill order_id on the decision_features row for this run_id that
+        doesn't already have one set. No-op if no matching row exists."""
+
+    @abstractmethod
+    def get_decision_features_by_order_id(self, order_id: int) -> dict | None: ...
 
     @abstractmethod
     def get_runs(self) -> list[dict]: ...

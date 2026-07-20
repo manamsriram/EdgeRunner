@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from trader.portfolio.repository import (
     PROPOSAL_PENDING,
+    DecisionFeaturesRow,
     OptionsPositionRow,
     OrderRow,
     PortfolioRepository,
@@ -149,6 +150,26 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
     est_cost_usd  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_ts ON llm_call_log(ts);
+CREATE TABLE IF NOT EXISTS decision_features (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                      INTEGER NOT NULL,
+    ts                          TEXT NOT NULL,
+    symbol                      TEXT NOT NULL,
+    side                        TEXT NOT NULL,
+    strategy                    TEXT NOT NULL,
+    regime                      TEXT NOT NULL,
+    mode                        TEXT NOT NULL DEFAULT 'auto',
+    signal_strength_pre_overlay REAL NOT NULL,
+    features                    TEXT NOT NULL,
+    order_id                    INTEGER,
+    backfilled                  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_decision_features_symbol_ts ON decision_features(symbol, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_features_order_id ON decision_features(order_id);
+-- SQLite enforces CHECK constraints from CREATE TABLE IF NOT EXISTS onward; older
+-- DBs that already have a decision_features table from a prior pre-edit run need
+-- a re-key via a follow-up migration. Phase 1 ships fresh, so this is a non-issue
+-- for the initial deploy — noted for completeness.
 """
 
 
@@ -327,6 +348,37 @@ class SQLiteRepository(PortfolioRepository):
                  outcome.exit_reason, outcome.entry_overlay_rationale, outcome.closed_at),
             )
             return int(cur.lastrowid)
+
+    def record_decision_features(self, row: DecisionFeaturesRow) -> int:
+        import json
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO decision_features "
+                "(run_id, ts, symbol, side, strategy, regime, mode, "
+                "signal_strength_pre_overlay, features, backfilled) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (row.run_id, _now(), row.symbol, row.side, row.strategy,
+                 row.regime, row.mode,
+                 row.signal_strength_pre_overlay,
+                 json.dumps(row.features), int(row.backfilled)),
+            )
+            return int(cur.lastrowid)
+
+    def link_order_to_decision_features(self, run_id: int, order_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE decision_features SET order_id = ? "
+                "WHERE run_id = ? AND order_id IS NULL",
+                (order_id, run_id),
+            )
+
+    def get_decision_features_by_order_id(self, order_id: int) -> dict | None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT * FROM decision_features WHERE order_id = ?", (order_id,)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
     def get_recent_outcomes(
         self,

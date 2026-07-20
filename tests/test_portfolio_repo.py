@@ -10,6 +10,7 @@ import pytest
 
 from trader.portfolio.repository import (
     PROPOSAL_APPROVED,
+    DecisionFeaturesRow,
     OrderRow,
     ProposalRow,
     SignalRow,
@@ -188,3 +189,29 @@ def test_coexists_with_app_users_table_no_destruction(tmp_path):
     conn.close()
     assert user is not None and user[0] == "sri"     # untouched
     assert {"users", "orders", "trades", "proposals"} <= tables
+
+
+def test_record_decision_features_roundtrip(repo):
+    run_id = repo.record_run(strategy="DipRecovery", mode="auto")
+    row = DecisionFeaturesRow(
+        run_id=run_id, symbol="AAPL", side="buy", strategy="DipRecovery",
+        regime="normal", mode="auto", signal_strength_pre_overlay=0.8,
+        features={"pe_ttm": 22.5, "vol_10d_annualized": 15.0},
+    )
+    row_id = repo.record_decision_features(row)
+    assert isinstance(row_id, int)
+
+
+def test_link_order_to_decision_features_backfills_order_id(repo):
+    run_id = repo.record_run(strategy="DipRecovery", mode="auto")
+    row = DecisionFeaturesRow(
+        run_id=run_id, symbol="AAPL", side="buy", strategy="DipRecovery",
+        regime="normal", mode="auto", signal_strength_pre_overlay=0.8,
+        features={"pe_ttm": 22.5},
+    )
+    repo.record_decision_features(row)
+    repo.link_order_to_decision_features(run_id=run_id, order_id=42)
+    linked = repo.get_decision_features_by_order_id(42)
+    assert linked is not None
+    assert linked["symbol"] == "AAPL"
+    assert linked["mode"] == "auto"
