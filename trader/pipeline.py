@@ -645,9 +645,16 @@ def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name,
         )
 
         if repo is not None:
+            # Postgres's decision_features table (migration 008) has
+            # CHECK (mode IN ('auto', 'manual')). `mode` comes from
+            # effective_autonomy(config), which reads an unvalidated config
+            # string — clamp here so a drifted autonomy value can't silently
+            # fail every insert (swallowed by the except below) instead of
+            # just this row. "manual" is the conservative fallback.
+            safe_mode = mode if mode in ("auto", "manual") else "manual"
             repo.record_decision_features(DecisionFeaturesRow(
                 run_id=run_id, symbol=signal.symbol, side=signal.side,
-                strategy=strategy_name, regime=regime, mode=mode,
+                strategy=strategy_name, regime=regime, mode=safe_mode,
                 signal_strength_pre_overlay=signal.strength,
                 features=features,
             ))

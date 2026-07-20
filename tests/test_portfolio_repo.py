@@ -202,6 +202,27 @@ def test_record_decision_features_roundtrip(repo):
     assert isinstance(row_id, int)
 
 
+def test_record_decision_features_rejects_nan_in_features(repo):
+    """json.dumps defaults to allow_nan=True, which emits the bare (non-JSON-
+    spec) token `NaN`. SQLite's TEXT column stores that string happily, but
+    Postgres's native JSONB column rejects it outright, and a NaN can reach
+    build_feature_vector's output (e.g. via a pct_change() on very short bar
+    history). record_decision_features must pass allow_nan=False so a NaN
+    raises here — the caller (_log_decision_features) already wraps this
+    call in a broad try/except, so this converts a silent Postgres-only
+    failure into the same logged-and-swallowed failure already produced for
+    any other error in that path, uniformly across both backends.
+    """
+    run_id = repo.record_run(strategy="DipRecovery", mode="auto")
+    row = DecisionFeaturesRow(
+        run_id=run_id, symbol="AAPL", side="buy", strategy="DipRecovery",
+        regime="normal", mode="auto", signal_strength_pre_overlay=0.8,
+        features={"pe_ttm": 22.5, "vol_10d_annualized": float("nan")},
+    )
+    with pytest.raises(ValueError):
+        repo.record_decision_features(row)
+
+
 def test_link_order_to_decision_features_backfills_order_id(repo):
     run_id = repo.record_run(strategy="DipRecovery", mode="auto")
     row = DecisionFeaturesRow(

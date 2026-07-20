@@ -360,7 +360,7 @@ class SQLiteRepository(PortfolioRepository):
                 (row.run_id, _now(), row.symbol, row.side, row.strategy,
                  row.regime, row.mode,
                  row.signal_strength_pre_overlay,
-                 json.dumps(row.features), int(row.backfilled)),
+                 json.dumps(row.features, allow_nan=False), int(row.backfilled)),
             )
             return int(cur.lastrowid)
 

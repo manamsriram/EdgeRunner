@@ -730,3 +730,34 @@ def test_csp_entry_links_decision_feature_to_options_order_id(tmp_path, monkeypa
     assert result.is_options is True
     assert len(captured_links) == 1, "link_order_to_decision_features was not called"
     assert captured_links[0][0] == run_id
+
+
+def test_log_decision_features_clamps_invalid_mode_to_manual(tmp_path):
+    """Postgres's decision_features table (migration 008) has
+    CHECK (mode IN ('auto', 'manual')). `mode` is threaded through from
+    effective_autonomy(config), an unvalidated config string. If that ever
+    drifts outside {"auto", "manual"}, _log_decision_features must clamp to
+    the conservative "manual" fallback rather than pass the bad value through
+    to repo.record_decision_features — otherwise every Postgres insert would
+    fail the CHECK and be silently swallowed by the outer except, disabling
+    feature logging in prod while SQLite (no such CHECK) stays green.
+    """
+    from trader.pipeline import _log_decision_features
+
+    cfg = _config(tmp_path, autonomy="auto")
+    repo = SQLiteRepository(cfg.portfolio_db_path)
+    signal = Signal(_SYMBOL, "buy", 0.42, "fixed-buy")
+
+    _log_decision_features(
+        config=cfg, repo=repo, run_id=1, signal=signal, bars=_BARS,
+        strategy_name="_FixedStrategy", regime="normal", mode="some_drifted_value",
+    )
+
+    with repo._connect() as conn:
+        cur = conn.execute("SELECT mode FROM decision_features WHERE run_id = 1")
+        stored = cur.fetchone()
+    assert stored is not None, "decision_features row was not recorded"
+    assert stored[0] == "manual", (
+        "invalid mode must be clamped to the conservative 'manual' default, "
+        f"got {stored[0]!r}"
+    )
