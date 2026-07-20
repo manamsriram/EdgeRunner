@@ -17,25 +17,26 @@ _NEWS_CATEGORIES: dict[str, list[str]] = {
 }
 
 
-def classify_news(headlines: list[str]) -> dict[str, list[str]]:
-    """Map each headline to matching categories. Returns {CATEGORY: [headlines]}."""
-    result: dict[str, list[str]] = {}
-    for headline in headlines:
-        hl_lower = headline.lower()
+def classify_news(articles: list[dict]) -> dict[str, list[dict]]:
+    """Map each article to matching categories. Each article is {"headline": str,
+    "datetime": str}. Returns {CATEGORY: [article, ...]}."""
+    result: dict[str, list[dict]] = {}
+    for article in articles:
+        hl_lower = article["headline"].lower()
         for category, keywords in _NEWS_CATEGORIES.items():
             if any(kw in hl_lower for kw in keywords):
-                result.setdefault(category, []).append(headline)
+                result.setdefault(category, []).append(article)
     return result
 
 
-def format_classified_news(symbol: str, categories: dict[str, list[str]]) -> str:
+def format_classified_news(symbol: str, categories: dict[str, list[dict]]) -> str:
     """Format classified news for LLM user message. Returns '' if no categories."""
     if not categories:
         return ""
     parts = [f"Recent news ({symbol}):"]
-    for cat, headlines in categories.items():
-        for h in headlines[:2]:  # max 2 per category
-            parts.append(f"[{cat}] {h}")
+    for cat, articles in categories.items():
+        for a in articles[:2]:  # max 2 per category
+            parts.append(f"[{cat}] {a['headline']}")
     return "\n".join(parts)
 
 
@@ -68,20 +69,32 @@ def _get_finnhub_client(api_key: str):
 def fetch_news_finnhub(symbol: str, api_key: str) -> str:
     """Fetch and classify company news from Finnhub. Returns '' on any failure."""
     try:
-        from datetime import date, timedelta
-        client = _get_finnhub_client(api_key)
-        today = date.today().isoformat()
-        week_ago = (date.today() - timedelta(days=7)).isoformat()
-        articles = client.company_news(symbol, from_date=week_ago, to_date=today, limit=8)
-        headlines = [a.get("headline", "") for a in articles if a.get("headline")]
-        if not headlines:
+        categories = _fetch_finnhub_articles_classified(symbol, api_key)
+        if not categories:
             return ""
-        categories = classify_news(headlines)
         return format_classified_news(symbol, categories)
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("fetch_news_finnhub failed for %s: %s", symbol, exc)
         return ""
+
+
+def _fetch_finnhub_articles_classified(symbol: str, api_key: str) -> dict[str, list[dict]]:
+    """Fetch raw Finnhub articles (headline + datetime) and classify them.
+    Returns {} on no articles. Shared by fetch_news_finnhub (LLM prompt) and
+    the Phase 1 feature builder (trader/ml_overlay/features.py)."""
+    from datetime import date, timedelta
+    client = _get_finnhub_client(api_key)
+    today = date.today().isoformat()
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+    raw_articles = client.company_news(symbol, from_date=week_ago, to_date=today, limit=8)
+    articles = [
+        {"headline": a["headline"], "datetime": a.get("datetime", "")}
+        for a in raw_articles if a.get("headline")
+    ]
+    if not articles:
+        return {}
+    return classify_news(articles)
 
 
 def fetch_news_with_fallback(symbol: str, config) -> str:

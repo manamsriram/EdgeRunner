@@ -5,43 +5,50 @@ from trader.overlay.news_context import classify_news, format_classified_news
 
 
 def test_earnings_headline_classified():
-    categories = classify_news(["Apple beats earnings estimates by 10%"])
+    articles = [{"headline": "Apple beats earnings estimates by 10%", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert "EARNINGS" in categories
 
 
 def test_regulatory_headline_classified():
-    categories = classify_news(["SEC launches investigation into trading practices"])
+    articles = [{"headline": "SEC launches investigation into trading practices", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert "REGULATORY" in categories
 
 
 def test_ma_headline_classified():
-    categories = classify_news(["Microsoft acquires Activision for $69 billion"])
+    articles = [{"headline": "Microsoft acquires Activision for $69 billion", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert "M&A" in categories
 
 
 def test_analyst_headline_classified():
-    categories = classify_news(["Goldman Sachs upgrades AAPL to buy with $200 price target"])
+    articles = [{"headline": "Goldman Sachs upgrades AAPL to buy with $200 price target", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert "ANALYST" in categories
 
 
 def test_product_headline_classified():
-    categories = classify_news(["Apple launches new iPhone 17 with AI features"])
+    articles = [{"headline": "Apple launches new iPhone 17 with AI features", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert "PRODUCT" in categories
 
 
 def test_neutral_headline_unclassified():
-    categories = classify_news(["Stock market closes mixed on Wednesday"])
+    articles = [{"headline": "Stock market closes mixed on Wednesday", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert categories == {}
 
 
 def test_headline_can_match_multiple_categories():
-    categories = classify_news(["SEC investigation triggers analyst downgrade"])
+    articles = [{"headline": "SEC investigation triggers analyst downgrade", "datetime": "2026-07-10T09:00:00"}]
+    categories = classify_news(articles)
     assert "REGULATORY" in categories
     assert "ANALYST" in categories
 
 
 def test_format_classified_news_returns_string():
-    categories = {"EARNINGS": ["Company beats Q3 estimates"]}
+    categories = {"EARNINGS": [{"headline": "Company beats Q3 estimates", "datetime": "2026-07-10T09:00:00"}]}
     result = format_classified_news("AAPL", categories)
     assert "AAPL" in result
     assert "EARNINGS" in result
