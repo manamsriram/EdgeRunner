@@ -210,6 +210,8 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute("ALTER TABLE orders ADD COLUMN signal_strength REAL")
         if "entry_rationale" not in existing:
             conn.execute("ALTER TABLE orders ADD COLUMN entry_rationale TEXT")
+        if "fill_price" not in existing:
+            conn.execute("ALTER TABLE orders ADD COLUMN fill_price REAL")
 
     def _migrate_bandit_columns(self, conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(bandit_weights)")}
@@ -250,15 +252,16 @@ class SQLiteRepository(PortfolioRepository):
             conn.execute(
                 "INSERT INTO orders "
                 "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
-                "strategy_name, regime, signal_strength, entry_rationale) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "strategy_name, regime, signal_strength, entry_rationale, fill_price) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(client_order_id) DO UPDATE SET "
                 "status=excluded.status, "
-                "broker_order_id=COALESCE(excluded.broker_order_id, orders.broker_order_id)",
+                "broker_order_id=COALESCE(excluded.broker_order_id, orders.broker_order_id), "
+                "fill_price=COALESCE(excluded.fill_price, orders.fill_price)",
                 (order.client_order_id, _now(), order.symbol, order.side,
                  order.notional, order.status, order.broker_order_id,
                  order.strategy_name, order.regime, order.signal_strength,
-                 order.entry_rationale),
+                 order.entry_rationale, order.fill_price),
             )
             row = conn.execute(
                 "SELECT id FROM orders WHERE client_order_id=?",
@@ -335,6 +338,20 @@ class SQLiteRepository(PortfolioRepository):
                 (status, since_ts),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_highest_buy_price(self, symbol: str) -> float | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(fill_price) AS highest FROM orders "
+                "WHERE symbol=? AND side='buy' AND status='filled' "
+                "AND fill_price IS NOT NULL AND ts >= COALESCE("
+                "  (SELECT MAX(ts) FROM orders "
+                "   WHERE symbol=? AND side='sell' AND status='filled'),"
+                "  ''"
+                ")",
+                (symbol, symbol),
+            ).fetchone()
+            return float(row["highest"]) if row and row["highest"] is not None else None
 
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int:
         with self._connect() as conn:

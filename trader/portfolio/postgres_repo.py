@@ -206,16 +206,17 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute(
                     "INSERT INTO orders "
                     "(client_order_id, ts, symbol, side, notional, status, broker_order_id, "
-                    "strategy_name, regime, signal_strength, entry_rationale) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "strategy_name, regime, signal_strength, entry_rationale, fill_price) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (client_order_id) DO UPDATE SET "
                     "status=EXCLUDED.status, "
-                    "broker_order_id=COALESCE(EXCLUDED.broker_order_id, orders.broker_order_id) "
+                    "broker_order_id=COALESCE(EXCLUDED.broker_order_id, orders.broker_order_id), "
+                    "fill_price=COALESCE(EXCLUDED.fill_price, orders.fill_price) "
                     "RETURNING id",
                     (order.client_order_id, _now(), order.symbol, order.side,
                      order.notional, order.status, order.broker_order_id,
                      order.strategy_name, order.regime, order.signal_strength,
-                     order.entry_rationale),
+                     order.entry_rationale, order.fill_price),
                 )
                 return int(cur.fetchone()["id"])
 
@@ -296,6 +297,22 @@ class PostgresRepository(PortfolioRepository):
                     (status, since_ts),
                 )
                 return [dict(r) for r in cur.fetchall()]
+
+    def get_highest_buy_price(self, symbol: str) -> float | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT MAX(fill_price) AS highest FROM orders "
+                    "WHERE symbol=%s AND side='buy' AND status='filled' "
+                    "AND fill_price IS NOT NULL AND ts >= COALESCE("
+                    "  (SELECT MAX(ts) FROM orders "
+                    "   WHERE symbol=%s AND side='sell' AND status='filled'),"
+                    "  '-infinity'"
+                    ")",
+                    (symbol, symbol),
+                )
+                row = cur.fetchone()
+                return float(row["highest"]) if row and row["highest"] is not None else None
 
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int:
         with self._connect() as conn:

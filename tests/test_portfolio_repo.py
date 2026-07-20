@@ -113,6 +113,28 @@ def test_get_last_buy_order_none_when_no_buys(repo):
     assert repo.get_last_buy_order("AAPL") is None
 
 
+def test_highest_buy_price_none_when_no_filled_buys(repo):
+    assert repo.get_highest_buy_price("AAPL") is None
+
+
+def test_highest_buy_price_picks_max_across_open_lots(repo):
+    repo.record_order(OrderRow("h1", "AAPL", "buy", 1000.0, "filled", fill_price=100.0))
+    repo.record_order(OrderRow("h2", "AAPL", "buy", 1000.0, "filled", fill_price=90.0))
+    assert repo.get_highest_buy_price("AAPL") == 100.0
+
+
+def test_highest_buy_price_ignores_lots_closed_by_a_prior_sell(repo):
+    repo.record_order(OrderRow("h3", "AAPL", "buy", 1000.0, "filled", fill_price=120.0))
+    repo.record_order(OrderRow("h4", "AAPL", "sell", 1000.0, "filled", fill_price=110.0))
+    repo.record_order(OrderRow("h5", "AAPL", "buy", 1000.0, "filled", fill_price=90.0))
+    assert repo.get_highest_buy_price("AAPL") == 90.0
+
+
+def test_highest_buy_price_ignores_unfilled_orders(repo):
+    repo.record_order(OrderRow("h6", "AAPL", "buy", 1000.0, "submitted", fill_price=None))
+    assert repo.get_highest_buy_price("AAPL") is None
+
+
 def _outcome(**overrides) -> TradeOutcomeRow:
     base = dict(
         symbol="AAPL", strategy="DipRecovery", regime="calm", side="buy",

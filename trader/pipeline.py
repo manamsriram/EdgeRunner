@@ -722,7 +722,17 @@ def _prepare_signal(
                 strategy._warmed_up = True
 
         current_price = (live_prices or {}).get(symbol) or float(bars["close"].iloc[-1])
-        entry_price = state.avg_entry_prices.get(symbol, 0.0)
+        # Anchor to the highest price paid across open lots, not the broker's averaged
+        # cost basis — averaging down (a second buy at a lower price) must not mute the
+        # stop distance on the earlier, more-underwater lot. Falls back to avg cost if
+        # no local fill-price history exists yet (e.g. pre-migration positions).
+        if symbol in state.positions and state.positions[symbol] > 0:
+            try:
+                entry_price = repo.get_highest_buy_price(symbol) or state.avg_entry_prices.get(symbol, 0.0)
+            except Exception:
+                entry_price = state.avg_entry_prices.get(symbol, 0.0)
+        else:
+            entry_price = state.avg_entry_prices.get(symbol, 0.0)
         _owner = state.position_owners.get((symbol, _pool))
         _base_stop = (
             config.risk.crypto_stop_loss_pct if is_crypto_symbol(symbol)
@@ -1040,6 +1050,10 @@ def _execute_signal(
         # "submitted" row above rather than inserting a duplicate — without this,
         # every order stays "submitted" forever even after it fills on the broker.
         filled_order = broker.wait_for_fill(client_order_id)
+        _fill_price = (
+            float(getattr(filled_order, "filled_avg_price", None) or 0) or None
+            if filled_order else None
+        )
         repo.record_order(OrderRow(
             client_order_id=client_order_id, symbol=symbol,
             side=signal.side, notional=risk_decision.approved_notional,
@@ -1049,6 +1063,7 @@ def _execute_signal(
             regime=regime,
             signal_strength=signal.strength,
             entry_rationale=signal.reason if signal.side == "buy" else None,
+            fill_price=_fill_price,
         ))
 
         # Record the closed-trade outcome for the cooldown guard and overlay memory —
@@ -1102,15 +1117,38 @@ def _execute_signal(
                 )
             else:
                 # Anchor the stop to the actual fill, not the pre-trade ref price, so the
-                # configured stop distance holds even when the fill slipped from ref.
+                # configured stop distance holds even when the fill slipped from ref. When
+                # this is an add to an existing position, anchor to the highest price paid
+                # across all open lots (not this fill alone) — averaging down must not let
+                # an already-underwater lot ride past its own stop distance.
                 fill_px = float(getattr(filled_order, "filled_avg_price", None) or ref_price)
-                stop_price = fill_px * (1 - _stop_pct)
+                try:
+                    _highest_buy = repo.get_highest_buy_price(symbol)
+                except Exception:
+                    logger.warning("get_highest_buy_price failed for %s — using this fill only", symbol)
+                    _highest_buy = None
+                stop_anchor = max(fill_px, _highest_buy or 0.0)
+                stop_price = stop_anchor * (1 - _stop_pct)
                 filled_qty = float(getattr(filled_order, "filled_qty", 0) or 0)
-                stop_qty = filled_qty if filled_qty > 0 else round(
+                new_qty = filled_qty if filled_qty > 0 else round(
                     risk_decision.approved_notional / ref_price, 6
                 )
+                # cancel_open_stops below removes the stop covering any already-held
+                # shares too, so the replacement must cover the full position, not just
+                # this fill — otherwise the earlier lot rides unprotected.
+                held_before = state.positions.get(symbol, 0.0)
+                stop_qty = held_before + new_qty
+                # Keyed on this buy fill's own broker_order_id, not just
+                # date|symbol|side|strategy — two buys on the same symbol by the same
+                # strategy on the same day used to hash to the same stop_oid, so the
+                # second placement collided with the first (Alpaca rejects the reused
+                # id as a duplicate and hands back the stale, already-cancelled order —
+                # leaving the position with no live stop). broker_order_id is unique per
+                # real fill, so distinct buys now get distinct stop ids, while a retry of
+                # *this* fill's stop placement still reuses the same id (idempotent).
                 stop_oid = client_order_id_for(
-                    today, symbol, "sell", f"stop-{type(strategy).__name__}"
+                    today, symbol, "sell",
+                    f"stop-{type(strategy).__name__}-{broker_order_id}",
                 )
                 try:
                     broker.cancel_open_stops(symbol)
@@ -1118,7 +1156,10 @@ def _execute_signal(
                         symbol=symbol, qty=stop_qty,
                         stop_price=stop_price, client_order_id=stop_oid,
                     )
-                    logger.info("placed GTC stop for %s at %.2f", symbol, stop_price)
+                    logger.info(
+                        "placed GTC stop for %s at %.2f (anchor %.4f, qty %.4f)",
+                        symbol, stop_price, stop_anchor, stop_qty,
+                    )
                 except Exception:
                     logger.exception("stop order failed for %s — software stop remains active", symbol)
 

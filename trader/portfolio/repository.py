@@ -37,6 +37,7 @@ class OrderRow:
     regime: str | None = None
     signal_strength: float | None = None
     entry_rationale: str | None = None  # buy-side only: overlay's approval rationale
+    fill_price: float | None = None  # set once the fill is confirmed; None while "submitted"
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,13 @@ class PortfolioRepository(ABC):
     def get_orders_by_status(self, status: str, since_ts: str) -> list[dict]:
         """Orders with the given status whose ts >= since_ts (ISO-8601), oldest-first.
         Used by order-status reconciliation to find rows stuck at 'submitted'."""
+
+    @abstractmethod
+    def get_highest_buy_price(self, symbol: str) -> float | None:
+        """Highest fill_price among filled buys for symbol since its most recent
+        filled sell (i.e. across the currently open lots only). None if there are
+        no filled buys with a recorded price in that window — callers should fall
+        back to the broker's average cost basis."""
 
     @abstractmethod
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int: ...
