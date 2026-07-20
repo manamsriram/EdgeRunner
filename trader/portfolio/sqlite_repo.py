@@ -385,6 +385,14 @@ class SQLiteRepository(PortfolioRepository):
             result["features"] = json.loads(result["features"])
             return result
 
+    def get_decision_features_count(self, linked_only: bool = False) -> int:
+        with self._connect() as conn:
+            query = "SELECT COUNT(*) AS c FROM decision_features"
+            if linked_only:
+                query += " WHERE order_id IS NOT NULL"
+            cur = conn.execute(query)
+            return int(cur.fetchone()["c"])
+
     def get_recent_outcomes(
         self,
         symbol: str | None = None,

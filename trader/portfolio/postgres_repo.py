@@ -346,6 +346,15 @@ class PostgresRepository(PortfolioRepository):
                 row = cur.fetchone()
                 return dict(row) if row else None
 
+    def get_decision_features_count(self, linked_only: bool = False) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                if linked_only:
+                    cur.execute("SELECT COUNT(*) AS c FROM decision_features WHERE order_id IS NOT NULL")
+                else:
+                    cur.execute("SELECT COUNT(*) AS c FROM decision_features")
+                return int(cur.fetchone()["c"])
+
     def get_recent_outcomes(
         self,
         symbol: str | None = None,

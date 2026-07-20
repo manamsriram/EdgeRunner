@@ -210,6 +210,11 @@ class PortfolioRepository(ABC):
     def get_decision_features_by_order_id(self, order_id: int) -> dict | None: ...
 
     @abstractmethod
+    def get_decision_features_count(self, linked_only: bool = False) -> int:
+        """Count decision_features rows. linked_only=True counts only rows
+        with order_id set (i.e. decisions that produced an order)."""
+
+    @abstractmethod
     def get_runs(self) -> list[dict]: ...
 
     @abstractmethod
