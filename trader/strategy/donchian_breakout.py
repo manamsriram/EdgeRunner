@@ -50,7 +50,7 @@ class DonchianBreakout(Strategy):
         self._entry_bar_ts = None
         self._entry_bar_low = None
 
-    def warm_up(self, bars: pd.DataFrame) -> None:
+    def warm_up(self, bars: pd.DataFrame, *, has_position: bool = True) -> None:
         """Reconstruct entry state by scanning bar history after a cold start.
 
         Walks backward up to `time_exit` bars looking for the most recent fresh
@@ -58,6 +58,10 @@ class DonchianBreakout(Strategy):
         time-exit and quick-exit logic resumes correctly rather than treating the
         position as a new entry opportunity.
         """
+        if not has_position:
+            self._warmed_up = True
+            return
+
         if self._entry_bar_ts is not None:
             self._warmed_up = True
             return

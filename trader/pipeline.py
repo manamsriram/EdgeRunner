@@ -712,13 +712,16 @@ def _prepare_signal(
         # Only warm up as entered if this strategy owns the position; otherwise
         # mark warmed-up so non-owning strategies don't falsely set _entered.
         if not strategy._warmed_up:
-            if symbol in state.positions:
+            _has_position = symbol in state.positions and state.positions[symbol] > 0
+            if _has_position:
                 _warm_owner = state.position_owners.get((symbol, _pool))
                 if _warm_owner is None or _warm_owner == type(strategy).__name__:
-                    strategy.warm_up(bars)
+                    strategy.warm_up(bars, has_position=True)
                 else:
                     strategy._warmed_up = True
             else:
+                # No open position: just mark warmed up so the strategy can start
+                # generating fresh entry signals on the next tick.
                 strategy._warmed_up = True
 
         current_price = (live_prices or {}).get(symbol) or float(bars["close"].iloc[-1])

@@ -28,9 +28,11 @@ class GapAndGo(IntradayStrategy):
         self._entry_attempted = False
         self._last_session_date = None
 
-    def warm_up(self, bars: pd.DataFrame) -> None:
-        self._entered = True
-        self._entry_bar_open = float(bars["close"].iloc[-1])  # prevents sell-never bug (0.0 < any price)
+    def warm_up(self, bars: pd.DataFrame, *, has_position: bool = True) -> None:
+        # Only mark as entered if the broker actually reports an open position;
+        # otherwise a restarted process would skip valid entry signals.
+        self._entered = has_position
+        self._entry_bar_open = float(bars["close"].iloc[-1]) if has_position else 0.0
         self._warmed_up = True
 
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
