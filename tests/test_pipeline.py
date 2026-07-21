@@ -14,7 +14,7 @@ import pytest
 
 from trader.config import Config, RiskLimits
 from trader.execution.broker import AlpacaBroker
-from trader.pipeline import run_pipeline
+from trader.pipeline import run_pipeline, _purge_old_eod_exits, _eod_exits_fired
 from trader.portfolio.repository import PROPOSAL_PENDING
 from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import AccountState, KillSwitch
@@ -761,3 +761,22 @@ def test_log_decision_features_clamps_invalid_mode_to_manual(tmp_path):
         "invalid mode must be clamped to the conservative 'manual' default, "
         f"got {stored[0]!r}"
     )
+
+
+def test_purge_old_eod_exits_drops_only_old_keys():
+    """_purge_old_eod_exits keys are (strategy, symbol, pool, date); the date is
+    at index 3. A previous bug used key[2] (the pool string) and therefore
+    never purged anything, leaking memory across days.
+    """
+    from datetime import date, timedelta
+
+    today = date(2026, 7, 20)
+    yesterday = today - timedelta(days=1)
+
+    _eod_exits_fired.clear()
+    _eod_exits_fired[("Strat", "AAPL", "intraday", yesterday)] = True
+    _eod_exits_fired[("Strat", "MSFT", "daily", today)] = True
+
+    _purge_old_eod_exits(today)
+
+    assert _eod_exits_fired == {("Strat", "MSFT", "daily", today): True}

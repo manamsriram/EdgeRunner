@@ -83,12 +83,18 @@ class PipelineRun:
 
 
 def _purge_old_eod_exits(today: date) -> None:
-    """Drop EOD-exit tracking keys for any date other than today."""
+    """Drop EOD-exit tracking keys for any date other than today.
+
+    Key shape is (strategy_name, symbol, pool, date); the date is at index 3.
+    Mutates in place so imported references stay valid in tests.
+    """
     global _eod_exits_fired
-    _eod_exits_fired = {
-        key: val for key, val in _eod_exits_fired.items()
-        if key[2] == today
-    }
+    keys_to_drop = [
+        key for key in _eod_exits_fired.keys()
+        if key[3] != today
+    ]
+    for key in keys_to_drop:
+        del _eod_exits_fired[key]
 
 
 def run_pipeline(
