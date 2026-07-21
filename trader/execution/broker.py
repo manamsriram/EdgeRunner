@@ -450,14 +450,23 @@ class AlpacaBroker:
         qty: float,
         stop_price: float,
         client_order_id: str,
+        limit_offset_pct: float = 0.03,
     ) -> Any:
-        """Place a GTC stop-market order to protect a long position.
+        """Place a GTC stop-LIMIT order to protect a long position.
+
+        A plain stop-market fills at whatever price is available once triggered —
+        on a thin/gappy name that can land far past `stop_price` (observed
+        2026-07-21: 2-3x the configured stop distance on VSH/UXIN/TSLL). The limit
+        caps that worst case at `limit_offset_pct` below the trigger. If the gap
+        blows through the limit and this order sits unfilled, the software stop
+        (trader/pipeline.py, checked every tick) still force-sells at market on
+        the next tick — bounded slippage instead of unbounded.
 
         Idempotent: a duplicate client_order_id returns the existing order.
         Only call for equity symbols — crypto uses separate stop logic.
         """
         from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import StopOrderRequest
+        from alpaca.trading.requests import StopLimitOrderRequest
 
         whole_qty = int(qty)
         if whole_qty < 1:
@@ -468,16 +477,18 @@ class AlpacaBroker:
                 f"GTC stop for {symbol} requires at least 1 whole share, "
                 f"got qty={qty:.4f}"
             )
+        limit_price = stop_price * (1 - limit_offset_pct)
         client = self._ensure_client()
         def _build_request(
             q: int, tif: TimeInForce = TimeInForce.GTC, coid: str = client_order_id
-        ) -> StopOrderRequest:
-            return StopOrderRequest(
+        ) -> StopLimitOrderRequest:
+            return StopLimitOrderRequest(
                 symbol=symbol,
                 qty=q,  # GTC stops must be whole shares on Alpaca
                 side=OrderSide.SELL,
                 time_in_force=tif,
                 stop_price=round(stop_price, 2),
+                limit_price=round(limit_price, 2),
                 client_order_id=coid,
             )
 

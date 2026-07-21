@@ -63,6 +63,13 @@ class RiskLimits:
     daily_loss_halt_enabled: bool = False   # opt-in: halt NEW BUYS after daily loss hits daily_loss_limit_pct (env: DAILY_LOSS_HALT_ENABLED)
     stop_loss_pct: float = 0.08             # exit equity/ETF position if down this fraction from avg entry
     crypto_stop_loss_pct: float = 0.05      # tighter stop for crypto — more volatile
+    # Broker GTC stop is stop-LIMIT, not stop-market: caps worst-case fill slippage on
+    # thin/gappy names. Trigger stays at stop_price; limit sits this far below it. If
+    # the gap blows through the limit and the stop goes unfilled, the software stop
+    # (checked every tick against stop_loss_pct) still force-sells at market next tick —
+    # bounded to one tick's worth of slippage instead of unbounded. Default 2026-07-21:
+    # VSH/UXIN/TSLL stop-market fills landed 2-3x past the configured 8% stop.
+    stop_limit_slippage_pct: float = 0.03    # env: STOP_LIMIT_SLIPPAGE_PCT
     # Dynamic universe — replaces static allowlist with Alpaca daily screener
     dynamic_universe: bool = False          # True → use screener (env: DYNAMIC_UNIVERSE)
     universe_size: int = 100               # max symbols per day (env: UNIVERSE_SIZE)
@@ -222,6 +229,7 @@ def load_config() -> Config:
             max_spread_pct=float(os.getenv("MAX_SPREAD_PCT", "0.01")),
             require_spread_data=_env_bool("REQUIRE_SPREAD_DATA", False),
             require_broker_stop=_env_bool("REQUIRE_BROKER_STOP", False),
+            stop_limit_slippage_pct=float(os.getenv("STOP_LIMIT_SLIPPAGE_PCT", "0.03")),
             min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
             block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
         ),

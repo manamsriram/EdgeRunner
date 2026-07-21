@@ -1197,6 +1197,7 @@ def _execute_signal(
                     broker.place_stop_order(
                         symbol=symbol, qty=stop_qty,
                         stop_price=stop_price, client_order_id=stop_oid,
+                        limit_offset_pct=config.risk.stop_limit_slippage_pct,
                     )
                     logger.info(
                         "placed GTC stop for %s at %.2f (anchor %.4f, qty %.4f)",
