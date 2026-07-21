@@ -74,9 +74,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     decided_at TEXT
 );
 CREATE TABLE IF NOT EXISTS position_owners (
-    symbol     TEXT PRIMARY KEY,
+    symbol     TEXT NOT NULL,
+    pool       VARCHAR(10) NOT NULL DEFAULT 'daily',
     strategy   TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, pool)
 );
 CREATE TABLE IF NOT EXISTS bandit_weights (
     strategy_name TEXT NOT NULL,
@@ -149,6 +151,22 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
     est_cost_usd  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_ts ON llm_call_log(ts);
+CREATE TABLE IF NOT EXISTS decision_features (
+    id                          SERIAL PRIMARY KEY,
+    run_id                      INTEGER NOT NULL,
+    ts                          TEXT NOT NULL,
+    symbol                      TEXT NOT NULL,
+    side                        TEXT NOT NULL,
+    strategy                    TEXT NOT NULL,
+    regime                      TEXT NOT NULL,
+    mode                        TEXT NOT NULL DEFAULT 'auto',
+    signal_strength_pre_overlay REAL NOT NULL,
+    features                    TEXT NOT NULL,
+    order_id                    INTEGER,
+    backfilled                  BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_decision_features_symbol_ts ON decision_features(symbol, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_features_order_id ON decision_features(order_id);
 """
 
 

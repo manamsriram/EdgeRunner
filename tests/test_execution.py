@@ -48,11 +48,21 @@ class FakeClient:
         # The injected filter builder returns the literal strings "open"/"closed".
         return self.orders[filter]
 
+    @staticmethod
+    def _order_data_as_dict(order_data):
+        if isinstance(order_data, dict):
+            return order_data
+        try:
+            return order_data.model_dump()
+        except AttributeError:
+            return vars(order_data)
+
     def submit_order(self, order_data):
-        coid = order_data["client_order_id"]
+        data = self._order_data_as_dict(order_data)
+        coid = data["client_order_id"]
         if coid in self._by_coid:
             raise FakeDuplicateError()
-        order = SimpleNamespace(**order_data)
+        order = SimpleNamespace(**data)
         self._by_coid[coid] = order
         self.submitted.append(order)
         return order
@@ -594,4 +604,73 @@ def test_place_stop_order_raises_for_fractional_qty():
         _broker(FakeClient()).place_stop_order(
             symbol="AAPL", qty=0.7, stop_price=90.0, client_order_id="stop-frac"
         )
+
+
+class FakeInsufClient(FakeClient):
+    """Simulates a sell blocked by an existing GTC stop."""
+
+    def __init__(self, *, stop_order_id: str = "stop-123") -> None:
+        super().__init__()
+        self.stop_order_id = stop_order_id
+        self.open_orders: list = [
+            SimpleNamespace(
+                id=stop_order_id,
+                symbol="AAPL",
+                order_type="stop",
+                type="stop",
+                side="sell",
+                qty="10",
+                stop_price="95.0",
+            )
+        ]
+        self.cancelled: list[str] = []
+        self.replaced_stops: list[dict] = []
+        self._sell_attempts = 0
+
+    def get_orders(self, filter):  # noqa: A002 - mirror alpaca's kw name
+        # Ignore the Alpaca filter object and just return open orders, which is
+        # what the broker helpers expect.
+        return self.open_orders
+
+    def _order_data_as_dict(self, order_data):
+        # broker.py can pass either a dict (market orders via fake builder) or a
+        # real alpaca StopOrderRequest model. Support both transparently.
+        if isinstance(order_data, dict):
+            return order_data
+        try:
+            return order_data.model_dump()
+        except AttributeError:
+            return vars(order_data)
+
+    def submit_order(self, order_data):
+        data = self._order_data_as_dict(order_data)
+        # Sell order hits insufficient qty because the stop holds shares.
+        if data.get("side") == "sell" and data.get("client_order_id", "").startswith("sell-"):
+            self._sell_attempts += 1
+            raise Exception(
+                '{"available":0,"related_orders":["' + self.stop_order_id + '"],"message":"insufficient qty"}'
+            )
+        # Detect restored stop orders: any sell that is not the blocked sell.
+        # A restored stop has a stop_price and a non-sell-prefixed client id.
+        if data.get("side") == "sell" and data.get("stop_price") is not None:
+            self.replaced_stops.append(data)
+        return super().submit_order(order_data)
+
+    def cancel_order_by_id(self, order_id: str) -> None:
+        self.cancelled.append(order_id)
+        self.open_orders = [o for o in self.open_orders if getattr(o, "id", None) != order_id]
+
+
+def test_sell_retry_failure_restores_cancelled_stop():
+    """If a sell cancels a blocking stop but the retry still fails, the stop must be re-placed."""
+    client = FakeInsufClient(stop_order_id="stop-abc")
+    with pytest.raises(Exception, match="insufficient qty"):
+        _broker(client).submit(
+            symbol="AAPL", side="sell", qty=10.0, client_order_id="sell-fail"
+        )
+    # The blocking stop should have been cancelled, then re-placed.
+    assert "stop-abc" in client.cancelled
+    assert len(client.replaced_stops) == 1
+    assert float(client.replaced_stops[0]["stop_price"]) == 95.0
+    assert int(client.replaced_stops[0]["qty"]) == 10
 

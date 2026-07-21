@@ -1231,14 +1231,35 @@ def _execute_signal(
                                 _oid = str(getattr(_open_order, "id", "") or "")
                                 if _oid:
                                     broker.cancel_order_by_id(_oid)
-                            # Record the cancellation in the repo so the audit trail
-                            # does not show a filled/submitted order for a blocked run.
-                            repo.record_order(OrderRow(
-                                client_order_id=_cancel_client_order_id,
-                                symbol=symbol, side="buy",
-                                notional=risk_decision.approved_notional,
-                                status="canceled",
-                            ))
+                                # Only record "canceled" if the broker confirms the
+                                # order is no longer open. cancel_order_by_id swallows
+                                # exceptions, so we must verify.
+                                _check = broker.get_order(_cancel_client_order_id)
+                                _status = (
+                                    str(getattr(_check, "status", "") or "").lower()
+                                    if _check is not None
+                                    else ""
+                                )
+                                _canceled = _status in {"canceled", "cancelled"}
+                                if _check is None or _canceled:
+                                    repo.record_order(OrderRow(
+                                        client_order_id=_cancel_client_order_id,
+                                        symbol=symbol, side="buy",
+                                        notional=risk_decision.approved_notional,
+                                        status="canceled",
+                                    ))
+                                else:
+                                    logger.warning(
+                                        "could not verify cancellation of %s buy (status=%s); "
+                                        "leaving order record as-is",
+                                        symbol, _status or "unknown",
+                                    )
+                            else:
+                                # Order already gone from broker; nothing to record.
+                                logger.warning(
+                                    "%s buy order %s not found for cancellation after stop failure",
+                                    symbol, _cancel_client_order_id,
+                                )
                         except Exception:
                             logger.exception("failed to cancel %s buy after stop failure", symbol)
                         return PipelineRun(

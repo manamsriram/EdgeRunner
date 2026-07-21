@@ -400,19 +400,30 @@ class AlpacaBroker:
             # orders Alpaca identifies, then retry with backoff for the cancel to settle.
             if side == "sell" and _is_insuf:
                 import time
+                # Capture any open stop-sell orders before cancelling them, so we can
+                # re-place protection if the sell retry still fails. Without this, a
+                # failed retry leaves the position completely naked.
+                _pre_existing_stops = self._get_open_stop_sells(symbol)
                 for oid in _get_related_order_ids(exc):
                     try:
                         client.cancel_order_by_id(oid)
                         logger.info("cancelled blocking order %s for %s sell", oid, symbol)
                     except Exception:
                         logger.warning("failed to cancel blocking order %s for %s", oid, symbol)
-                for attempt in range(3):
-                    time.sleep(0.5)
-                    try:
-                        return self._submit_idempotent(client, request, client_order_id)
-                    except Exception as retry_exc:
-                        if _insufficient_qty_available(retry_exc) is None or attempt == 2:
-                            raise
+                try:
+                    for attempt in range(3):
+                        time.sleep(0.5)
+                        try:
+                            return self._submit_idempotent(client, request, client_order_id)
+                        except Exception as retry_exc:
+                            if _insufficient_qty_available(retry_exc) is None or attempt == 2:
+                                raise
+                except Exception:
+                    # Sell retry failed; restore the protective stop(s) we removed so the
+                    # position is not left unprotected. Best-effort: log and continue if
+                    # re-placement also fails — we already surfaced the sell failure.
+                    self._replace_stops(symbol, _pre_existing_stops, suffix="restore")
+                    raise
             if not ((_is_not_fractionable(exc) or _is_insuf) and whole_qty >= 1.0):
                 raise
             reason = "not fractionable" if _is_not_fractionable(exc) else "insufficient fractional qty"
@@ -573,6 +584,72 @@ class AlpacaBroker:
                         )
         except Exception:
             logger.exception("cancel_open_stops failed for %s", symbol)
+
+    def _get_open_stop_sells(self, symbol: str) -> list[dict]:
+        """Return open stop-sell orders for symbol as {"id", "qty", "stop_price"} dicts.
+
+        Used by the sell-retry path so we can re-place protection if the retry fails.
+        """
+        try:
+            client = self._ensure_client()
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+
+            open_orders = client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            )
+            stops: list[dict] = []
+            for order in open_orders:
+                order_type = str(
+                    getattr(order, "order_type", None) or getattr(order, "type", "")
+                ).lower()
+                if (
+                    order.symbol == symbol
+                    and order_type in {"stop", "stop_limit"}
+                    and str(getattr(order, "side", "")).lower() == "sell"
+                ):
+                    try:
+                        qty = float(getattr(order, "qty", 0) or 0)
+                        stop_price = float(getattr(order, "stop_price", 0) or 0)
+                        if qty > 0 and stop_price > 0:
+                            stops.append({
+                                "id": str(order.id),
+                                "symbol": symbol,
+                                "qty": qty,
+                                "stop_price": stop_price,
+                            })
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "could not parse stop order %s for %s", order.id, symbol
+                        )
+            return stops
+        except Exception:
+            logger.exception("failed to list open stop orders for %s", symbol)
+            return []
+
+    def _replace_stops(self, symbol: str, stops: list[dict], suffix: str) -> None:
+        """Best-effort re-placement of stop-sell orders captured before a sell retry."""
+        if not stops:
+            return
+        import hashlib
+        for stop in stops:
+            try:
+                # Deterministic id so a crashed/restarted restore is idempotent.
+                new_coid = hashlib.sha256(
+                    f"{stop['id']}-restore-{suffix}".encode()
+                ).hexdigest()[:32]
+                self.place_stop_order(
+                    symbol=symbol,
+                    qty=stop["qty"],
+                    stop_price=stop["stop_price"],
+                    client_order_id=new_coid,
+                )
+                logger.info(
+                    "restored stop for %s at %.2f (qty %.4f)",
+                    symbol, stop["stop_price"], stop["qty"],
+                )
+            except Exception:
+                logger.exception("failed to restore stop order %s", stop.get("id"))
 
     def _submit_idempotent(
         self, client: _TradingClient, request: Any, client_order_id: str
