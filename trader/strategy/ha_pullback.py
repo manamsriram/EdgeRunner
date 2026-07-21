@@ -76,6 +76,96 @@ class HAPullback(Strategy):
         self._stop = None
         self._target = None
 
+    def warm_up(self, bars: pd.DataFrame, *, has_position: bool = True) -> None:
+        """Reconstruct ATR stop/target from the most recent historical entry signal.
+
+        If the broker reports an open position, scan backward for the most recent
+        bar that would have produced a buy signal, then restore the entry price,
+        stop and target levels. If no entry can be reconstructed, state stays flat
+        so the strategy can generate a fresh entry once conditions align.
+        """
+        self._warmed_up = True
+        self.reset_state()
+        if not has_position:
+            return
+
+        min_bars = max(self.slow, self.atr_n) + 2
+        if len(bars) < min_bars:
+            return
+
+        # Pre-compute SMAs once and slice backward to avoid O(N^2) recalculation.
+        full_sma_fast = sma(bars["close"], self.fast)
+        full_sma_slow = sma(bars["close"], self.slow)
+
+        # Scan backward from the most recent bar to find the latest entry signal.
+        for i in range(len(bars), min_bars - 1, -1):
+            sub_bars = bars.iloc[:i]
+            sub_fast = full_sma_fast.iloc[:i]
+            sub_slow = full_sma_slow.iloc[:i]
+            _, levels = self._evaluate_entry(sub_bars, sub_fast, sub_slow)
+            if levels is not None:
+                self._entry_price, self._stop, self._target = levels
+                return
+
+    def _evaluate_entry(
+        self,
+        bars: pd.DataFrame,
+        sma_fast: pd.Series,
+        sma_slow: pd.Series,
+    ) -> tuple[Signal, tuple[float, float, float] | None]:
+        """Return the buy signal and (entry, stop, target) if entry criteria are met."""
+        close = bars["close"]
+        curr_close = float(close.iloc[-1])
+        curr_fast = float(sma_fast.iloc[-1])
+        curr_slow = float(sma_slow.iloc[-1])
+        if pd.isna(curr_fast) or pd.isna(curr_slow):
+            return Signal(self.symbol, "hold", 0.0, "SMAs not yet defined"), None
+
+        # Bull cross within lookback.
+        above = sma_fast > sma_slow
+        crossed = above & ~above.shift(1, fill_value=False)
+        cross_positions = crossed.values.nonzero()[0]
+        if len(cross_positions) == 0:
+            return Signal(self.symbol, "hold", 0.0, "no bull cross in history"), None
+        last_cross = int(cross_positions[-1])
+        bars_since_cross = len(bars) - 1 - last_cross
+        if bars_since_cross > self.cross_lookback:
+            return Signal(
+                self.symbol, "hold", 0.0,
+                f"bull cross {bars_since_cross} bars ago > lookback {self.cross_lookback}",
+            ), None
+
+        # Pullback: real low tags the fast SMA on some bar after the cross.
+        post = bars.iloc[last_cross + 1:]
+        post_fast = sma_fast.iloc[last_cross + 1:]
+        pullback_done = bool((post["low"] <= post_fast).any()) if not post.empty else False
+        if not pullback_done:
+            return Signal(self.symbol, "hold", 0.0, "awaiting pullback to fast SMA"), None
+
+        ha_close, ha_open = heikin_ashi_close_open(bars.iloc[-self.slow:])
+        curr_ha_close = float(ha_close.iloc[-1])
+        curr_ha_open = float(ha_open.iloc[-1])
+        ha_bull = curr_ha_close > curr_ha_open
+        if not (ha_bull and curr_ha_close > curr_fast and curr_close > curr_slow):
+            return Signal(self.symbol, "hold", 0.0, "awaiting HA bull confirmation above fast SMA"), None
+
+        atr_val = float(atr(bars["high"], bars["low"], close, self.atr_n).iloc[-1])
+        if pd.isna(atr_val) or atr_val <= 0:
+            return Signal(self.symbol, "hold", 0.0, "ATR not yet defined"), None
+
+        entry = curr_close
+        stop = curr_close - self.atr_mult * atr_val
+        target = curr_close + self.rr * self.atr_mult * atr_val
+
+        spread = (curr_close - curr_slow) / curr_slow if curr_slow != 0 else 0.0
+        strength = float(min(max(abs(spread) * 10.0, 0.3), 1.0))
+        sig = Signal(
+            self.symbol, "buy", strength,
+            f"HA pullback entry: cross {bars_since_cross} bars ago, "
+            f"stop {stop:.2f}, target {target:.2f}",
+        )
+        return sig, (entry, stop, target)
+
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
         min_bars = max(self.slow, self.atr_n) + 2
         if len(bars) < min_bars:
@@ -116,43 +206,7 @@ class HAPullback(Strategy):
                           f"SMA{self.fast} {curr_fast:.2f} < SMA{self.slow} {curr_slow:.2f}")
 
         # ---- Entry: bull cross within lookback + pullback + HA confirmation ----
-        above = sma_fast > sma_slow
-        crossed = above & ~above.shift(1, fill_value=False)
-        cross_positions = crossed.values.nonzero()[0]
-        if len(cross_positions) == 0:
-            return Signal(self.symbol, "hold", 0.0, "no bull cross in history")
-        last_cross = int(cross_positions[-1])
-        bars_since_cross = len(bars) - 1 - last_cross
-        if bars_since_cross > self.cross_lookback:
-            return Signal(self.symbol, "hold", 0.0,
-                          f"bull cross {bars_since_cross} bars ago > lookback {self.cross_lookback}")
-
-        # Pullback: real low tags the fast SMA on some bar after the cross.
-        post = bars.iloc[last_cross + 1:]
-        post_fast = sma_fast.iloc[last_cross + 1:]
-        pullback_done = bool((post["low"] <= post_fast).any()) if not post.empty else False
-        if not pullback_done:
-            return Signal(self.symbol, "hold", 0.0, "awaiting pullback to fast SMA")
-
-        ha_close, ha_open = heikin_ashi_close_open(bars.iloc[-self.slow:])
-        curr_ha_close = float(ha_close.iloc[-1])
-        curr_ha_open = float(ha_open.iloc[-1])
-        ha_bull = curr_ha_close > curr_ha_open
-        if not (ha_bull and curr_ha_close > curr_fast and curr_close > curr_slow):
-            return Signal(self.symbol, "hold", 0.0, "awaiting HA bull confirmation above fast SMA")
-
-        atr_val = float(atr(bars["high"], bars["low"], close, self.atr_n).iloc[-1])
-        if pd.isna(atr_val) or atr_val <= 0:
-            return Signal(self.symbol, "hold", 0.0, "ATR not yet defined")
-
-        self._entry_price = curr_close
-        self._stop = curr_close - self.atr_mult * atr_val
-        self._target = curr_close + self.rr * self.atr_mult * atr_val
-
-        spread = (curr_close - curr_slow) / curr_slow if curr_slow != 0 else 0.0
-        strength = float(min(max(abs(spread) * 10.0, 0.3), 1.0))
-        return Signal(
-            self.symbol, "buy", strength,
-            f"HA pullback entry: cross {bars_since_cross} bars ago, "
-            f"stop {self._stop:.2f}, target {self._target:.2f}",
-        )
+        sig, levels = self._evaluate_entry(bars, sma_fast, sma_slow)
+        if levels is not None:
+            self._entry_price, self._stop, self._target = levels
+        return sig
