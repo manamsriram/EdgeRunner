@@ -75,7 +75,14 @@ class DonchianBreakout(Strategy):
         low = bars["low"]
         scan_limit = min(self.time_exit, len(bars) - min_bars)
 
-        for lookback in range(1, scan_limit + 1):
+        # Only reconstruct entries that happened before the current (live) bar.
+        # A breakout on the current bar is still forming and should not be
+        # treated as an established in-position entry on warm-up.
+        if scan_limit < 2:
+            self._warmed_up = True
+            return
+
+        for lookback in range(2, scan_limit + 1):
             i = len(bars) - lookback
             subclose = close.iloc[: i + 1]
             sublow = low.iloc[: i + 1]
