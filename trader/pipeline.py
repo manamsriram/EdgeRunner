@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass
 
 _ALPACA_MIN_ORDER = 10.0
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
 from trader.alerts import send_alert
@@ -58,6 +58,11 @@ _EOD_EXIT_MINUTES = int(os.getenv("EOD_EXIT_MINUTES", "15"))
 # exact moment execution matters most. Crypto excluded (24/7, not daily-bar based).
 _premarket_signals: dict[tuple[str, str], tuple] = {}
 
+# Tracks EOD exits already fired by (strategy_name, symbol, pool, date). Prevents
+# repeated EOD exit signals for the same position on the same day if the first
+# order is slow to fill or reconciliation lags.
+_eod_exits_fired: dict[tuple[str, str, str, date], bool] = {}
+
 
 @dataclass
 class PipelineRun:
@@ -75,6 +80,15 @@ class PipelineRun:
     # an unconfirmed sell must NOT clear ownership — reconcile_order_statuses settles it
     # later against broker truth. Buy/hold/blocked runs never read it.
     fill_confirmed: bool = False
+
+
+def _purge_old_eod_exits(today: date) -> None:
+    """Drop EOD-exit tracking keys for any date other than today."""
+    global _eod_exits_fired
+    _eod_exits_fired = {
+        key: val for key, val in _eod_exits_fired.items()
+        if key[2] == today
+    }
 
 
 def run_pipeline(
@@ -786,15 +800,21 @@ def _prepare_signal(
                     _asof_ny = asof.astimezone(_ny) if asof.tzinfo else asof.replace(tzinfo=_timezone.utc).astimezone(_ny)
                     _close_ny = _asof_ny.replace(hour=16, minute=0, second=0, microsecond=0)
                     if _asof_ny >= _close_ny - timedelta(minutes=_EOD_EXIT_MINUTES):
-                        signal = Signal(
-                            symbol, "sell", 1.0,
-                            f"eod-exit: intraday flat at {_asof_ny.strftime('%H:%M')} ET",
-                        )
-                        repo.record_signal(SignalRow(
-                            run_id=run_id, symbol=symbol,
-                            side=signal.side, strength=signal.strength, reason=signal.reason,
-                        ))
-                        return signal, bars, run_id, _pool
+                        _today = asof.date() if hasattr(asof, "date") else asof
+                        _eod_key = (type(strategy).__name__, symbol, _pool, _today)
+                        if _eod_key not in _eod_exits_fired:
+                            signal = Signal(
+                                symbol, "sell", 1.0,
+                                f"eod-exit: intraday flat at {_asof_ny.strftime('%H:%M')} ET",
+                            )
+                            _eod_exits_fired[_eod_key] = True
+                            # Prevent unbounded growth if the process runs across many days.
+                            _purge_old_eod_exits(_today)
+                            repo.record_signal(SignalRow(
+                                run_id=run_id, symbol=symbol,
+                                side=signal.side, strength=signal.strength, reason=signal.reason,
+                            ))
+                            return signal, bars, run_id, _pool
 
             _cache_key = (type(strategy).__name__, symbol)
             _today = asof.date() if hasattr(asof, "date") else asof
