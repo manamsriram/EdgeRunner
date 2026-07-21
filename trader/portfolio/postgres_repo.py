@@ -195,6 +195,51 @@ class PostgresRepository(PortfolioRepository):
                 cur.execute("ALTER TABLE bandit_weights ADD COLUMN IF NOT EXISTS beta_losses INTEGER NOT NULL DEFAULT 1")
                 cur.execute("ALTER TABLE position_owners ADD COLUMN IF NOT EXISTS pool VARCHAR(10) NOT NULL DEFAULT 'daily'")
 
+                self._migrate_position_owners_pool_pk(cur)
+
+    @staticmethod
+    def _migrate_position_owners_pool_pk(cur) -> None:
+        """Migrate old single-column PK on position_owners(symbol) -> (symbol, pool).
+
+        Existing databases created before the composite-key fix have the old
+        PRIMARY KEY (symbol) even though the `pool` column was added later.
+        `set_position_owner` relies on `ON CONFLICT (symbol, pool)`, so we must
+        drop the old PK and add the composite one. Deduplication keeps the row
+        with the most recent updated_at for each (symbol, pool) pair.
+        """
+        cur.execute(
+            """
+            SELECT a.attname
+            FROM pg_index i
+            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+            WHERE i.indrelid = 'position_owners'::regclass AND i.indisprimary
+            """
+        )
+        pk_columns = {row["attname"] for row in cur.fetchall()}
+        # Already migrated (or brand-new table with the composite key).
+        if "pool" in pk_columns or not pk_columns:
+            return
+
+        # Backfill any rows that existed before the NOT NULL DEFAULT was added.
+        cur.execute("UPDATE position_owners SET pool = 'daily' WHERE pool IS NULL")
+
+        # Deduplicate so the new composite primary key can be applied.
+        # Keep the most recent updated_at per (symbol, pool); tie-break on ctid.
+        cur.execute(
+            """
+            DELETE FROM position_owners
+            WHERE ctid NOT IN (
+                SELECT DISTINCT ON (symbol, pool) ctid
+                FROM position_owners
+                ORDER BY symbol, pool, updated_at DESC, ctid DESC
+            )
+            """
+        )
+
+        # Drop the old single-column primary key and add the composite key.
+        cur.execute("ALTER TABLE position_owners DROP CONSTRAINT position_owners_pkey")
+        cur.execute("ALTER TABLE position_owners ADD PRIMARY KEY (symbol, pool)")
+
     # ---- writes ----
 
     def record_run(self, strategy: str, mode: str, note: str = "") -> int:
