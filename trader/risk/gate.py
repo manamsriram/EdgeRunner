@@ -454,6 +454,26 @@ class RiskGate:
                 f"${options_cap:,.0f} ({limits.max_options_allocation_pct:.0%} of equity)"
             )
 
+        # Fail closed on equities only: if we don't know the cost basis of a held
+        # stock/ETF, we cannot prove the combined cap is safe. Crypto positions with no
+        # recorded avg_entry_price are excluded from this hard block because Alpaca
+        # sometimes does not provide a cost basis for crypto, but options are not
+        # available on crypto anyway.
+        missing_price_symbols = [
+            sym for sym, qty in state.positions.items()
+            if qty != 0
+            and not is_crypto_symbol(sym)
+            and state.avg_entry_prices.get(sym, 0.0) <= 0
+        ]
+        if missing_price_symbols:
+            logger.warning(
+                "options gate: missing avg_entry_price for %s — cannot verify combined cap",
+                missing_price_symbols,
+            )
+            return RiskDecision.reject(
+                "cannot verify combined cap: missing avg_entry_price for held positions"
+            )
+
         stock_crypto_exposure = sum(
             qty * state.avg_entry_prices.get(sym, 0.0) for sym, qty in state.positions.items()
         )
