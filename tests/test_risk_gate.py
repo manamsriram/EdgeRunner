@@ -102,9 +102,25 @@ def test_daily_loss_halt_never_blocks_sells():
     assert decision.approved
 
 
-def test_daily_loss_halt_skips_when_pnl_unknown():
-    # crypto/CCXT has no last_equity → daily_pnl_pct is None; must never fail-closed.
+def test_daily_loss_halt_rejects_when_pnl_unknown_and_check_required():
+    # When require_daily_pnl_check is True (default) and the broker cannot tell us
+    # the day's P&L, we must fail closed rather than trade blind.
     decision = _halt_gate().evaluate(_buy(), _state(daily_pnl_pct=None))
+    assert not decision.approved
+    assert "daily p&l unknown" in decision.reason.lower()
+
+
+def test_daily_loss_halt_skips_when_pnl_unknown_and_check_disabled():
+    # CCXT has no last_equity → daily_pnl_pct is None. With require_daily_pnl_check
+    # disabled the halt is intentionally skipped so crypto/CCXT does not freeze.
+    limits = RiskLimits(
+        max_position_pct=0.10,
+        daily_loss_limit_pct=0.03,
+        allowlist=("AAPL", "MSFT"),
+        daily_loss_halt_enabled=True,
+        require_daily_pnl_check=False,
+    )
+    decision = RiskGate(limits).evaluate(_buy(), _state(daily_pnl_pct=None))
     assert decision.approved
 
 

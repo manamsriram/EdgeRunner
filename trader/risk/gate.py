@@ -370,18 +370,19 @@ class RiskGate:
 
         # 5b. Daily-loss halt (buys only, opt-in). Blocks NEW buys once the day's drawdown
         #     hits the limit; sells already returned above, so exits are never blocked.
-        #     Skips when daily_pnl_pct is None (e.g. CCXT has no last_equity) — never a hard
-        #     reject, so an unknown P&L cannot freeze the whole book.
-        if (
-            limits.daily_loss_halt_enabled
-            and limits.require_daily_pnl_check
-            and state.daily_pnl_pct is not None
-            and state.daily_pnl_pct <= -limits.daily_loss_limit_pct
-        ):
-            return RiskDecision.reject(
-                f"daily loss {state.daily_pnl_pct:.2%} hit limit "
-                f"-{limits.daily_loss_limit_pct:.2%} — new buys halted"
-            )
+        #     If require_daily_pnl_check is enabled, an unknown P&L must fail closed
+        #     (CCXT can opt out by setting require_daily_pnl_check=False).
+        if limits.daily_loss_halt_enabled:
+            if state.daily_pnl_pct is None:
+                if limits.require_daily_pnl_check:
+                    return RiskDecision.reject(
+                        "daily P&L unknown and require_daily_pnl_check enabled — new buys halted"
+                    )
+            elif state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
+                return RiskDecision.reject(
+                    f"daily loss {state.daily_pnl_pct:.2%} hit limit "
+                    f"-{limits.daily_loss_limit_pct:.2%} — new buys halted"
+                )
 
         # 6. Max position size (buys only) — cap is a fraction of pool equity, not total equity.
         _cap_pct = limits.max_crypto_position_pct if _is_crypto else limits.max_position_pct
@@ -430,16 +431,18 @@ class RiskGate:
 
         # Daily-loss halt — mirrors the buy-side check in evaluate(). CSP/CC
         # sell-to-open commits new capital, so the same halt should apply.
-        if (
-            limits.daily_loss_halt_enabled
-            and limits.require_daily_pnl_check
-            and state.daily_pnl_pct is not None
-            and state.daily_pnl_pct <= -limits.daily_loss_limit_pct
-        ):
-            return RiskDecision.reject(
-                f"daily loss {state.daily_pnl_pct:.2%} hit limit "
-                f"-{limits.daily_loss_limit_pct:.2%} — new options orders halted"
-            )
+        if limits.daily_loss_halt_enabled:
+            if state.daily_pnl_pct is None:
+                if limits.require_daily_pnl_check:
+                    return RiskDecision.reject(
+                        "daily P&L unknown and require_daily_pnl_check enabled — "
+                        "new options orders halted"
+                    )
+            elif state.daily_pnl_pct <= -limits.daily_loss_limit_pct:
+                return RiskDecision.reject(
+                    f"daily loss {state.daily_pnl_pct:.2%} hit limit "
+                    f"-{limits.daily_loss_limit_pct:.2%} — new options orders halted"
+                )
 
         # Cash check — CSP collateral must be available in uninvested cash. Without
         # this, a CSP could be accepted while the account has insufficient liquidity
