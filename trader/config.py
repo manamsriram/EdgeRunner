@@ -71,6 +71,8 @@ class RiskLimits:
     crypto_universe_size: int = 10          # max crypto pairs per day (env: CRYPTO_UNIVERSE_SIZE)
     min_cash_reserve: float = 500.0         # floor kept liquid — never deployed (env: MIN_CASH_RESERVE)
     max_spread_pct: float = 0.01             # reject buys if round-trip spread cost exceeds this (env: MAX_SPREAD_PCT)
+    require_spread_data: bool = False        # when True, reject buys where spread data is missing (env: REQUIRE_SPREAD_DATA)
+    require_broker_stop: bool = False        # when True, a buy fails if the protective GTC stop cannot be placed (env: REQUIRE_BROKER_STOP)
     # Contextual-bandit strategy/regime weighting — shadow mode logs only; live mode
     # also reweights buy-signal ranking priority. Live stays off until shadow logs validate it.
     # Shadow default on 2026-07-18: SuperTrend was running an 85% stop-out rate (22/26 closed
@@ -218,6 +220,8 @@ def load_config() -> Config:
             crypto_universe_size=int(os.getenv("CRYPTO_UNIVERSE_SIZE", "10")),
             min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "500.0")),
             max_spread_pct=float(os.getenv("MAX_SPREAD_PCT", "0.01")),
+            require_spread_data=_env_bool("REQUIRE_SPREAD_DATA", False),
+            require_broker_stop=_env_bool("REQUIRE_BROKER_STOP", False),
             min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
             block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
         ),

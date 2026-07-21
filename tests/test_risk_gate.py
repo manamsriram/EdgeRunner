@@ -404,3 +404,30 @@ def test_min_equity_price_never_blocks_sells():
     intent = OrderIntent(symbol="XYZ", side="sell", notional=50.0, ref_price=0.75)
     decision = RiskGate(limits).evaluate(intent, _state(positions={"XYZ": 100.0}))
     assert decision.approved
+
+
+# ---- equity sanity, spread data, deployed-notional cap ----
+
+def test_non_positive_equity_blocks_buys():
+    decision = RiskGate(LIMITS).evaluate(_buy(), _state(equity=0.0))
+    assert not decision.approved
+    assert "equity" in decision.reason.lower()
+
+
+def test_require_spread_data_rejects_missing_spread():
+    limits = RiskLimits(
+        max_position_pct=0.10, allowlist=None,
+        max_spread_pct=0.01, require_spread_data=True,
+    )
+    # spread_pct defaults to 0.0 (unknown)
+    decision = RiskGate(limits).evaluate(_buy(), _state())
+    assert not decision.approved
+    assert "spread data missing" in decision.reason.lower()
+
+
+def test_deployed_notional_reduces_position_cap():
+    # Cap = 10% * 100k * 0.60 = $6,000. Already deployed $5,500 → $500 headroom.
+    state = _state(deployed_notional=5_500.0)
+    decision = RiskGate(LIMITS).evaluate(_buy(notional=2_000.0), state)
+    assert decision.approved
+    assert decision.approved_notional == pytest.approx(500.0)

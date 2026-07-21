@@ -444,8 +444,13 @@ class AlpacaBroker:
 
         whole_qty = int(qty)
         if whole_qty < 1:
-            logger.warning("place_stop_order skipped for %s — qty %.4f rounds to 0", symbol, qty)
-            return None
+            # Alpaca GTC stop orders must be whole shares; a fractional position
+            # cannot be protected at the broker. Raising keeps the caller from
+            # assuming the position is protected.
+            raise ValueError(
+                f"GTC stop for {symbol} requires at least 1 whole share, "
+                f"got qty={qty:.4f}"
+            )
         client = self._ensure_client()
         def _build_request(
             q: int, tif: TimeInForce = TimeInForce.GTC, coid: str = client_order_id
@@ -530,6 +535,15 @@ class AlpacaBroker:
         except Exception as exc:
             logger.warning("order lookup failed for %s: %s", client_order_id, exc)
             return None
+
+    def cancel_order_by_id(self, order_id: str) -> None:
+        """Cancel a specific order by its broker id. Logs failures but does not raise."""
+        try:
+            client = self._ensure_client()
+            client.cancel_order_by_id(order_id)
+            logger.info("cancelled order %s", order_id)
+        except Exception:
+            logger.warning("failed to cancel order %s", order_id)
 
     def cancel_open_stops(self, symbol: str) -> None:
         """Cancel open GTC stop-sell orders for symbol. Best-effort — logs failures."""

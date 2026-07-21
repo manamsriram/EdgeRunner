@@ -288,13 +288,19 @@ class RiskGate:
             return RiskDecision.reject("account state stale (reconciliation failed)")
 
         # 0b. Transaction cost check (buys only) — skip if spread exceeds threshold.
-        #     Round-trip cost ≈ 2 × spread_pct. Only fires when spread data is available.
-        if intent.side == "buy" and intent.spread_pct > 0:
-            round_trip_cost = 2.0 * intent.spread_pct
-            if round_trip_cost > limits.max_spread_pct:
+        #     Round-trip cost ≈ 2 × spread_pct. When require_spread_data is enabled,
+        #     missing spread is treated as fail-closed rather than skipped.
+        if intent.side == "buy":
+            if intent.spread_pct > 0.0:
+                round_trip_cost = 2.0 * intent.spread_pct
+                if round_trip_cost > limits.max_spread_pct:
+                    return RiskDecision.reject(
+                        f"spread too wide: round-trip cost {round_trip_cost:.3%} "
+                        f"> max {limits.max_spread_pct:.3%}"
+                    )
+            elif limits.require_spread_data:
                 return RiskDecision.reject(
-                    f"spread too wide: round-trip cost {round_trip_cost:.3%} "
-                    f"> max {limits.max_spread_pct:.3%}"
+                    "spread data missing and require_spread_data enabled"
                 )
 
         # 1. Allowlist — route by asset type.
@@ -385,6 +391,10 @@ class RiskGate:
                 )
 
         # 6. Max position size (buys only) — cap is a fraction of pool equity, not total equity.
+        #    Also subtract capital already deployed this tick in the same pool so a
+        #    single tick cannot over-commit the account.
+        if state.equity <= 0.0:
+            return RiskDecision.reject("account equity non-positive — cannot size new positions")
         _cap_pct = limits.max_crypto_position_pct if _is_crypto else limits.max_position_pct
         _pool_fraction = (
             limits.intraday_pool_pct
@@ -392,9 +402,20 @@ class RiskGate:
             else (1.0 - limits.intraday_pool_pct)
         )
         cap = _cap_pct * state.equity * _pool_fraction
+        _already_deployed = (
+            state.intraday_deployed
+            if intent.pool == "intraday"
+            else state.deployed_notional
+        )
+        cap -= _already_deployed
         existing_value = held * intent.ref_price
         headroom = cap - existing_value
         if headroom <= _NO_OP_EPSILON:
+            if _already_deployed > 0 and cap <= _NO_OP_EPSILON:
+                return RiskDecision.reject(
+                    f"{intent.pool} pool already deployed ${_already_deployed:,.0f} "
+                    f"this tick (cap ${cap + _already_deployed:,.0f})"
+                )
             return RiskDecision.reject(
                 f"{intent.symbol} already at position cap "
                 f"(${existing_value:,.0f} of ${cap:,.0f})"

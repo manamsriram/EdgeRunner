@@ -149,7 +149,11 @@ def run_pipeline(
             from dataclasses import replace as _replace_init
             state = _replace_init(state, position_owners=loaded_owners)
     except Exception:
-        logger.warning("failed to load position owners from DB — starting with empty ownership")
+        # Fail-closed: without ownership data we cannot prevent duplicate buys or
+        # cross-strategy sells. Treat the account state as stale for this tick.
+        logger.exception("failed to load position owners from DB — marking state stale")
+        from dataclasses import replace as _replace_stale
+        state = _replace_stale(state, stale=True)
 
     # Fold recent losing exits into state for the risk gate's symbol-cooldown check.
     # Fail-open: a lookup failure just means "no cooldown data this tick", not a halt.
@@ -1209,6 +1213,41 @@ def _execute_signal(
                         smtp_user=config.smtp_user,
                         smtp_password=config.smtp_password,
                     )
+                    # If the deployment requires a broker-side stop, a failed stop
+                    # placement is not acceptable. Cancel the newly-bought shares
+                    # so the position does not ride without protection.
+                    if config.risk.require_broker_stop:
+                        logger.warning(
+                            "require_broker_stop enabled — cancelling %s buy to avoid unprotected position",
+                            symbol,
+                        )
+                        _cancel_client_order_id = client_order_id_for(
+                            today, symbol, "buy", type(strategy).__name__
+                        )
+                        try:
+                            broker.cancel_open_stops(symbol)
+                            _open_order = broker.get_order(_cancel_client_order_id)
+                            if _open_order is not None:
+                                _oid = str(getattr(_open_order, "id", "") or "")
+                                if _oid:
+                                    broker.cancel_order_by_id(_oid)
+                            # Record the cancellation in the repo so the audit trail
+                            # does not show a filled/submitted order for a blocked run.
+                            repo.record_order(OrderRow(
+                                client_order_id=_cancel_client_order_id,
+                                symbol=symbol, side="buy",
+                                notional=risk_decision.approved_notional,
+                                status="canceled",
+                            ))
+                        except Exception:
+                            logger.exception("failed to cancel %s buy after stop failure", symbol)
+                        return PipelineRun(
+                            run_id=run_id, symbol=symbol, signal=signal,
+                            risk_decision=RiskDecision.reject(
+                                "broker stop placement failed — buy cancelled"
+                            ),
+                            outcome="blocked", order_id=client_order_id,
+                        )
 
         _env = "paper" if config.alpaca_paper else "LIVE"
         # "FILL" only when the fill is confirmed. An unconfirmed sell still holds the

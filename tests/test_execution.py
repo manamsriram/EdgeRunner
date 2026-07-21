@@ -586,3 +586,12 @@ def test_wait_for_fill_tolerates_lookup_errors(monkeypatch):
     assert order is not None
     assert order.status == "filled"
 
+
+def test_place_stop_order_raises_for_fractional_qty():
+    # Alpaca GTC stops must be whole shares; a fractional position must not be
+    # silently left unprotected.
+    with pytest.raises(ValueError, match="requires at least 1 whole share"):
+        _broker(FakeClient()).place_stop_order(
+            symbol="AAPL", qty=0.7, stop_price=90.0, client_order_id="stop-frac"
+        )
+
