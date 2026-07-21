@@ -404,9 +404,11 @@ class AlpacaBroker:
                 # re-place protection if the sell retry still fails. Without this, a
                 # failed retry leaves the position completely naked.
                 _pre_existing_stops = self._get_open_stop_sells(symbol)
+                _cancelled_ids: set[str] = set()
                 for oid in _get_related_order_ids(exc):
                     try:
                         client.cancel_order_by_id(oid)
+                        _cancelled_ids.add(str(oid))
                         logger.info("cancelled blocking order %s for %s sell", oid, symbol)
                     except Exception:
                         logger.warning("failed to cancel blocking order %s for %s", oid, symbol)
@@ -419,10 +421,14 @@ class AlpacaBroker:
                             if _insufficient_qty_available(retry_exc) is None or attempt == 2:
                                 raise
                 except Exception:
-                    # Sell retry failed; restore the protective stop(s) we removed so the
-                    # position is not left unprotected. Best-effort: log and continue if
-                    # re-placement also fails — we already surfaced the sell failure.
-                    self._replace_stops(symbol, _pre_existing_stops, suffix="restore")
+                    # Sell retry failed; restore only the stop(s) we actually cancelled so
+                    # the position is not left unprotected. Stops that were never cancelled
+                    # are still resting on the broker — re-placing them too would create
+                    # duplicate protection for the same shares.
+                    _stops_to_restore = [
+                        s for s in _pre_existing_stops if s["id"] in _cancelled_ids
+                    ]
+                    self._replace_stops(symbol, _stops_to_restore, suffix="restore")
                     raise
             if not ((_is_not_fractionable(exc) or _is_insuf) and whole_qty >= 1.0):
                 raise

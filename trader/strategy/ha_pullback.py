@@ -100,8 +100,13 @@ class HAPullback(Strategy):
         full_ha_close, full_ha_open = heikin_ashi_close_open(bars)
         full_atr = atr(bars["high"], bars["low"], bars["close"], self.atr_n)
 
-        # Scan backward from the most recent bar to find the latest entry signal.
-        for i in range(len(bars), min_bars - 1, -1):
+        # Scan backward from the bar before the current (live) one — a signal on
+        # the current bar is still forming and should not be treated as an
+        # established in-position entry on warm-up.
+        if len(bars) - 1 < min_bars:
+            return
+
+        for i in range(len(bars) - 1, min_bars - 1, -1):
             sub_bars = bars.iloc[:i]
             _, levels = self._evaluate_entry(
                 sub_bars,

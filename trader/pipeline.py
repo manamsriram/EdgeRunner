@@ -770,7 +770,6 @@ def _prepare_signal(
                 entry_price = state.avg_entry_prices.get(symbol, 0.0)
         else:
             entry_price = state.avg_entry_prices.get(symbol, 0.0)
-        _owner = state.position_owners.get((symbol, _pool))
         _base_stop = (
             config.risk.crypto_stop_loss_pct if is_crypto_symbol(symbol)
             else config.risk.stop_loss_pct
