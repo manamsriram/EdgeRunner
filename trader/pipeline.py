@@ -1195,6 +1195,14 @@ def _execute_signal(
                     )
                 except Exception:
                     logger.exception("stop order failed for %s — software stop remains active", symbol)
+                    send_alert(
+                        f"BROKER STOP FAILED {symbol}: position unprotected — "
+                        f"software stop still active",
+                        config.slack_webhook_url,
+                        alert_email=config.alert_email,
+                        smtp_user=config.smtp_user,
+                        smtp_password=config.smtp_password,
+                    )
 
         _env = "paper" if config.alpaca_paper else "LIVE"
         # "FILL" only when the fill is confirmed. An unconfirmed sell still holds the
