@@ -575,11 +575,22 @@ class AlpacaBroker:
                 return client.submit_order(order_data=request)
             except Exception as exc:  # noqa: BLE001 - inspect for known recoverable cases
                 if _is_duplicate_order(exc):
+                    existing = client.get_order_by_client_id(client_order_id)
+                    if _is_terminal_bad(existing):
+                        logger.warning(
+                            "client_order_id %s already maps to a %s order; "
+                            "treating as failure so caller can retry",
+                            client_order_id, getattr(existing, "status", "unknown"),
+                        )
+                        raise RuntimeError(
+                            f"existing order {client_order_id} was "
+                            f"{getattr(existing, 'status', 'unknown')}"
+                        ) from exc
                     logger.info(
                         "duplicate client_order_id %s; returning existing order",
                         client_order_id,
                     )
-                    return client.get_order_by_client_id(client_order_id)
+                    return existing
                 conflicting_id = _wash_trade_order_id(exc)
                 if conflicting_id:
                     logger.warning(
@@ -599,6 +610,12 @@ class AlpacaBroker:
 def _is_filled(order: Any) -> bool:
     status = str(getattr(order, "status", "")).lower()
     return "filled" in status
+
+
+def _is_terminal_bad(order: Any) -> bool:
+    """Return True for orders that are rejected, canceled, or expired."""
+    status = str(getattr(order, "status", "")).lower()
+    return status in {"rejected", "canceled", "expired"}
 
 
 def _is_duplicate_order(exc: Exception) -> bool:
