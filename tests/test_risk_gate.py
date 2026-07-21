@@ -161,6 +161,15 @@ def test_sell_with_position_approved(gate):
     assert decision.approved
 
 
+def test_sell_dust_position_is_approved(gate):
+    # Regression: a $5 position must be sellable. The old _NO_OP_EPSILON blocked
+    # sells below $10, trapping positions after a drawdown or fractional rounding.
+    intent = OrderIntent(symbol="AAPL", side="sell", notional=5.0, ref_price=100.0)
+    decision = gate.evaluate(intent, _state(positions={"AAPL": 0.05}))
+    assert decision.approved
+    assert decision.approved_notional == pytest.approx(5.0)
+
+
 def test_sell_notional_capped_to_held_value_no_short(gate):
     # Hold 5 sh * $100 = $500, but intent asks to sell $1000 — cap at held value.
     intent = OrderIntent(symbol="AAPL", side="sell", notional=1_000.0, ref_price=100.0)

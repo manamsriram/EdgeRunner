@@ -28,6 +28,8 @@ Side = str  # "buy" | "sell"
 
 # A buy sized to within this many dollars of the position cap is treated as a no-op
 # rather than a fill — avoids submitting dust orders that just churn commission.
+# Applies only to BUYs; sells must never be blocked by size minimums because a
+# position that has dropped below $10 in value would otherwise be trapped forever.
 _NO_OP_EPSILON = 10.0
 
 
@@ -360,7 +362,9 @@ class RiskGate:
                 return RiskDecision.reject(f"no {intent.symbol} position to sell")
             held_value = held * intent.ref_price
             approved = min(intent.notional, held_value)
-            if approved <= _NO_OP_EPSILON:
+            # Sizing a sell down to zero is the only true no-op; any positive
+            # notional for an existing position is an exit and must be allowed.
+            if approved <= 0.0:
                 return RiskDecision.reject("approved notional below minimum")
             return RiskDecision.approve(approved, "sell approved")
 
