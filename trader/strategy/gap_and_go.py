@@ -35,6 +35,11 @@ class GapAndGo(IntradayStrategy):
         self._entry_bar_open = float(bars["close"].iloc[-1]) if has_position else 0.0
         self._warmed_up = True
 
+    def reset_state(self) -> None:
+        self._entered = False
+        self._entry_bar_open = 0.0
+        self._entry_attempted = False
+
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
         _today = asof.date() if hasattr(asof, "date") else bars.index[-1].date()
         if self._last_session_date != _today:

@@ -100,6 +100,15 @@ class Strategy(ABC):
         """
         self._warmed_up = True
 
+    def reset_state(self) -> None:
+        """Reset any internal entry/exit tracking state.
+
+        Called by the pipeline when this strategy no longer owns the position in
+        its pool (e.g. after a manual exit, a stop triggered by another component,
+        or ownership transfer). Stateful strategies override this; the default is a
+        no-op.
+        """
+
     def generate(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
         if bars.empty:
             return Signal(self.symbol, "hold", 0.0, "no bar data")

@@ -32,6 +32,10 @@ class OpeningRangeBreakout(IntradayStrategy):
         self._entered = has_position
         self._warmed_up = True
 
+    def reset_state(self) -> None:
+        self._entered = False
+        self._exited = False
+
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
         _today = asof.date() if hasattr(asof, "date") else bars.index[-1].date()
         if self._last_session_date != _today:

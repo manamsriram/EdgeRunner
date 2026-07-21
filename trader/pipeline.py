@@ -367,6 +367,10 @@ def _advance_state(state, result, strategy, repo):
                     repo.clear_position_owner(result.symbol, pool)
                 except Exception:
                     logger.warning("failed to clear owner for %s/%s", result.symbol, pool)
+                # Confirmed sells (including EOD/stop exits injected by the pipeline)
+                # must reset the strategy's entry-tracking state immediately so a
+                # stale _entry_bar_ts / _entry_price cannot survive until the next tick.
+                strategy.reset_state()
             else:
                 # Sell submitted but fill unconfirmed — keep ownership so the owning
                 # strategy can still manage the position if the order never fills.
@@ -711,11 +715,11 @@ def _prepare_signal(
         # stateful exit tracking from bar history for symbols we still hold.
         # Only warm up as entered if this strategy owns the position; otherwise
         # mark warmed-up so non-owning strategies don't falsely set _entered.
+        _owner = state.position_owners.get((symbol, _pool))
         if not strategy._warmed_up:
             _has_position = symbol in state.positions and state.positions[symbol] > 0
             if _has_position:
-                _warm_owner = state.position_owners.get((symbol, _pool))
-                if _warm_owner is None or _warm_owner == type(strategy).__name__:
+                if _owner is None or _owner == type(strategy).__name__:
                     strategy.warm_up(bars, has_position=True)
                 else:
                     strategy._warmed_up = True
@@ -723,6 +727,12 @@ def _prepare_signal(
                 # No open position: just mark warmed up so the strategy can start
                 # generating fresh entry signals on the next tick.
                 strategy._warmed_up = True
+
+        # If this strategy is not the recorded owner of the position in this pool,
+        # reset any stale entry-tracking state so it can generate fresh entries
+        # signals instead of trying to manage a position it does not own.
+        if _owner is not None and _owner != type(strategy).__name__:
+            strategy.reset_state()
 
         current_price = (live_prices or {}).get(symbol) or float(bars["close"].iloc[-1])
         # Anchor to the highest price paid across open lots, not the broker's averaged
