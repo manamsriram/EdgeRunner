@@ -93,16 +93,24 @@ class HAPullback(Strategy):
         if len(bars) < min_bars:
             return
 
-        # Pre-compute SMAs once and slice backward to avoid O(N^2) recalculation.
+        # Pre-compute indicators once and slice backward to avoid O(N^2) work
+        # inside the backward scan.
         full_sma_fast = sma(bars["close"], self.fast)
         full_sma_slow = sma(bars["close"], self.slow)
+        full_ha_close, full_ha_open = heikin_ashi_close_open(bars)
+        full_atr = atr(bars["high"], bars["low"], bars["close"], self.atr_n)
 
         # Scan backward from the most recent bar to find the latest entry signal.
         for i in range(len(bars), min_bars - 1, -1):
             sub_bars = bars.iloc[:i]
-            sub_fast = full_sma_fast.iloc[:i]
-            sub_slow = full_sma_slow.iloc[:i]
-            _, levels = self._evaluate_entry(sub_bars, sub_fast, sub_slow)
+            _, levels = self._evaluate_entry(
+                sub_bars,
+                full_sma_fast.iloc[:i],
+                full_sma_slow.iloc[:i],
+                ha_close=full_ha_close.iloc[:i],
+                ha_open=full_ha_open.iloc[:i],
+                atr_val=full_atr.iloc[:i],
+            )
             if levels is not None:
                 self._entry_price, self._stop, self._target = levels
                 return
@@ -112,8 +120,16 @@ class HAPullback(Strategy):
         bars: pd.DataFrame,
         sma_fast: pd.Series,
         sma_slow: pd.Series,
+        *,
+        ha_close: pd.Series | None = None,
+        ha_open: pd.Series | None = None,
+        atr_val: pd.Series | None = None,
     ) -> tuple[Signal, tuple[float, float, float] | None]:
-        """Return the buy signal and (entry, stop, target) if entry criteria are met."""
+        """Return the buy signal and (entry, stop, target) if entry criteria are met.
+
+        `ha_close`, `ha_open`, and `atr_val` may be precomputed for the bars to
+        avoid redundant work during warm_up backward scans.
+        """
         close = bars["close"]
         curr_close = float(close.iloc[-1])
         curr_fast = float(sma_fast.iloc[-1])
@@ -142,20 +158,23 @@ class HAPullback(Strategy):
         if not pullback_done:
             return Signal(self.symbol, "hold", 0.0, "awaiting pullback to fast SMA"), None
 
-        ha_close, ha_open = heikin_ashi_close_open(bars.iloc[-self.slow:])
+        if ha_close is None or ha_open is None:
+            ha_close, ha_open = heikin_ashi_close_open(bars.iloc[-self.slow:])
         curr_ha_close = float(ha_close.iloc[-1])
         curr_ha_open = float(ha_open.iloc[-1])
         ha_bull = curr_ha_close > curr_ha_open
         if not (ha_bull and curr_ha_close > curr_fast and curr_close > curr_slow):
             return Signal(self.symbol, "hold", 0.0, "awaiting HA bull confirmation above fast SMA"), None
 
-        atr_val = float(atr(bars["high"], bars["low"], close, self.atr_n).iloc[-1])
-        if pd.isna(atr_val) or atr_val <= 0:
+        if atr_val is None:
+            atr_val = atr(bars["high"], bars["low"], close, self.atr_n)
+        curr_atr = float(atr_val.iloc[-1])
+        if pd.isna(curr_atr) or curr_atr <= 0:
             return Signal(self.symbol, "hold", 0.0, "ATR not yet defined"), None
 
         entry = curr_close
-        stop = curr_close - self.atr_mult * atr_val
-        target = curr_close + self.rr * self.atr_mult * atr_val
+        stop = curr_close - self.atr_mult * curr_atr
+        target = curr_close + self.rr * self.atr_mult * curr_atr
 
         spread = (curr_close - curr_slow) / curr_slow if curr_slow != 0 else 0.0
         strength = float(min(max(abs(spread) * 10.0, 0.3), 1.0))
