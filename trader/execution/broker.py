@@ -350,6 +350,7 @@ class AlpacaBroker:
         notional: float | None = None,
         qty: float | None = None,
         ref_price: float | None = None,
+        sell_limit_floor_pct: float | None = None,
     ) -> Any:
         """Place an order, exactly one of `notional` (dollars) or `qty` (shares).
 
@@ -357,8 +358,13 @@ class AlpacaBroker:
         restricts notional sells. Idempotent: a duplicate client_order_id is swallowed.
 
         When ORDER_TYPE=limit and ref_price is supplied, buy orders are placed as DAY
-        limit orders at the bid/ask mid. Sells always use market orders for reliable exits.
-        If a limit buy doesn't fill by EOD it cancels; the next tick retries.
+        limit orders at the bid/ask mid. Sells default to market orders for reliable
+        exits, UNLESS `sell_limit_floor_pct` is supplied (the software stop-loss path) —
+        then the sell is a DAY limit at `ref_price * (1 - sell_limit_floor_pct)`, so a
+        gap-down on a thin name can't blow past that floor (2026-07-22: EXYNW/NOWL/UWMC
+        market-sold 17-55% past the stop trigger on gap-downs). If the limit doesn't
+        fill, the position stays open and the next tick's stop check re-fires at the
+        new current price — chasing down in capped steps instead of one unbounded fill.
 
         Non-fractionable assets reject notional orders (Alpaca code 40310000). When
         ref_price is supplied, such rejections retry once as whole-share qty orders.
@@ -369,17 +375,30 @@ class AlpacaBroker:
             raise ValueError("pass exactly one of notional or qty")
         client = self._ensure_client()
 
-        use_limit = (
+        use_buy_limit = (
             side == "buy"
             and self._config.order_type == "limit"
             and ref_price is not None
             and ref_price > 0
             and "/" not in symbol  # crypto only supports market on Alpaca
         )
-        if use_limit:
+        use_sell_limit = (
+            side == "sell"
+            and sell_limit_floor_pct is not None
+            and ref_price is not None
+            and ref_price > 0
+            and "/" not in symbol  # crypto only supports market on Alpaca
+        )
+        if use_buy_limit:
             request = _build_limit_order_request(
                 symbol=symbol, side=side, client_order_id=client_order_id,
                 notional=notional, qty=qty, limit_price=ref_price,
+            )
+        elif use_sell_limit:
+            request = _build_limit_order_request(
+                symbol=symbol, side=side, client_order_id=client_order_id,
+                notional=notional, qty=qty,
+                limit_price=ref_price * (1 - sell_limit_floor_pct),
             )
         else:
             request = self._request_builder(

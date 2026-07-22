@@ -1064,12 +1064,21 @@ def _execute_signal(
         # sell never strips the stop off a position we're still holding.
         if _sell_needs_stop_cancel:
             broker.cancel_open_stops(symbol)
+        # Software stop-loss sells get a limit floor so a gap-down on a thin name can't
+        # slip past it unbounded (see broker.submit docstring) — same cap already used
+        # for the resting broker-side GTC stop.
+        _sell_limit_floor_pct = (
+            config.risk.stop_limit_slippage_pct
+            if signal.side == "sell" and signal.reason.startswith("stop-loss")
+            else None
+        )
         order = broker.submit(
             symbol=symbol, side=signal.side,
             client_order_id=client_order_id,
             notional=risk_decision.approved_notional if signal.side == "buy" else None,
             qty=qty if signal.side == "sell" else None,
             ref_price=ref_price,
+            sell_limit_floor_pct=_sell_limit_floor_pct,
         )
         broker_order_id = str(getattr(order, "id", "") or "")
         regime = classify_regime(bars)

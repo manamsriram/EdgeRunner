@@ -253,6 +253,31 @@ def test_not_fractionable_reraises_without_ref_price():
         )
 
 
+def test_stop_loss_sell_uses_limit_floor_not_unbounded_market():
+    """Software stop-loss sells (sell_limit_floor_pct set) must submit a DAY limit at
+    ref_price*(1-floor), not a market order — a gap-down on a thin name (2026-07-22:
+    EXYNW/NOWL/UWMC) must not slip past that floor the way a market sell would."""
+    client = FakeClient()
+    order = _broker(client).submit(
+        symbol="EXYNW", side="sell", qty=100.0, ref_price=1.00,
+        sell_limit_floor_pct=0.03, client_order_id="stop-sell-1",
+    )
+    assert order.limit_price == 0.97
+    assert order.qty == 100.0
+    assert order.time_in_force.value == "day"
+
+
+def test_plain_sell_without_floor_still_uses_market_request_builder():
+    """No sell_limit_floor_pct => falls through to the injected request builder (market),
+    unchanged behavior for normal signal-exit/eod-exit sells."""
+    client = FakeClient()
+    order = _broker(client).submit(
+        symbol="AAPL", side="sell", qty=10.0, ref_price=200.0,
+        client_order_id="plain-sell-1",
+    )
+    assert not hasattr(order, "limit_price")
+
+
 def test_submit_rejects_bad_side():
     with pytest.raises(ValueError):
         _broker(FakeClient()).submit(
