@@ -483,6 +483,46 @@ def test_auto_mode_sell_records_trade_outcome(tmp_path):
     assert outcomes[0]["exit_reason"] == "signal-exit"
 
 
+def test_stop_loss_escalates_to_market_after_unfilled_window(tmp_path):
+    """A stop-loss limit sell that's been resting unfilled past the escalation
+    window must be re-submitted as a market order under a new client_order_id —
+    the same client_order_id would just return the stale resting limit order
+    (idempotent dedup), never re-pricing it closer to the market."""
+    import dataclasses
+    import sqlite3
+    from datetime import timedelta
+
+    from trader.portfolio.repository import OrderRow
+
+    cfg = _config(tmp_path, autonomy="auto")
+    cfg = dataclasses.replace(
+        cfg, risk=dataclasses.replace(cfg.risk, stop_loss_escalation_minutes=5.0)
+    )
+    state = AccountState(
+        equity=100_000.0, positions={_SYMBOL: 10.0},
+        open_order_symbols=frozenset(), trades_today=0, daily_pnl_pct=0.0,
+        stale=False, cash=100_000.0, avg_entry_prices={_SYMBOL: 300.0},  # deep drawdown vs _BARS
+    )
+
+    repo = SQLiteRepository(cfg.portfolio_db_path)
+    repo.record_order(OrderRow(
+        client_order_id="stale-stop-sell", symbol=_SYMBOL, side="sell",
+        notional=1000.0, status="submitted", strategy_name="_FixedStrategy",
+    ))
+    stale_ts = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    with sqlite3.connect(cfg.portfolio_db_path) as conn:
+        conn.execute("UPDATE orders SET ts=? WHERE client_order_id=?", (stale_ts, "stale-stop-sell"))
+        conn.commit()
+
+    results, _repo2, broker = _run([_FixedStrategy(_SYMBOL, "hold")], cfg, state=state)
+
+    assert results[0].outcome == "executed"
+    assert len(broker._client.submitted) == 1
+    submitted = broker._client.submitted[0]
+    assert not hasattr(submitted, "limit_price")  # market order, not the capped limit
+    assert submitted.client_order_id != "stale-stop-sell"
+
+
 def test_manual_mode_queued_sell_records_no_trade_outcome(tmp_path):
     """A manual-mode 'queued' proposal is not a real fill — recording an outcome
     here would feed fabricated P&L into cooldown/trade-memory. Locks in the v1 scope

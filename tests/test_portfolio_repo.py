@@ -123,6 +123,40 @@ def test_highest_buy_price_picks_max_across_open_lots(repo):
     assert repo.get_highest_buy_price("AAPL") == 100.0
 
 
+def test_get_pending_sell_order_none_when_no_orders(repo):
+    assert repo.get_pending_sell_order("AAPL") is None
+
+
+def test_get_pending_sell_order_ignores_filled_and_other_symbols(repo):
+    repo.record_order(OrderRow("p1", "AAPL", "sell", 1000.0, "filled"))
+    repo.record_order(OrderRow("p2", "MSFT", "sell", 1000.0, "submitted"))
+    assert repo.get_pending_sell_order("AAPL") is None
+
+
+def test_get_pending_sell_order_returns_most_recent_submitted(repo):
+    repo.record_order(OrderRow("p3", "AAPL", "sell", 1000.0, "submitted"))
+    repo.record_order(OrderRow("p4", "AAPL", "sell", 1000.0, "submitted"))
+    pending = repo.get_pending_sell_order("AAPL")
+    assert pending["client_order_id"] == "p4"
+
+
+def test_get_pending_sell_order_status_update_does_not_change_original_ts():
+    """record_order's ON CONFLICT upsert only touches status — ts must stay pinned
+    to the order's original submit time so the pipeline can measure how long a
+    stop-loss limit has actually been resting unfilled at the broker."""
+    import time as _time
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        repo = SQLiteRepository(f"{d}/portfolio.db")
+        repo.record_order(OrderRow("p5", "AAPL", "sell", 1000.0, "submitted"))
+        first_ts = repo.get_pending_sell_order("AAPL")["ts"]
+        _time.sleep(0.05)
+        repo.record_order(OrderRow("p5", "AAPL", "sell", 1000.0, "submitted"))
+        second_ts = repo.get_pending_sell_order("AAPL")["ts"]
+        assert first_ts == second_ts
+
+
 def test_highest_buy_price_ignores_lots_closed_by_a_prior_sell(repo):
     repo.record_order(OrderRow("h3", "AAPL", "buy", 1000.0, "filled", fill_price=120.0))
     repo.record_order(OrderRow("h4", "AAPL", "sell", 1000.0, "filled", fill_price=110.0))

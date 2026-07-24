@@ -361,6 +361,17 @@ class PostgresRepository(PortfolioRepository):
                 )
                 return [dict(r) for r in cur.fetchall()]
 
+    def get_pending_sell_order(self, symbol: str) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM orders WHERE symbol=%s AND side='sell' "
+                    "AND status='submitted' ORDER BY id DESC LIMIT 1",
+                    (symbol,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
     def get_highest_buy_price(self, symbol: str) -> float | None:
         with self._connect() as conn:
             with conn.cursor() as cur:

@@ -339,6 +339,15 @@ class SQLiteRepository(PortfolioRepository):
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_pending_sell_order(self, symbol: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM orders WHERE symbol=? AND side='sell' "
+                "AND status='submitted' ORDER BY id DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def get_highest_buy_price(self, symbol: str) -> float | None:
         with self._connect() as conn:
             row = conn.execute(

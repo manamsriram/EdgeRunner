@@ -70,6 +70,15 @@ class RiskLimits:
     # bounded to one tick's worth of slippage instead of unbounded. Default 2026-07-21:
     # VSH/UXIN/TSLL stop-market fills landed 2-3x past the configured 8% stop.
     stop_limit_slippage_pct: float = 0.03    # env: STOP_LIMIT_SLIPPAGE_PCT
+    # A stop-loss DAY limit order that never fills leaves the position open and
+    # underwater indefinitely — the resting order's client_order_id is stable for the
+    # whole trading day (idempotent retries return the SAME order, they don't re-price
+    # it), so the only way it moves is the next day's fresh limit at a new, lower floor.
+    # Observed 2026-07-23: SuperTrend stop-loss exits still averaging ~-16% vs the
+    # configured 8% even after the floor-cap fix. Escalate to a market order once the
+    # limit has rested unfilled past this window, so a bad fill is bounded and prompt
+    # instead of drifting for days.
+    stop_loss_escalation_minutes: float = 10.0  # env: STOP_LOSS_ESCALATION_MINUTES
     # Dynamic universe — replaces static allowlist with Alpaca daily screener
     dynamic_universe: bool = False          # True → use screener (env: DYNAMIC_UNIVERSE)
     universe_size: int = 100               # max symbols per day (env: UNIVERSE_SIZE)
@@ -230,6 +239,7 @@ def load_config() -> Config:
             require_spread_data=_env_bool("REQUIRE_SPREAD_DATA", False),
             require_broker_stop=_env_bool("REQUIRE_BROKER_STOP", False),
             stop_limit_slippage_pct=float(os.getenv("STOP_LIMIT_SLIPPAGE_PCT", "0.03")),
+            stop_loss_escalation_minutes=float(os.getenv("STOP_LOSS_ESCALATION_MINUTES", "10.0")),
             min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
             block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
         ),

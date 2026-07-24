@@ -1055,8 +1055,38 @@ def _execute_signal(
             )
 
         today = asof.date() if isinstance(asof, datetime) else asof
+        _is_stop_loss_sell = signal.side == "sell" and signal.reason.startswith("stop-loss")
+        # A stop-loss DAY limit order's client_order_id is stable for the whole trading
+        # day, so an unfilled retry just returns the SAME resting order — it never
+        # re-prices closer to the market. If it's been sitting unfilled past the
+        # escalation window, force the exit with a market order instead of leaving the
+        # position to drift, possibly for days, until a fresh (still-capped) limit at
+        # the next day's lower floor. Uses a distinct client_order_id so this is a new
+        # order, not a duplicate of the stale resting one.
+        _escalate_to_market = False
+        if _is_stop_loss_sell:
+            try:
+                pending = repo.get_pending_sell_order(symbol)
+                if pending and pending.get("ts"):
+                    pending_ts = datetime.fromisoformat(pending["ts"])
+                    if pending_ts.tzinfo is None:
+                        pending_ts = pending_ts.replace(tzinfo=timezone.utc)
+                    elapsed_minutes = (datetime.now(timezone.utc) - pending_ts).total_seconds() / 60.0
+                    if elapsed_minutes >= config.risk.stop_loss_escalation_minutes:
+                        _escalate_to_market = True
+                        logger.warning(
+                            "stop-loss limit for %s unfilled %.1fm (>= %.1fm) — "
+                            "escalating to market order",
+                            symbol, elapsed_minutes, config.risk.stop_loss_escalation_minutes,
+                        )
+            except Exception:
+                logger.warning(
+                    "failed to check pending sell order for %s — no escalation this tick",
+                    symbol,
+                )
         client_order_id = client_order_id_for(
-            today, symbol, signal.side, type(strategy).__name__
+            today, symbol, signal.side,
+            f"{type(strategy).__name__}-escalated" if _escalate_to_market else type(strategy).__name__,
         )
         qty = state.positions.get(symbol, 0.0) if signal.side == "sell" else None
         # Now that the sell is approved, cancel the resting protective stop so it can't
@@ -1066,10 +1096,11 @@ def _execute_signal(
             broker.cancel_open_stops(symbol)
         # Software stop-loss sells get a limit floor so a gap-down on a thin name can't
         # slip past it unbounded (see broker.submit docstring) — same cap already used
-        # for the resting broker-side GTC stop.
+        # for the resting broker-side GTC stop. Escalated sells skip the floor entirely
+        # (plain market order) since the limit path already had its chance and failed.
         _sell_limit_floor_pct = (
             config.risk.stop_limit_slippage_pct
-            if signal.side == "sell" and signal.reason.startswith("stop-loss")
+            if _is_stop_loss_sell and not _escalate_to_market
             else None
         )
         order = broker.submit(

@@ -193,6 +193,14 @@ class PortfolioRepository(ABC):
         back to the broker's average cost basis."""
 
     @abstractmethod
+    def get_pending_sell_order(self, symbol: str) -> dict | None:
+        """Most recent side='sell' order for symbol still at status='submitted'
+        (not yet confirmed filled), or None. `ts` is the order's original submit
+        time — same-day idempotent retries reuse the client_order_id and do not
+        bump it, so `ts` reflects how long this exact order has been resting
+        unfilled at the broker. Used by the stop-loss escalation check."""
+
+    @abstractmethod
     def record_trade_outcome(self, outcome: TradeOutcomeRow) -> int: ...
 
     @abstractmethod
