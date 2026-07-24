@@ -437,8 +437,25 @@ class AlpacaBroker:
                         try:
                             return self._submit_idempotent(client, request, client_order_id)
                         except Exception as retry_exc:
-                            if _insufficient_qty_available(retry_exc) is None or attempt == 2:
+                            avail = _insufficient_qty_available(retry_exc)
+                            if avail is None:
                                 raise
+                            if attempt == 2:
+                                # Cancelling the blocking order(s) didn't free up the full
+                                # requested qty (e.g. WEN: requested 129.0554, available
+                                # 128.0554 stayed put) — sell what's actually there instead
+                                # of failing outright and leaving the position unprotected.
+                                if avail <= 0:
+                                    raise
+                                request = self._request_builder(
+                                    symbol=symbol, side=side, client_order_id=client_order_id,
+                                    notional=None, qty=avail,
+                                )
+                                logger.info(
+                                    "%s sell still short after cancel+retry; clamping qty "
+                                    "to available %.6f", symbol, avail,
+                                )
+                                return self._submit_idempotent(client, request, client_order_id)
                 except Exception:
                     # Sell retry failed; restore only the stop(s) we actually cancelled so
                     # the position is not left unprotected. Stops that were never cancelled
@@ -770,8 +787,12 @@ def _wash_trade_order_id(exc: Exception) -> str | None:
         return None
 
 
-def _insufficient_qty_available(exc: Exception) -> int | None:
-    """Return available int qty from Alpaca 'insufficient qty' error payload, or None."""
+def _insufficient_qty_available(exc: Exception) -> float | None:
+    """Return available qty from Alpaca 'insufficient qty' error payload, or None.
+
+    Kept as a float (not truncated to int) since fractional-share positions report
+    fractional availability, e.g. 128.055406422 — truncating would still overshoot it.
+    """
     import json
     text = str(exc)
     if "insufficient qty" not in text.lower():
@@ -780,7 +801,7 @@ def _insufficient_qty_available(exc: Exception) -> int | None:
         start = text.index("{")
         payload = json.loads(text[start:])
         val = payload.get("available")
-        return int(float(val)) if val is not None else None
+        return float(val) if val is not None else None
     except (TypeError, ValueError, KeyError):
         return None
 
