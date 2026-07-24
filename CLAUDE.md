@@ -39,7 +39,7 @@ For **local standalone** use (e.g. testing without the web server):
 rtk proxy venv/bin/python -m trader.scheduler
 ```
 
-Requires `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` in `.env`. Polls every 60 s; skips ticks when market is closed.
+Requires `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` in `.env`. Two independent poll loops run inside the same process: equity scheduler polls every 60 s and skips ticks when market is closed; crypto scheduler polls every 5 min and runs 24/7 (`trader/scheduler.py:145,271`).
 
 ## Tests
 
