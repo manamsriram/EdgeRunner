@@ -47,16 +47,26 @@ def test_no_dip_holds() -> None:
 
 
 def test_dip_triggers_buy() -> None:
-    closes = [100.0] * MIN_BARS + [89.0]  # 11% below the 100 ATH
+    # 11% below the 100 ATH, then an uptick bar to confirm the fall has paused.
+    closes = [100.0] * MIN_BARS + [89.0, 90.0]
     bars = _bars(closes)
     signal = DipRecovery("TEST").generate(bars, bars.index[-1])
     assert signal.side == "buy"
     assert signal.strength > 0.0
 
 
+def test_dip_without_uptick_holds() -> None:
+    # Deep enough drawdown, but still falling on the current bar — must wait
+    # for confirmation instead of catching the falling knife.
+    closes = [100.0] * MIN_BARS + [92.0, 89.0]
+    bars = _bars(closes)
+    signal = DipRecovery("TEST").generate(bars, bars.index[-1])
+    assert signal.side == "hold"
+
+
 def test_deeper_dip_raises_strength() -> None:
-    shallow = _bars([100.0] * MIN_BARS + [89.0])
-    deep = _bars([100.0] * MIN_BARS + [75.0])
+    shallow = _bars([100.0] * MIN_BARS + [89.0, 90.0])
+    deep = _bars([100.0] * MIN_BARS + [75.0, 76.0])
     strat = DipRecovery("TEST")
     s_shallow = strat.generate(shallow, shallow.index[-1])
     s_deep = strat.generate(deep, deep.index[-1])
@@ -129,7 +139,8 @@ def _wild_then_quiet_decline_bars() -> pd.DataFrame:
     history = []
     for _ in range(150):
         history += [0.02, 1.0 / 1.02 - 1.0]
-    decline = [-0.00184] * 40
+    # Final bar upticks slightly to confirm the fall has paused.
+    decline = [-0.00184] * 39 + [0.001]
     return _bars(_closes_from_returns(history + decline))
 
 
@@ -208,28 +219,28 @@ def test_smooth_window_none_matches_unsmoothed_default() -> None:
 
 
 def test_smoothing_damps_single_bar_noise_below_trigger() -> None:
-    # One noisy bar dips 11% intraday-close but the surrounding bars sit at the
-    # ATH — raw drawdown crosses the 10% trigger on that single bar, a 5-bar
-    # rolling mean should not (it's mostly zeros).
-    closes = [100.0] * MIN_BARS + [89.0] + [100.0] * 4
+    # Two noisy bars dip ~10.5% intraday-close but the surrounding bars sit at
+    # the ATH — raw drawdown crosses the 10% trigger on the uptick bar that
+    # confirms the dip, a 5-bar rolling mean should not (it's mostly zeros).
+    closes = [100.0] * MIN_BARS + [89.0, 89.5] + [100.0] * 3
     bars = _bars(closes)
-    raw = DipRecovery("TEST").generate(bars, bars.index[-5])  # the noisy bar itself
-    smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-5])
+    raw = DipRecovery("TEST").generate(bars, bars.index[-4])  # the uptick bar
+    smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-4])
     assert raw.side == "buy"
     assert smoothed.side == "hold"
 
 
 def test_sustained_dip_still_triggers_when_smoothed() -> None:
     # A real, sustained drawdown should still cross the threshold once smoothed
-    # over the same window it dipped for.
-    closes = [100.0] * MIN_BARS + [89.0] * 5
+    # over the same window it dipped for. Final bar upticks to confirm the dip.
+    closes = [100.0] * MIN_BARS + [89.0] * 4 + [89.5]
     bars = _bars(closes)
     smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-1])
     assert smoothed.side == "buy"
 
 
 def test_ewma_smooth_window_accepted() -> None:
-    closes = [100.0] * MIN_BARS + [89.0] * 8
+    closes = [100.0] * MIN_BARS + [89.0] * 7 + [89.5]
     bars = _bars(closes)
     signal = DipRecovery("TEST", smooth_window=4.0).generate(bars, bars.index[-1])
     assert signal.side == "buy"

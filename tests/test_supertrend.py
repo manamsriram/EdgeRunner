@@ -82,6 +82,54 @@ def test_sell_signal_in_downtrend():
     assert sig.side == "sell"
 
 
+# ---- ADX-rising filter -------------------------------------------------------
+
+def test_hold_when_adx_falling_even_above_threshold():
+    # Sharp initial trend (ADX shoots up) followed by a choppy near-flat
+    # continuation (ADX decays back down) while still technically an uptrend —
+    # a late entry into an already-exhausting trend must be rejected.
+    n = 80
+    closes = list(100.0 + np.arange(30) * 3.0)  # steep run-up, ADX climbs hard
+    last = closes[-1]
+    for i in range(n - 30):
+        last += 0.3 if i % 2 == 0 else -0.25  # choppy, barely-positive drift
+        closes.append(last)
+    bars = _make_bars(closes)
+    sig = SuperTrend("X", atr_n=14, multiplier=3.0, adx_threshold=20.0).generate(
+        bars, bars.index[-1]
+    )
+    assert sig.side == "hold"
+    assert "falling" in sig.reason
+
+
+# ---- re-entry cooldown --------------------------------------------------------
+
+def test_cooldown_blocks_immediate_reentry_after_exit():
+    bars = _uptrend_bars(n=80)
+    strat = SuperTrend("X", atr_n=14, multiplier=3.0, adx_threshold=20.0, reentry_cooldown_bars=3)
+    sig = strat.generate(bars, bars.index[-1])
+    assert sig.side == "buy"
+
+    strat.reset_state()  # pipeline calls this on every confirmed exit
+    sig2 = strat.generate(bars, bars.index[-1])
+    assert sig2.side == "hold"
+    assert "cooldown" in sig2.reason
+
+
+def test_cooldown_expires_after_n_bars():
+    bars = _uptrend_bars(n=80)
+    strat = SuperTrend("X", atr_n=14, multiplier=3.0, adx_threshold=20.0, reentry_cooldown_bars=2)
+    strat.generate(bars, bars.index[-1])
+    strat.reset_state()
+
+    for _ in range(2):
+        sig = strat.generate(bars, bars.index[-1])
+        assert sig.side == "hold"
+
+    sig = strat.generate(bars, bars.index[-1])
+    assert sig.side == "buy"
+
+
 # ---- empty data -------------------------------------------------------------
 
 def test_empty_bars_returns_hold():

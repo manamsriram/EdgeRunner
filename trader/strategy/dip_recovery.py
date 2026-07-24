@@ -113,6 +113,18 @@ class DipRecovery(Strategy):
         buy_drawdown, smooth_tag = self._buy_drawdown(bars, drawdown)
 
         if buy_drawdown >= dip_pct:
+            prev_close = float(bars["close"].iloc[-2])
+            if curr_close <= prev_close:
+                # Drawdown is deep enough but price is still falling — buying now
+                # is catching the knife mid-drop, not the dip. Wait for an uptick
+                # (a bar that closes higher than the one before it) so the entry
+                # confirms the decline has actually paused before committing capital.
+                return Signal(
+                    self.symbol, "hold", 0.0,
+                    f"drawdown {buy_drawdown:.1%} >= {dip_pct:.0%} but still falling "
+                    f"(close {curr_close:.2f} <= prior {prev_close:.2f}), waiting for uptick"
+                    f"{regime_tag}{smooth_tag}",
+                )
             # Deeper dips earn more conviction; 2x the trigger depth maxes out.
             strength = float(min(buy_drawdown / (2.0 * dip_pct), 1.0))
             return Signal(
