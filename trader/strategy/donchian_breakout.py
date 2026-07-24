@@ -53,10 +53,21 @@ class DonchianBreakout(Strategy):
     def warm_up(self, bars: pd.DataFrame, *, has_position: bool = True) -> None:
         """Reconstruct entry state by scanning bar history after a cold start.
 
-        Walks backward up to `time_exit` bars looking for the most recent fresh
+        Walks backward through all available bars looking for the most recent fresh
         Donchian breakout. If found, restores _entry_bar_ts and _entry_bar_low so
         time-exit and quick-exit logic resumes correctly rather than treating the
         position as a new entry opportunity.
+
+        The scan is NOT bounded to `time_exit` bars — a restart can happen (and on
+        this deployment, does happen, via frequent auto-deploys) long after the real
+        entry bar. Bounding the scan to `time_exit` meant any entry older than that
+        was silently un-trackable: _entry_bar_ts stayed None forever, exit logic
+        never ran again for that position, and a later fresh breakout would just
+        re-buy on top of it (observed in production: symbols bought 5x, sold 0x).
+        If no breakout is found anywhere in the available history, the position
+        predates the fetched window entirely — anchor to the oldest usable bar so
+        the time-exit check fires on the very next tick instead of orphaning the
+        position forever.
         """
         if not has_position:
             self._warmed_up = True
@@ -73,7 +84,7 @@ class DonchianBreakout(Strategy):
 
         close = bars["close"]
         low = bars["low"]
-        scan_limit = min(self.time_exit, len(bars) - min_bars)
+        scan_limit = len(bars) - min_bars
 
         # Only reconstruct entries that happened before the current (live) bar.
         # A breakout on the current bar is still forming and should not be
@@ -104,6 +115,14 @@ class DonchianBreakout(Strategy):
                 self._entry_bar_ts = bars.index[i]
                 self._entry_bar_low = float(sublow.iloc[-1])
                 break
+        else:
+            # No breakout found anywhere in the fetched history — the position was
+            # opened before the window we can see. Anchor to the oldest usable bar
+            # so bars_held is already >= time_exit and _decide() force-exits on the
+            # next tick rather than leaving the position untracked indefinitely.
+            i = len(bars) - scan_limit
+            self._entry_bar_ts = bars.index[i]
+            self._entry_bar_low = float(low.iloc[i])
 
         self._warmed_up = True
 

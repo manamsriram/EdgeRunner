@@ -132,6 +132,47 @@ def test_quick_exit_when_close_drops_below_entry_low():
     assert sig2.side == "sell"
 
 
+# ---- warm_up (cold-start reconstruction) -------------------------------------
+
+def test_warm_up_reconstructs_entry_older_than_time_exit():
+    """A restart can happen well after time_exit bars have already elapsed since
+    entry (frequent deploys). warm_up must still find that older breakout and
+    hand it straight to an immediate time-exit, not lose track of it forever."""
+    bars = _breakout_bars(n=70)
+    last_close = float(bars["close"].iloc[-1])
+    # 15 more flat bars after the breakout — real entry is now 15 bars back,
+    # beyond the old `time_exit`-bounded scan window (default time_exit=10).
+    new_dates = pd.date_range(bars.index[-1] + pd.tseries.offsets.BDay(1), periods=15, freq="B")
+    extra = pd.DataFrame({
+        "open": last_close, "high": last_close + 0.5,
+        "low": last_close - 0.3, "close": last_close, "volume": 1_000_000,
+    }, index=new_dates)
+    extended = pd.concat([bars, extra])
+
+    strat = DonchianBreakout("X", channel_n=20, trend_n=20, time_exit=10)
+    strat.warm_up(extended, has_position=True)
+    assert strat._entry_bar_ts == bars.index[-1]
+
+    sig = strat.generate(extended, extended.index[-1])
+    assert sig.side == "sell"
+
+
+def test_warm_up_force_exits_position_predating_fetched_window():
+    """If the position was opened before the fetched bar window even starts (no
+    breakout visible anywhere in history), warm_up must not leave it untracked
+    forever — it should anchor old enough to force an exit on the next tick."""
+    n = 60
+    closes = list(np.linspace(100.0, 105.0, n))  # slow grind, no breakout anywhere
+    bars = _make_bars(closes)
+
+    strat = DonchianBreakout("X", channel_n=20, trend_n=20, time_exit=10)
+    strat.warm_up(bars, has_position=True)
+    assert strat._entry_bar_ts is not None
+
+    sig = strat.generate(bars, bars.index[-1])
+    assert sig.side == "sell"
+
+
 # ---- empty data -------------------------------------------------------------
 
 def test_empty_bars_returns_hold():
