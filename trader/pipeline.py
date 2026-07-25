@@ -987,6 +987,29 @@ def _execute_signal(
                 outcome="blocked",
             )
 
+        # A full universe sweep can take minutes, so the scheduler's tick-start clock
+        # check can go stale by the time a late symbol reaches here — silently
+        # submitting a DAY order after the bell, which Alpaca just rolls into the next
+        # session. Re-check right before acting so "intraday" strategies actually exit
+        # same-day instead of carrying an unplanned overnight position.
+        if not is_crypto_symbol(symbol):
+            try:
+                market_still_open = bool(broker._ensure_client().get_clock().is_open)
+            except Exception:
+                logger.exception("clock re-check failed for %s — treating as closed", symbol)
+                market_still_open = False
+            if not market_still_open:
+                logger.warning(
+                    "%s: market closed since this tick started — deferring %s to next "
+                    "session instead of submitting a DAY order that would roll over silently",
+                    symbol, signal.side,
+                )
+                return PipelineRun(
+                    run_id=run_id, symbol=symbol, signal=signal,
+                    risk_decision=RiskDecision.reject("market closed mid-tick — deferred"),
+                    outcome="blocked",
+                )
+
         ref_price = (live_prices or {}).get(signal.symbol) or float(bars["close"].iloc[-1])
 
         # CSP-on-dip / Wheel entry: a DipRecovery-family buy signal on an
