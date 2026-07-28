@@ -37,7 +37,7 @@ class DipRecovery(Strategy):
     Parameters
     ----------
     symbol:         ticker symbol
-    dip_pct:        drawdown from prior ATH that triggers a buy (default 0.10)
+    dip_pct:        drawdown from prior ATH that triggers a buy (default 0.20)
     expansion_pct:  recovery above prior ATH that triggers the exit (default 0.05)
     regime_params:  optional {regime: (dip_pct, expansion_pct)} table. When set,
                     the volatility regime is classified from the bars each call
@@ -53,14 +53,24 @@ class DipRecovery(Strategy):
     """
 
     # Buys into drawdown by design, so the normal 8% stop would exit almost every
-    # entry immediately. Widen to a catastrophe stop (~16%) that only fires on a
+    # entry immediately. Widen to a catastrophe stop (~12%) that only fires on a
     # thesis-breaking collapse, not the ordinary dip this strategy is built to hold.
-    stop_loss_multiplier: float = 2.0
+    # Was 2.0x (16%) until 2026-07-28: with only a 5% expansion target, that risked
+    # more than 3x the reward on every trade — and prod showed why (see dip_pct
+    # docstring below), losers were running to the full 16% on a ~10% win rate.
+    stop_loss_multiplier: float = 1.5
 
+    # dip_pct was 0.10 until 2026-07-28: against a ~185-symbol universe, a 10%
+    # pullback off a 200-day high is cleared by most symbols most of the time, so
+    # the strategy wasn't selectively dip-buying — it was firing 60-80 buy orders/day
+    # (near-full universe exposure). Backtest over 2yr/42 symbols showed raising to
+    # 0.20 cuts entry frequency ~25% (0.68 -> 0.57 entries/bar-day/symbol) without
+    # hurting per-trade edge (avg_pnl/sum_pnl held or improved). Reduces how many
+    # correlated names get bought into the same sector-wide selloff at once.
     def __init__(
         self,
         symbol: str,
-        dip_pct: float = 0.10,
+        dip_pct: float = 0.20,
         expansion_pct: float = 0.05,
         regime_params: dict[Regime, tuple[float, float]] | None = None,
         smooth_window: int | float | None = None,

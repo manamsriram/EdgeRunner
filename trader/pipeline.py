@@ -774,7 +774,9 @@ def _prepare_signal(
             config.risk.crypto_stop_loss_pct if is_crypto_symbol(symbol)
             else config.risk.stop_loss_pct
         )
-        _stop_pct = _base_stop * _stop_multiplier_for_owner(_owner)
+        # Clamp regardless of the owning strategy's multiplier — a widened catastrophe
+        # stop must still have a hard ceiling, not compound into an unbounded loss.
+        _stop_pct = min(_base_stop * _stop_multiplier_for_owner(_owner), config.risk.max_stop_loss_pct)
         if (
             entry_price > 0
             and symbol in state.positions
@@ -1213,9 +1215,17 @@ def _execute_signal(
                 )
                 last_buy = repo.get_last_buy_order(symbol)
                 entry_rationale = last_buy.get("entry_rationale") if last_buy else None
+                # stop-loss/eod-exit sells skip the ownership check above (any strategy
+                # watching the symbol can force the exit), so `strategy` here is often
+                # just whichever arm's tick happened to run first — not who actually
+                # entered the position. Attribute the outcome to the real owner so
+                # per-strategy performance (and the cooldown/overlay memory that reads
+                # trade_outcomes) isn't corrupted by mislabeled exits (e.g. a DipRecovery
+                # buy with its 2x catastrophe stop showing up as a SuperTrend loss).
+                _owner_name = state.position_owners.get((symbol, pool)) or type(strategy).__name__
                 try:
                     repo.record_trade_outcome(TradeOutcomeRow(
-                        symbol=symbol, strategy=type(strategy).__name__, regime=regime,
+                        symbol=symbol, strategy=_owner_name, regime=regime,
                         side="buy", entry_price=entry_price, exit_price=exit_price,
                         pnl_pct=(exit_price - entry_price) / entry_price,
                         exit_reason=exit_reason, entry_overlay_rationale=entry_rationale,
@@ -1235,8 +1245,13 @@ def _execute_signal(
         if signal.side == "buy" and not is_crypto_symbol(symbol):
             # Widen the broker stop by the buying strategy's multiplier so it matches
             # the software stop — a DipRecovery entry gets its catastrophe stop, not
-            # the default 8% that would knife it out of a normal dip.
-            _stop_pct = config.risk.stop_loss_pct * getattr(strategy, "stop_loss_multiplier", 1.0)
+            # the default 8% that would knife it out of a normal dip. Still clamped to
+            # max_stop_loss_pct — no strategy's multiplier can push the broker-side
+            # stop past the hard ceiling either.
+            _stop_pct = min(
+                config.risk.stop_loss_pct * getattr(strategy, "stop_loss_multiplier", 1.0),
+                config.risk.max_stop_loss_pct,
+            )
             # filled_order already computed above (fill-status persistence step).
             if filled_order is None:
                 logger.warning(

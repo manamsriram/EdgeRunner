@@ -79,6 +79,14 @@ class RiskLimits:
     # limit has rested unfilled past this window, so a bad fill is bounded and prompt
     # instead of drifting for days.
     stop_loss_escalation_minutes: float = 10.0  # env: STOP_LOSS_ESCALATION_MINUTES
+    # Hard ceiling on effective stop distance regardless of a strategy's own
+    # stop_loss_multiplier — applies to every strategy, current or future. A strategy
+    # widening its stop for a legitimate reason (DipRecovery's catastrophe stop) must
+    # never be able to compound into an unbounded loss on any single position; this
+    # clamps the final stop_pct before it's used for both the software check and the
+    # broker GTC stop. 2026-07-28: DipRecovery's 2x multiplier (16%) plus stop-limit
+    # slippage was landing exits at -20% to -40%.
+    max_stop_loss_pct: float = 0.15          # env: MAX_STOP_LOSS_PCT
     # Dynamic universe — replaces static allowlist with Alpaca daily screener
     dynamic_universe: bool = False          # True → use screener (env: DYNAMIC_UNIVERSE)
     universe_size: int = 100               # max symbols per day (env: UNIVERSE_SIZE)
@@ -240,6 +248,7 @@ def load_config() -> Config:
             require_broker_stop=_env_bool("REQUIRE_BROKER_STOP", False),
             stop_limit_slippage_pct=float(os.getenv("STOP_LIMIT_SLIPPAGE_PCT", "0.03")),
             stop_loss_escalation_minutes=float(os.getenv("STOP_LOSS_ESCALATION_MINUTES", "10.0")),
+            max_stop_loss_pct=float(os.getenv("MAX_STOP_LOSS_PCT", "0.15")),
             min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
             block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
         ),

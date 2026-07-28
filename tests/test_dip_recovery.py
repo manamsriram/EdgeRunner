@@ -50,7 +50,7 @@ def test_dip_triggers_buy() -> None:
     # 11% below the 100 ATH, then an uptick bar to confirm the fall has paused.
     closes = [100.0] * MIN_BARS + [89.0, 90.0]
     bars = _bars(closes)
-    signal = DipRecovery("TEST").generate(bars, bars.index[-1])
+    signal = DipRecovery("TEST", dip_pct=0.10).generate(bars, bars.index[-1])
     assert signal.side == "buy"
     assert signal.strength > 0.0
 
@@ -160,7 +160,7 @@ def test_invalid_regime_params_raise() -> None:
 
 def test_stressed_regime_uses_deeper_dip_threshold() -> None:
     bars = _quiet_then_crash_bars()
-    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
+    fixed = DipRecovery("TEST", dip_pct=0.10).generate(bars, bars.index[-1])
     adaptive = DipRecovery("TEST", regime_params=REGIME_TABLE).generate(
         bars, bars.index[-1]
     )
@@ -184,18 +184,18 @@ def test_calm_regime_uses_shallower_dip_threshold() -> None:
 
 def test_missing_regime_falls_back_to_base_params() -> None:
     bars = _quiet_then_crash_bars()  # stressed regime
-    adaptive = DipRecovery("TEST", regime_params={"calm": (0.08, 0.05)}).generate(
-        bars, bars.index[-1]
-    )
-    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
+    adaptive = DipRecovery(
+        "TEST", dip_pct=0.10, regime_params={"calm": (0.08, 0.05)}
+    ).generate(bars, bars.index[-1])
+    fixed = DipRecovery("TEST", dip_pct=0.10).generate(bars, bars.index[-1])
     assert adaptive.side == fixed.side == "buy"
 
 
 def test_uniform_regime_table_matches_fixed_params() -> None:
     bars = _quiet_then_crash_bars()
     uniform = {r: (0.10, 0.05) for r in ("calm", "normal", "stressed")}
-    fixed = DipRecovery("TEST").generate(bars, bars.index[-1])
-    adaptive = DipRecovery("TEST", regime_params=uniform).generate(bars, bars.index[-1])
+    fixed = DipRecovery("TEST", dip_pct=0.10).generate(bars, bars.index[-1])
+    adaptive = DipRecovery("TEST", dip_pct=0.10, regime_params=uniform).generate(bars, bars.index[-1])
     assert adaptive.side == fixed.side
     assert adaptive.strength == fixed.strength
 
@@ -224,8 +224,8 @@ def test_smoothing_damps_single_bar_noise_below_trigger() -> None:
     # confirms the dip, a 5-bar rolling mean should not (it's mostly zeros).
     closes = [100.0] * MIN_BARS + [89.0, 89.5] + [100.0] * 3
     bars = _bars(closes)
-    raw = DipRecovery("TEST").generate(bars, bars.index[-4])  # the uptick bar
-    smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-4])
+    raw = DipRecovery("TEST", dip_pct=0.10).generate(bars, bars.index[-4])  # the uptick bar
+    smoothed = DipRecovery("TEST", dip_pct=0.10, smooth_window=5).generate(bars, bars.index[-4])
     assert raw.side == "buy"
     assert smoothed.side == "hold"
 
@@ -235,14 +235,14 @@ def test_sustained_dip_still_triggers_when_smoothed() -> None:
     # over the same window it dipped for. Final bar upticks to confirm the dip.
     closes = [100.0] * MIN_BARS + [89.0] * 4 + [89.5]
     bars = _bars(closes)
-    smoothed = DipRecovery("TEST", smooth_window=5).generate(bars, bars.index[-1])
+    smoothed = DipRecovery("TEST", dip_pct=0.10, smooth_window=5).generate(bars, bars.index[-1])
     assert smoothed.side == "buy"
 
 
 def test_ewma_smooth_window_accepted() -> None:
     closes = [100.0] * MIN_BARS + [89.0] * 7 + [89.5]
     bars = _bars(closes)
-    signal = DipRecovery("TEST", smooth_window=4.0).generate(bars, bars.index[-1])
+    signal = DipRecovery("TEST", dip_pct=0.10, smooth_window=4.0).generate(bars, bars.index[-1])
     assert signal.side == "buy"
 
 
