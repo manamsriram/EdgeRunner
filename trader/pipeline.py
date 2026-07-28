@@ -1171,12 +1171,35 @@ def _execute_signal(
             fill_price=_fill_price,
         ))
 
+        # client_order_id is deterministic per (day, symbol, side, strategy) — see
+        # client_order_id_for. So if the position for this symbol/strategy already
+        # closed earlier today and the signal fires "sell" again (e.g. stale position
+        # state), broker.submit's idempotent duplicate-handling just hands back the
+        # ALREADY-filled order from the earlier exit — no new order, no new sell. Without
+        # this check that stale order still reads as "filled_order is not None" below and
+        # gets logged as a brand-new closed trade, duplicating the outcome row (and its
+        # negative pnl_pct) in trade_outcomes for a trade that only happened once
+        # (2026-07-28: SPY/QQQ/MSFT logged the same exit 2-3x this way).
+        _filled_at = getattr(filled_order, "filled_at", None) if filled_order else None
+        if _filled_at is not None and _filled_at.tzinfo is None:
+            _filled_at = _filled_at.replace(tzinfo=timezone.utc)
+        _stale_duplicate_fill = (
+            _filled_at is not None
+            and (datetime.now(timezone.utc) - _filled_at).total_seconds() > 30
+        )
+        if _stale_duplicate_fill:
+            logger.info(
+                "%s sell resolved to an already-filled order from earlier today "
+                "(filled_at=%s) — treating as duplicate signal, not a new exit",
+                symbol, _filled_at,
+            )
+
         # Record the closed-trade outcome for the cooldown guard and overlay memory —
         # but only once the sell's fill is confirmed. An unconfirmed sell may never
         # fill (halted stock, rejected order); recording it anyway would write a
         # phantom closed trade and orphan the still-held position. Unconfirmed sells
         # stay 'submitted' and are settled later by reconcile_order_statuses.
-        if signal.side == "sell" and filled_order is not None:
+        if signal.side == "sell" and filled_order is not None and not _stale_duplicate_fill:
             entry_price = state.avg_entry_prices.get(symbol, 0.0)
             if entry_price > 0:
                 if signal.reason.startswith("stop-loss:"):
