@@ -95,6 +95,7 @@ def main() -> int:
 
     # ---- Alpaca equity curve (optional) ----
     print("\nAlpaca portfolio history :", end=" ")
+    end_eq = None
     try:
         from trader.execution.broker import AlpacaBroker
         broker = AlpacaBroker(config)
@@ -124,7 +125,9 @@ def main() -> int:
     day_trades_approx = len(today_fills) // 2
     print(f"\nPDT check (today)   : ~{day_trades_approx} day-trade(s) "
           f"({len(today_fills)} fills today)")
-    if day_trades_approx >= 3:
+    # PDT rule (and the risk gate's guard) only applies below $25k equity —
+    # mirror that here so this doesn't cry wolf on accounts above the threshold.
+    if day_trades_approx >= 3 and (end_eq is None or end_eq < config.risk.pdt_equity_threshold):
         print("  WARNING: approaching PDT limit (3 round-trips) — PDT guard will block buys")
 
     # ---- verdict ----

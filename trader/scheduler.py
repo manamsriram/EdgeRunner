@@ -327,12 +327,17 @@ def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strateg
     from trader.strategy.supertrend import SuperTrend
     from trader.strategy.dip_recovery import DipRecovery
 
+    disabled = config.risk.disabled_strategies
     strategies: list[Strategy] = []
     for sym in symbols:
-        strategies.append(SuperTrend(symbol=sym))
+        st = SuperTrend(symbol=sym)
+        st.entries_disabled = "SuperTrend" in disabled
+        strategies.append(st)
         # smooth_window=3 damps single-bar drawdown noise before it crosses the
         # dip_pct entry trigger, cutting re-entries on choppy dip/recover cycles.
-        strategies.append(DipRecovery(symbol=sym, smooth_window=3))
+        dip = DipRecovery(symbol=sym, smooth_window=3)
+        dip.entries_disabled = "DipRecovery" in disabled
+        strategies.append(dip)
     return strategies
 
 

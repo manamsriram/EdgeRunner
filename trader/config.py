@@ -128,6 +128,13 @@ class RiskLimits:
     # reads as a huge (fake) unrealized gain instead of the flat/decayed real one.
     min_equity_price: float = 5.0           # reject equity buys below this (env: MIN_EQUITY_PRICE)
     block_leveraged_etfs: bool = True       # env: BLOCK_LEVERAGED_ETFS
+    # Class names (comma-separated) whose NEW entries are suppressed — the strategy
+    # instance stays active so exit signals and stop-loss checks keep running on any
+    # open position it already owns; only new buys are blocked. 2026-07-29: SuperTrend
+    # and DipRecovery held 10-12% win rates with negative expectancy across 100+ trades
+    # over 14 days despite two rounds of targeted fixes (ADX filter, dip-depth/stop
+    # tightening) and a tested market-stress gate — neither moved the win rate.
+    disabled_strategies: frozenset[str] = frozenset()  # env: DISABLED_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -251,6 +258,9 @@ def load_config() -> Config:
             max_stop_loss_pct=float(os.getenv("MAX_STOP_LOSS_PCT", "0.15")),
             min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
             block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
+            disabled_strategies=frozenset(
+                s.strip() for s in (os.getenv("DISABLED_STRATEGIES") or "").split(",") if s.strip()
+            ),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),

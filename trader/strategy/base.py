@@ -85,6 +85,10 @@ class Strategy(ABC):
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
         self._warmed_up = False
+        # Set by the scheduler when this strategy's class is in DISABLED_STRATEGIES.
+        # The instance stays in the active stack (exit signals / stop-loss checks for
+        # any open position keep running) — only new buy signals are suppressed.
+        self.entries_disabled = False
 
     def warm_up(self, bars: pd.DataFrame, *, has_position: bool = True) -> None:
         """Reconstruct internal state from bar history after a cold start.
@@ -121,7 +125,10 @@ class Strategy(ABC):
         visible = bars.loc[bars.index <= asof]
         if visible.empty:
             return Signal(self.symbol, "hold", 0.0, f"no data as of {asof}")
-        return self._decide(visible, asof)
+        signal = self._decide(visible, asof)
+        if self.entries_disabled and signal.side == "buy":
+            return Signal(self.symbol, "hold", 0.0, f"entries disabled: {signal.reason}")
+        return signal
 
     @abstractmethod
     def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
