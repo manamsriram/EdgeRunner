@@ -173,7 +173,8 @@ class PortfolioRepository(ABC):
         """
 
     @abstractmethod
-    def get_orders(self) -> list[dict]: ...
+    def get_orders(self, limit: int | None = None) -> list[dict]:
+        """All orders, oldest first. limit returns only the most recent N (still oldest-first)."""
 
     @abstractmethod
     def get_last_buy_order(self, symbol: str) -> dict | None:

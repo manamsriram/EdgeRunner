@@ -335,11 +335,14 @@ class PostgresRepository(PortfolioRepository):
                 )
                 return [dict(r) for r in cur.fetchall()]
 
-    def get_orders(self) -> list[dict]:
+    def get_orders(self, limit: int | None = None) -> list[dict]:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM orders ORDER BY id")
-                return [dict(r) for r in cur.fetchall()]
+                if limit is None:
+                    cur.execute("SELECT * FROM orders ORDER BY id")
+                    return [dict(r) for r in cur.fetchall()]
+                cur.execute("SELECT * FROM orders ORDER BY id DESC LIMIT %s", (limit,))
+                return [dict(r) for r in reversed(cur.fetchall())]
 
     def get_last_buy_order(self, symbol: str) -> dict | None:
         with self._connect() as conn:

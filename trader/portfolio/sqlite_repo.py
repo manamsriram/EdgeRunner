@@ -318,10 +318,15 @@ class SQLiteRepository(PortfolioRepository):
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def get_orders(self) -> list[dict]:
+    def get_orders(self, limit: int | None = None) -> list[dict]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM orders ORDER BY id").fetchall()
-            return [dict(r) for r in rows]
+            if limit is None:
+                rows = conn.execute("SELECT * FROM orders ORDER BY id").fetchall()
+                return [dict(r) for r in rows]
+            rows = conn.execute(
+                "SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [dict(r) for r in reversed(rows)]
 
     def get_last_buy_order(self, symbol: str) -> dict | None:
         with self._connect() as conn:
