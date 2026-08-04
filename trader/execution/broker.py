@@ -44,6 +44,20 @@ def client_order_id_for(
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
+def _normalize_position_symbol(position: Any) -> str:
+    """Alpaca's positions endpoint drops the '/' from crypto pairs (BATUSD) while
+    orders, quotes, and every strategy's `symbol` use the slash form (BAT/USD).
+    Reinsert it so `state.positions` keys match the rest of the system — otherwise
+    `symbol in state.positions` is always False for crypto and stop-loss / ownership
+    checks silently no-op."""
+    symbol = position.symbol
+    asset_class = getattr(position, "asset_class", None)
+    is_crypto = getattr(asset_class, "value", str(asset_class)) == "crypto"
+    if is_crypto and "/" not in symbol and symbol.endswith("USD"):
+        return f"{symbol[:-3]}/USD"
+    return symbol
+
+
 class _TradingClient(Protocol):
     """The slice of alpaca-py's TradingClient this adapter uses (kept minimal so fakes
     are trivial to write in tests)."""
@@ -296,9 +310,11 @@ class AlpacaBroker:
             last_equity = float(getattr(account, "last_equity", 0.0) or 0.0)
 
             all_positions = client.get_all_positions()
-            positions = {p.symbol: float(p.qty) for p in all_positions}
+            positions = {
+                _normalize_position_symbol(p): float(p.qty) for p in all_positions
+            }
             avg_entry_prices = {
-                p.symbol: float(getattr(p, "avg_entry_price", 0) or 0)
+                _normalize_position_symbol(p): float(getattr(p, "avg_entry_price", 0) or 0)
                 for p in all_positions
             }
 

@@ -308,6 +308,28 @@ def test_reconcile_maps_account_into_state():
     assert state.daily_pnl_pct == pytest.approx(0.2)     # (120k-100k)/100k
 
 
+def test_reconcile_reinserts_slash_for_bare_crypto_position_symbols():
+    # Alpaca's /positions endpoint drops the '/' from crypto pairs (BATUSD) while
+    # orders/quotes/strategies all use BAT/USD — reconcile() must normalize back
+    # to slash form so `symbol in state.positions` matches for stop-loss checks.
+    client = FakeClient(
+        account=SimpleNamespace(equity="120000", last_equity="100000"),
+        positions=[
+            SimpleNamespace(
+                symbol="BATUSD", qty="1780.32", avg_entry_price="0.0921",
+                asset_class=SimpleNamespace(value="crypto"),
+            ),
+            SimpleNamespace(
+                symbol="AAPL", qty="10", avg_entry_price="200.0",
+                asset_class=SimpleNamespace(value="us_equity"),
+            ),
+        ],
+    )
+    state = _broker(client).reconcile()
+    assert state.positions == {"BAT/USD": 1780.32, "AAPL": 10.0}
+    assert state.avg_entry_prices["BAT/USD"] == pytest.approx(0.0921)
+
+
 def test_reconcile_fails_closed_on_client_error():
     class Boom(FakeClient):
         def get_account(self):
