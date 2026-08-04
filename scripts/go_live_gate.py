@@ -50,9 +50,10 @@ def _check_thresholds(metrics, bh_metrics, trade_count: int) -> tuple[bool, str]
 def _gate_strategies() -> list:
     """The production equity stack (mirrors trader.scheduler._build_strategies_for).
     Each entry is a callable taking `symbol` and returning a Strategy."""
-    from trader.strategy.donchian_breakout import DonchianBreakout
+    from trader.strategy.dip_recovery import DipRecovery
+    from trader.strategy.supertrend import SuperTrend
 
-    return [DonchianBreakout]
+    return [SuperTrend, DipRecovery]
 
 
 def _run_combo(symbol: str, strategy_cls, oos_start: datetime, oos_end: datetime, config):

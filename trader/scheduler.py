@@ -308,25 +308,36 @@ def start_crypto_scheduler(
 
 
 def _build_strategies_for(config: Config, symbols: "list[str]") -> "list[Strategy]":
-    """Build solo-DonchianBreakout stack per equity symbol.
+    """Build 2-strategy stack (SuperTrend + DipRecovery) per equity symbol.
 
-    ST+Dip was the prior stack (2yr 37.8%/Sharpe 0.92, 4yr 159.1%/Sharpe 1.04 —
-    scripts/backtest_combos.py) but both went into DISABLED_STRATEGIES 2026-08-03
-    (14-day live win rate 10-12%, negative expectancy, no gate found an edge).
-    Solo Donchian was only ever backtested as part of a 5-strategy combo on
-    equities (diluted returns there vs ST+Dip) — never tested standalone here;
-    treat as unvalidated until it has its own equities backtest run.
+    Combination backtests (scripts/backtest_combos.py; 10 symbols, 2yr and 4yr
+    split-adjusted windows, independent-sleeve model matching live execution,
+    intra-bar stop):
+
+      ST+Dip:        2yr 37.8% / Sharpe 0.92   4yr 159.1% / Sharpe 1.04
+      All 5 (prior): 2yr 22.2% / Sharpe 0.84   4yr  84.9% / Sharpe 0.91
+
+    SuperTrend (trend-following) and DipRecovery (deep-drawdown mean reversion)
+    are complementary; SmashDayB, EquityBollingerReversion and DonchianBreakout
+    each diluted returns at similar or worse drawdown on equities.
     """
-    # ST+Dip instantiation lived here before this swap; `git log -p` this
-    # function to restore it if solo Donchian underperforms live.
-    from trader.strategy.donchian_breakout import DonchianBreakout
+    # Previous 5-strategy stack (SuperTrend + SmashDayB + Bollinger + Donchian + Dip)
+    # lived here before commit 3b00d29 trimmed it to ST+Dip. `git show 3b00d29^:trader/scheduler.py`
+    # to restore it if ST+Dip underperforms live.
+    from trader.strategy.supertrend import SuperTrend
+    from trader.strategy.dip_recovery import DipRecovery
 
     disabled = config.risk.disabled_strategies
     strategies: list[Strategy] = []
     for sym in symbols:
-        d = DonchianBreakout(symbol=sym)
-        d.entries_disabled = "DonchianBreakout" in disabled
-        strategies.append(d)
+        st = SuperTrend(symbol=sym)
+        st.entries_disabled = "SuperTrend" in disabled
+        strategies.append(st)
+        # smooth_window=3 damps single-bar drawdown noise before it crosses the
+        # dip_pct entry trigger, cutting re-entries on choppy dip/recover cycles.
+        dip = DipRecovery(symbol=sym, smooth_window=3)
+        dip.entries_disabled = "DipRecovery" in disabled
+        strategies.append(dip)
     return strategies
 
 

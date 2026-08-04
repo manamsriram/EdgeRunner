@@ -95,6 +95,6 @@ def test_gate_strategies_match_production_equity_stack():
 
     factories = _gate_strategies()
     names = [f.__name__ for f in factories]
-    assert names == ["DonchianBreakout"]
+    assert names == ["SuperTrend", "DipRecovery"]
     built = [f("AAPL") for f in factories]
     assert all(s.symbol == "AAPL" for s in built)
