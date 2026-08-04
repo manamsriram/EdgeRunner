@@ -374,12 +374,21 @@ def _refresh_dynamic_universe(
     from trader.universe.screener import fetch_dynamic_universe
 
     # Snapshot current positions before rebuilding — guarantees stop-loss coverage.
+    # A stale/failed reconcile must never shrink coverage: fall back to whatever
+    # symbols already have a live strategy instance (this tick's status quo) rather
+    # than an empty set, which would silently drop any held-but-unscreened position
+    # from stop-loss monitoring until the next successful refresh happens to re-screen
+    # it back in — for a declining/low-volume symbol that can be never.
+    existing_symbols = {s.symbol for s in current_strategies}
     try:
         state = broker.reconcile()
-        held_symbols = set(state.positions.keys()) if not state.stale else set()
+        held_symbols = set(state.positions.keys()) if not state.stale else existing_symbols
     except Exception:
-        logger.exception("reconcile failed during universe refresh — using held_symbols=empty")
-        held_symbols = set()
+        logger.exception(
+            "reconcile failed during universe refresh — falling back to existing %d symbols",
+            len(existing_symbols),
+        )
+        held_symbols = existing_symbols
 
     try:
         screened = fetch_dynamic_universe(config, config.risk.universe_size)
@@ -458,12 +467,21 @@ def _refresh_dynamic_crypto_universe(
     """
     from trader.universe.crypto_screener import fetch_dynamic_crypto_universe
 
+    # Same stale-safe fallback as the equity refresh above — never let a failed
+    # reconcile shrink coverage below what's already being monitored this tick.
+    existing_symbols = {s.symbol for s in current_strategies}
     try:
         state = broker.reconcile()
-        held_symbols = {s for s in state.positions if is_crypto_symbol(s)} if not state.stale else set()
+        held_symbols = (
+            {s for s in state.positions if is_crypto_symbol(s)}
+            if not state.stale else existing_symbols
+        )
     except Exception:
-        logger.exception("reconcile failed during crypto universe refresh — using held_symbols=empty")
-        held_symbols = set()
+        logger.exception(
+            "reconcile failed during crypto universe refresh — falling back to existing %d symbols",
+            len(existing_symbols),
+        )
+        held_symbols = existing_symbols
 
     try:
         screened = fetch_dynamic_crypto_universe(config, config.risk.crypto_universe_size)

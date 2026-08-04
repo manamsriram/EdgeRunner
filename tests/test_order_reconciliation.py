@@ -149,3 +149,21 @@ def test_reconciliation_skips_broker_lookup_failures(tmp_path):
 
     assert reconcile_order_statuses(broker, repo) == 0
     assert repo.get_orders()[0]["status"] == "submitted"
+
+
+def test_reconciliation_backfills_fill_price_on_late_filled_buy(tmp_path):
+    """A buy that confirms after the tick path's ~5s wait used to land in this job
+    with fill_price left NULL forever — get_highest_buy_price's MAX(fill_price) scan
+    silently skips NULL rows, so a slow-to-fill (possibly worst-price) lot never
+    counted toward the stop-loss anchor. Regression for the 2026-08-04 YFI/USD
+    incident: a $2608.80 lot sat unprotected for a month because of exactly this."""
+    repo = _repo_with_submitted(tmp_path, "buy", coid="buy-3")
+    broker = _ReconBroker({
+        "buy-3": SimpleNamespace(status="filled", filled_avg_price="2608.8"),
+    })
+
+    assert reconcile_order_statuses(broker, repo) == 1
+    order = repo.get_orders()[0]
+    assert order["status"] == "filled"
+    assert order["fill_price"] == pytest.approx(2608.8)
+    assert repo.get_highest_buy_price(_SYMBOL) == pytest.approx(2608.8)

@@ -465,10 +465,21 @@ def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
         else:
             continue  # still live (new/accepted/partially_filled) — leave as submitted
 
+        # Fill price is unknown at submit time and the tick path only waits ~5s for
+        # it — any order that confirms later than that (this reconciliation job's
+        # reason for existing) would otherwise stay NULL forever. That NULL silently
+        # drops the row from get_highest_buy_price's MAX(fill_price) scan, letting a
+        # slow-to-fill buy's real (possibly worst) price go uncounted by the stop-loss
+        # check — the exact gap that hid the YFI/USD $2608.80 lot inside a diluted
+        # blended average for a month (2026-08-04 incident).
+        _fill_price = (
+            float(getattr(order, "filled_avg_price", 0) or 0) or None
+            if new_status == "filled" else None
+        )
         try:
             repo.record_order(OrderRow(
                 client_order_id=coid, symbol=row["symbol"], side=row["side"],
-                notional=row["notional"], status=new_status,
+                notional=row["notional"], status=new_status, fill_price=_fill_price,
             ))
         except Exception:
             # One bad row must not abandon the rest of the batch — the orphaned sells

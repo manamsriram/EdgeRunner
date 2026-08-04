@@ -259,3 +259,65 @@ def test_nightly_bandit_empty_fills_returns_empty(tmp_path):
 
     assert result == {}
     assert repo.get_all_bandit_weights() == {}
+
+
+# ---- dynamic universe refresh: stale reconcile must not drop held positions ----
+
+
+def test_crypto_universe_refresh_keeps_existing_symbols_on_stale_reconcile(monkeypatch):
+    """A stale/failed reconcile must fall back to the current strategy list, not an
+    empty set — otherwise a held position that also falls out of today's screen
+    silently loses stop-loss coverage (the exact gap that let BAT/USD run to -29%)."""
+    from trader.scheduler import _refresh_dynamic_crypto_universe, _build_crypto_strategies_for
+    import trader.scheduler as scheduler_mod
+
+    cfg = _config()
+    current_strategies = _build_crypto_strategies_for(cfg, ["BAT/USD"])
+
+    monkeypatch.setattr(
+        scheduler_mod, "is_crypto_symbol", lambda s: True,
+    )
+    import trader.universe.crypto_screener as crypto_screener_mod
+    monkeypatch.setattr(
+        crypto_screener_mod, "fetch_dynamic_crypto_universe",
+        lambda config, size: ["ETH/USD"],  # BAT/USD dropped out of today's screen
+    )
+
+    stale_broker = SimpleNamespace(
+        reconcile=lambda: AccountState(
+            equity=0.0, positions={}, open_order_symbols=frozenset(),
+            trades_today=0, daily_pnl_pct=None, stale=True,
+        )
+    )
+
+    new_strategies = _refresh_dynamic_crypto_universe(cfg, stale_broker, current_strategies)
+    symbols = {s.symbol for s in new_strategies}
+
+    assert "BAT/USD" in symbols
+    assert "ETH/USD" in symbols
+
+
+def test_crypto_universe_refresh_keeps_existing_symbols_on_reconcile_exception(monkeypatch):
+    """Same guarantee when reconcile() raises outright, not just returns stale=True."""
+    from trader.scheduler import _refresh_dynamic_crypto_universe, _build_crypto_strategies_for
+    import trader.scheduler as scheduler_mod
+
+    cfg = _config()
+    current_strategies = _build_crypto_strategies_for(cfg, ["BAT/USD"])
+
+    monkeypatch.setattr(scheduler_mod, "is_crypto_symbol", lambda s: True)
+    import trader.universe.crypto_screener as crypto_screener_mod
+    monkeypatch.setattr(
+        crypto_screener_mod, "fetch_dynamic_crypto_universe",
+        lambda config, size: ["ETH/USD"],
+    )
+
+    def _raise():
+        raise RuntimeError("Alpaca API down")
+
+    broken_broker = SimpleNamespace(reconcile=_raise)
+
+    new_strategies = _refresh_dynamic_crypto_universe(cfg, broken_broker, current_strategies)
+    symbols = {s.symbol for s in new_strategies}
+
+    assert "BAT/USD" in symbols
