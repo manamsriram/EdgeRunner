@@ -287,6 +287,7 @@ def start_crypto_scheduler(
     )
     current_strategies = strategies
     crypto_universe_date: date | None = None
+    tick_count = 0
 
     while True:
         try:
@@ -302,6 +303,18 @@ def start_crypto_scheduler(
             results = run_once_crypto(config, current_strategies, broker, repo)
             for r in results:
                 logger.info("crypto tick: symbol=%s outcome=%s", r.symbol, r.outcome)
+
+            # Settle orders stuck at 'submitted' against broker truth every ~3 ticks
+            # (~15 min at the default 5 min poll) — mirrors the equity loop above.
+            # Without this, a crypto sell whose fill isn't confirmed within the
+            # ~5s wait_for_fill window never gets its position_owner cleared or its
+            # trade outcome recorded; the equity-only reconciliation job never sees it.
+            if tick_count % 3 == 0:
+                from trader.pipeline import reconcile_order_statuses
+                n = reconcile_order_statuses(broker, repo)
+                if n:
+                    logger.info("crypto order-status reconciliation updated %d order(s)", n)
+            tick_count += 1
         except Exception:
             logger.exception("unhandled error in crypto scheduler tick — continuing")
         time.sleep(poll_minutes * 60)

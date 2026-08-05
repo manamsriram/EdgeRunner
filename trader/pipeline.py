@@ -600,6 +600,42 @@ def precompute_signals(
     return cached
 
 
+def _fresh_client_order_id(broker: AlpacaBroker, base_id: str) -> str:
+    """Bump `base_id` if it already maps to an old FILLED order at the broker.
+
+    client_order_id_for is deterministic on (day, symbol, side, strategy) — stable
+    across retries within one open episode, by design. But a second, unrelated
+    episode later the same day (e.g. stopped out at 10am, fresh entry at 2pm)
+    computes the SAME id. Alpaca then hands back that stale fill as if it just
+    happened, and the pipeline records a phantom "confirmed" order/fill for a
+    trade that never actually occurred (2026-08-05 REZI/AVAX incident: this set
+    position ownership and attempted a broker stop for shares that were never
+    re-bought). A fill less than 30s old is this attempt's own fill (crash-
+    recovery retry — reuse it); anything older belongs to a prior episode.
+    """
+    coid = base_id
+    for attempt in range(1, 5):
+        try:
+            existing = broker.get_order(coid)
+        except Exception:
+            return coid  # lookup failed — fall through to submit, broker is authoritative
+        if existing is None:
+            return coid
+        status = str(getattr(existing, "status", "")).lower()
+        if status != "filled":
+            return coid  # open/resting order for this exact id — genuine retry, reuse it
+        filled_at = getattr(existing, "filled_at", None)
+        if filled_at is None:
+            return coid
+        if filled_at.tzinfo is None:
+            filled_at = filled_at.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - filled_at).total_seconds()
+        if age <= 30:
+            return coid  # this attempt's own fill
+        coid = f"{base_id}-r{attempt}"
+    return coid
+
+
 def _stop_multiplier_for_owner(owner_name: str | None) -> float:
     """Resolve the stop-loss multiplier of the strategy class that owns a position.
 
@@ -1124,6 +1160,7 @@ def _execute_signal(
             today, symbol, signal.side,
             f"{type(strategy).__name__}-escalated" if _escalate_to_market else type(strategy).__name__,
         )
+        client_order_id = _fresh_client_order_id(broker, client_order_id)
         qty = state.positions.get(symbol, 0.0) if signal.side == "sell" else None
         # Now that the sell is approved, cancel the resting protective stop so it can't
         # double-sell alongside this order. Deferred to here (post-approval) so a rejected

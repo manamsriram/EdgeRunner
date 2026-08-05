@@ -14,7 +14,7 @@ import pytest
 
 from trader.config import Config, RiskLimits
 from trader.execution.broker import AlpacaBroker
-from trader.pipeline import run_pipeline, _purge_old_eod_exits, _eod_exits_fired
+from trader.pipeline import run_pipeline, _purge_old_eod_exits, _eod_exits_fired, _fresh_client_order_id
 from trader.portfolio.repository import PROPOSAL_PENDING
 from trader.portfolio.sqlite_repo import SQLiteRepository
 from trader.risk.gate import AccountState, KillSwitch
@@ -820,3 +820,54 @@ def test_purge_old_eod_exits_drops_only_old_keys():
     _purge_old_eod_exits(today)
 
     assert _eod_exits_fired == {("Strat", "MSFT", "daily", today): True}
+
+
+class _FakeBrokerForCoid:
+    def __init__(self, orders: dict[str, Any]):
+        self._orders = orders
+
+    def get_order(self, client_order_id: str):
+        return self._orders.get(client_order_id)
+
+
+def test_fresh_client_order_id_reuses_when_no_existing_order():
+    broker = _FakeBrokerForCoid({})
+    assert _fresh_client_order_id(broker, "abc") == "abc"
+
+
+def test_fresh_client_order_id_reuses_recent_fill_as_own_retry():
+    """A fill <=30s old is this attempt's own fill (crash-recovery retry) — reuse it."""
+    recent = datetime.now(timezone.utc)
+    broker = _FakeBrokerForCoid({
+        "abc": SimpleNamespace(status="filled", filled_at=recent),
+    })
+    assert _fresh_client_order_id(broker, "abc") == "abc"
+
+
+def test_fresh_client_order_id_reuses_open_order():
+    broker = _FakeBrokerForCoid({
+        "abc": SimpleNamespace(status="accepted", filled_at=None),
+    })
+    assert _fresh_client_order_id(broker, "abc") == "abc"
+
+
+def test_fresh_client_order_id_bumps_stale_fill_from_earlier_episode():
+    """A FILLED order >30s old under the same deterministic id belongs to an
+    earlier, already-closed episode (e.g. this morning's stopped-out entry) —
+    reusing it would let Alpaca hand back that stale fill as if it just
+    happened, faking a confirmed order for a trade that never occurred.
+    """
+    stale = datetime(2026, 8, 5, 14, 33, tzinfo=timezone.utc)
+    broker = _FakeBrokerForCoid({
+        "abc": SimpleNamespace(status="filled", filled_at=stale),
+    })
+    assert _fresh_client_order_id(broker, "abc") == "abc-r1"
+
+
+def test_fresh_client_order_id_bumps_past_multiple_stale_fills():
+    stale = datetime(2026, 8, 5, 14, 33, tzinfo=timezone.utc)
+    broker = _FakeBrokerForCoid({
+        "abc": SimpleNamespace(status="filled", filled_at=stale),
+        "abc-r1": SimpleNamespace(status="filled", filled_at=stale),
+    })
+    assert _fresh_client_order_id(broker, "abc") == "abc-r2"
