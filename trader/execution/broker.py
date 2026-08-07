@@ -654,6 +654,14 @@ class AlpacaBroker:
         except Exception:
             logger.exception("cancel_open_stops failed for %s", symbol)
 
+    def get_open_stop_qty(self, symbol: str) -> float:
+        """Total qty currently protected by open GTC stop-sell orders for symbol.
+
+        Used to detect under-coverage: place_stop_order's insufficient-qty retry
+        (see below) can silently protect fewer shares than were actually bought.
+        """
+        return sum(s["qty"] for s in self._get_open_stop_sells(symbol))
+
     def _get_open_stop_sells(self, symbol: str) -> list[dict]:
         """Return open stop-sell orders for symbol as {"id", "qty", "stop_price"} dicts.
 

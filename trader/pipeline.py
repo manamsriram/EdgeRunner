@@ -155,6 +155,9 @@ def run_pipeline(
         from dataclasses import replace as _replace_stale
         state = _replace_stale(state, stale=True)
 
+    if not state.stale:
+        _top_up_stop_coverage(broker, repo, state, config)
+
     # Fold recent losing exits into state for the risk gate's symbol-cooldown check.
     # Fail-open: a lookup failure just means "no cooldown data this tick", not a halt.
     try:
@@ -658,6 +661,56 @@ def _stop_multiplier_for_owner(owner_name: str | None) -> float:
             return float(getattr(cls, "stop_loss_multiplier", 1.0))
         stack.extend(cls.__subclasses__())
     return 1.0
+
+
+def _top_up_stop_coverage(broker, repo, state, config) -> None:
+    """Re-check every held equity position's broker-side stop qty against its actual
+    size, once per tick, and place an additional stop for any shortfall.
+
+    place_stop_order's insufficient-qty retry (broker.py) protects only whatever
+    qty Alpaca reports "available" when the stop is first placed — a settlement
+    quirk right after a fractional buy fill can make that less than the full fill.
+    Nothing ever revisits it afterward, so the gap persists until another trade on
+    that symbol happens to replace the stop. Observed on SNAP: buy filled 606.82
+    shares, broker stop only covered 567, leaving ~40 shares permanently unprotected.
+    """
+    for symbol, qty in state.positions.items():
+        if qty < 1 or is_crypto_symbol(symbol):
+            continue
+        try:
+            covered = broker.get_open_stop_qty(symbol)
+        except Exception:
+            logger.warning("failed to read stop coverage for %s", symbol)
+            continue
+        shortfall = int(qty - covered)
+        if shortfall < 1:
+            continue
+        try:
+            anchor = repo.get_highest_buy_price(symbol)
+            if not anchor or anchor <= 0:
+                continue
+            owner = (
+                state.position_owners.get((symbol, "daily"))
+                or state.position_owners.get((symbol, "intraday"))
+            )
+            stop_pct = min(
+                config.risk.stop_loss_pct * _stop_multiplier_for_owner(owner),
+                config.risk.max_stop_loss_pct,
+            )
+            stop_price = anchor * (1 - stop_pct)
+            oid = client_order_id_for(
+                date.today(), symbol, "sell", f"stop-topup-{covered:.4f}",
+            )
+            broker.place_stop_order(
+                symbol=symbol, qty=shortfall, stop_price=stop_price,
+                client_order_id=oid, limit_offset_pct=config.risk.stop_limit_slippage_pct,
+            )
+            logger.warning(
+                "topped up stop coverage for %s: +%d shares at %.2f (was covering %.4f of %.4f)",
+                symbol, shortfall, stop_price, covered, qty,
+            )
+        except Exception:
+            logger.exception("stop coverage top-up failed for %s", symbol)
 
 
 def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name, regime, mode) -> None:
