@@ -386,6 +386,7 @@ def _advance_state(state, result, strategy, repo):
     pool = "intraday" if isinstance(strategy, IntradayStrategy) else "daily"
     approved_notional = result.risk_decision.approved_notional or 0.0
     new_owners = dict(state.position_owners)
+    new_positions = state.positions
     owner_key = (result.symbol, pool)
     if result.signal is not None:
         if result.signal.side == "buy" and owner_key not in new_owners:
@@ -405,6 +406,17 @@ def _advance_state(state, result, strategy, repo):
                 # must reset the strategy's entry-tracking state immediately so a
                 # stale _entry_bar_ts / _entry_price cannot survive until the next tick.
                 strategy.reset_state()
+                # Sells always submit qty=state.positions[symbol] (the whole position —
+                # this codebase never partial-exits), so a confirmed sell always empties
+                # it. Drop it from the in-tick mirror now: otherwise a second strategy
+                # tracking the same symbol later in this same tick still sees the old
+                # qty > 0 (this dict is never refreshed mid-tick) and, since stop-loss
+                # and eod-exit signals bypass the ownership conflict check by design,
+                # independently fires its own full-size sell on a position that's
+                # already gone — oversold into a naked short (NVDA -7.46, 2026-08-03:
+                # four strategies each stop-lossed the same 10-ish shares in one tick).
+                new_positions = dict(state.positions)
+                new_positions.pop(result.symbol, None)
             else:
                 # Sell submitted but fill unconfirmed — keep ownership so the owning
                 # strategy can still manage the position if the order never fills.
@@ -422,6 +434,7 @@ def _advance_state(state, result, strategy, repo):
             trades_today=state.trades_today + 1,
             open_order_symbols=state.open_order_symbols | {result.symbol},
             position_owners=new_owners,
+            positions=new_positions,
             intraday_deployed=new_intraday,
         )
     else:
@@ -433,6 +446,7 @@ def _advance_state(state, result, strategy, repo):
             trades_today=state.trades_today + 1,
             open_order_symbols=state.open_order_symbols | {result.symbol},
             position_owners=new_owners,
+            positions=new_positions,
             deployed_notional=new_deployed,
         )
 
@@ -847,6 +861,21 @@ def _prepare_signal(
         # Only warm up as entered if this strategy owns the position; otherwise
         # mark warmed-up so non-owning strategies don't falsely set _entered.
         _owner = state.position_owners.get((symbol, _pool))
+        if _owner is None and symbol in state.positions and state.positions[symbol] > 0:
+            # Orphaned position: broker shows shares held but no strategy claimed them
+            # (a warm/legacy position, or one that fell through a reconciliation gap —
+            # NVDA sat owner-less for weeks before the 2026-08-03 quadruple-sell incident).
+            # First strategy to see it in a tick claims it, closing the ownership gap
+            # before any exit logic runs. Mutates the dict in place (not state itself,
+            # which is frozen) so every other strategy later in this same tick — which
+            # shares this exact `state` object until the next `_advance_state` call —
+            # sees the claim immediately, not just on the next tick's reconcile.
+            _owner = type(strategy).__name__
+            state.position_owners[(symbol, _pool)] = _owner
+            try:
+                repo.set_position_owner(symbol, _owner, _pool)
+            except Exception:
+                logger.warning("failed to persist orphan-claim owner for %s/%s", symbol, _pool)
         if not strategy._warmed_up:
             _has_position = symbol in state.positions and state.positions[symbol] > 0
             if _has_position:

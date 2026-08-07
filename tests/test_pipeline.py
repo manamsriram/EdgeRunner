@@ -536,6 +536,39 @@ def test_manual_mode_queued_sell_records_no_trade_outcome(tmp_path):
     assert repo.get_recent_outcomes(symbol=_SYMBOL) == []
 
 
+def test_orphaned_held_position_claimed_by_first_strategy_to_see_it(tmp_path):
+    """A held position with no recorded owner (NVDA sat owner-less for weeks before
+    the 2026-08-03 quadruple-sell incident — nothing had ever claimed it through the
+    normal buy path) must be claimed by the first strategy that touches it in a tick,
+    even on a tick where that strategy doesn't trade. Otherwise the ownership gate
+    that blocks cross-strategy sells/buys never engages for that symbol."""
+    cfg = _config(tmp_path, autonomy="manual")
+    repo = SQLiteRepository(cfg.portfolio_db_path)
+    assert repo.get_position_owners() == {}
+
+    _run([_FixedStrategy(_SYMBOL, "hold")], cfg, state=_held_state())
+
+    owners = repo.get_position_owners()
+    assert owners[(_SYMBOL, "daily")] == "_FixedStrategy"
+
+
+def test_orphaned_position_claim_visible_to_later_strategy_same_tick(tmp_path):
+    """The claim must be visible within the same tick, not just after reconcile —
+    a second strategy processed later in the same loop must see the ownership the
+    first strategy just claimed and get blocked from also trading the symbol."""
+    cfg = _config(tmp_path, autonomy="manual")
+
+    results, _, _ = _run(
+        [_FixedStrategy(_SYMBOL, "hold"), _OtherStrategy(_SYMBOL, "buy")],
+        cfg,
+        state=_held_state(),
+    )
+
+    buy_result = next(r for r in results if r.signal and r.signal.side == "buy")
+    assert buy_result.outcome == "blocked"
+    assert "ownership conflict" in buy_result.risk_decision.reason
+
+
 def test_sell_still_blocked_when_owner_strategy_active(tmp_path):
     """Ownership must keep blocking cross-strategy sells while the owner runs."""
     cfg = _config(tmp_path, autonomy="manual")
@@ -550,6 +583,31 @@ def test_sell_still_blocked_when_owner_strategy_active(tmp_path):
     sell_result = next(r for r in results if r.signal and r.signal.side == "sell")
     assert sell_result.outcome == "blocked"
     assert "ownership conflict" in sell_result.risk_decision.reason
+
+
+def test_second_sell_in_same_tick_blocked_after_first_confirms(tmp_path):
+    """Regression for 2026-08-03: NVDA position went to -7.46 (short) because four
+    intraday strategies each independently stop-lossed the same ~10-share position
+    within one tick. state.positions was never decremented after a confirmed sell,
+    so every later strategy in the same tick still saw the full qty and fired its
+    own full-size sell — and since no owner was recorded yet (a legacy/warm
+    position, as NVDA was before 2026-08-04), the ownership conflict check didn't
+    catch it either. The fix drops the symbol from the in-tick position mirror the
+    moment a sell confirms, so a second strategy sees no position left to sell."""
+    cfg = _config(tmp_path, autonomy="auto")
+
+    results, _, broker = _run(
+        [_FixedStrategy(_SYMBOL, "sell"), _OtherStrategy(_SYMBOL, "sell")],
+        cfg,
+        state=_held_state(),
+    )
+
+    executed = [r for r in results if r.outcome == "executed"]
+    blocked = [r for r in results if r.outcome == "blocked"]
+    assert len(executed) == 1
+    assert len(blocked) == 1
+    assert "no position to sell" in blocked[0].risk_decision.reason
+    assert len(broker._client.submitted) == 1
 
 
 def test_buy_blocked_when_symbol_owned_by_other_strategy(tmp_path):
