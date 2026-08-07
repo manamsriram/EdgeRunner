@@ -624,6 +624,50 @@ def precompute_signals(
     return cached
 
 
+def precompute_crypto_signals(
+    config: Config,
+    strategies: list,
+    cache_date: date,
+    bars_cache: dict | None = None,
+) -> int:
+    """Compute and cache buy/sell signals for crypto daily-bar strategies, once per UTC day.
+
+    Crypto trades 24/7 so there's no market-close boundary like equities have. Without
+    this, the crypto scheduler's 5-min tick calls strategy.generate() against a still-
+    forming "today" bar every tick (288x/day) instead of a finalized one — DonchianBreakout
+    then fires spurious entries on a mid-day partial high and quick-exits on a partial low
+    within minutes, whipsawing on noise the backtest (built on completed daily bars) never
+    modeled. Pinning `end` to today's UTC midnight excludes today's forming bar, mirroring
+    the freeze equities get from precompute_signals() running post-close.
+
+    Skips non-crypto and intraday strategies (those already have their own live-bar paths).
+    """
+    import pandas as pd
+    end = datetime.combine(cache_date, datetime.min.time(), tzinfo=timezone.utc)
+    start = end - timedelta(days=_BARS_LOOKBACK_DAYS)
+    cached = 0
+    for strategy in strategies:
+        symbol = strategy.symbol
+        from trader.strategy.base import IntradayStrategy
+        if not is_crypto_symbol(symbol) or isinstance(strategy, IntradayStrategy):
+            continue
+        key = (type(strategy).__name__, symbol)
+        try:
+            bars = _fetch_bars(symbol, start, end, config, cache=bars_cache)
+            if bars.empty:
+                continue
+            signal = strategy.generate(bars, pd.Timestamp(end))
+            _premarket_signals[key] = (cache_date, signal)
+            cached += 1
+        except Exception:
+            logger.warning(
+                "precompute_crypto_signals failed for %s/%s", type(strategy).__name__, symbol,
+                exc_info=True,
+            )
+    logger.info("crypto signal precompute: %d signals cached for %s", cached, cache_date)
+    return cached
+
+
 def _fresh_client_order_id(broker: AlpacaBroker, base_id: str) -> str:
     """Bump `base_id` if it already maps to an old FILLED order at the broker.
 
@@ -966,7 +1010,7 @@ def _prepare_signal(
             _cache_key = (type(strategy).__name__, symbol)
             _today = asof.date() if hasattr(asof, "date") else asof
             _cached = _premarket_signals.get(_cache_key)
-            if _cached is not None and _cached[0] == _today and not is_crypto_symbol(symbol):
+            if _cached is not None and _cached[0] == _today:
                 signal = _cached[1]
                 logger.debug("using precomputed signal for %s/%s", type(strategy).__name__, symbol)
             else:

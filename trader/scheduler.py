@@ -287,6 +287,7 @@ def start_crypto_scheduler(
     )
     current_strategies = strategies
     crypto_universe_date: date | None = None
+    crypto_signal_precomputed_date: date | None = None
     tick_count = 0
 
     while True:
@@ -299,6 +300,20 @@ def start_crypto_scheduler(
                         config, broker, current_strategies
                     )
                     crypto_universe_date = today
+                    # Rebuilt strategy set (new symbols) needs its own fresh signal —
+                    # force the precompute below to re-run this tick instead of waiting
+                    # for tomorrow's UTC-day rollover.
+                    crypto_signal_precomputed_date = None
+
+            # Freeze Donchian signal generation to once per UTC day, off a finalized
+            # bar — otherwise every 5-min tick re-evaluates strategy.generate() against
+            # today's still-forming daily bar (crypto trades 24/7, unlike equities which
+            # stop moving after close). See precompute_crypto_signals docstring.
+            today = date.today()
+            if crypto_signal_precomputed_date != today:
+                from trader.pipeline import precompute_crypto_signals
+                precompute_crypto_signals(config, current_strategies, cache_date=today)
+                crypto_signal_precomputed_date = today
 
             results = run_once_crypto(config, current_strategies, broker, repo)
             for r in results:

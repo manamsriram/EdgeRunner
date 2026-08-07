@@ -929,3 +929,95 @@ def test_fresh_client_order_id_bumps_past_multiple_stale_fills():
         "abc-r1": SimpleNamespace(status="filled", filled_at=stale),
     })
     assert _fresh_client_order_id(broker, "abc") == "abc-r2"
+
+
+# ---- precompute_crypto_signals: freeze crypto Donchian signals to once per UTC day ----
+
+from datetime import date as _date  # noqa: E402
+
+from trader.pipeline import _premarket_signals, precompute_crypto_signals  # noqa: E402
+
+
+class _RecordingStrategy(Strategy):
+    """Records every `asof` it's asked to decide on, and returns a fixed signal."""
+
+    def __init__(self, symbol: str, signal: Signal) -> None:
+        super().__init__(symbol)
+        self.seen_asof: list[pd.Timestamp] = []
+        self._signal = signal
+
+    def _decide(self, bars: pd.DataFrame, asof: pd.Timestamp) -> Signal:
+        self.seen_asof.append(asof)
+        return self._signal
+
+
+def _synthetic_bars(end: datetime, n: int = 5) -> pd.DataFrame:
+    idx = pd.date_range(end=end, periods=n, freq="D")
+    return pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}, index=idx
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clear_premarket_signal_cache():
+    _premarket_signals.clear()
+    yield
+    _premarket_signals.clear()
+
+
+def test_precompute_crypto_signals_pins_end_to_utc_midnight_not_now(monkeypatch):
+    """The whole point of the freeze: `asof` passed to generate() must be today's UTC
+    midnight boundary (a finalized bar), never live "now" — otherwise every 5-min crypto
+    tick re-evaluates against a still-forming bar and whipsaws (root cause of the crypto
+    Donchian losses)."""
+    cache_date = _date(2026, 8, 10)
+    expected_midnight = pd.Timestamp(datetime(2026, 8, 10, tzinfo=timezone.utc))
+
+    captured: dict[str, Any] = {}
+
+    def _fake_fetch_bars(symbol, start, end, config, cache=None):
+        captured["start"] = start
+        captured["end"] = end
+        return _synthetic_bars(end)
+
+    monkeypatch.setattr("trader.pipeline._fetch_bars", _fake_fetch_bars)
+
+    strategy = _RecordingStrategy("BTC/USD", Signal("BTC/USD", "buy", 1.0, "test"))
+    cached = precompute_crypto_signals(_config_min(), [strategy], cache_date=cache_date)
+
+    assert cached == 1
+    assert captured["end"] == expected_midnight
+    assert strategy.seen_asof == [expected_midnight]
+    key = (type(strategy).__name__, "BTC/USD")
+    assert _premarket_signals[key][0] == cache_date
+    assert _premarket_signals[key][1].side == "buy"
+
+
+def test_precompute_crypto_signals_skips_equity_and_intraday_strategies(monkeypatch):
+    calls: list[str] = []
+
+    def _fake_fetch_bars(symbol, start, end, config, cache=None):
+        calls.append(symbol)
+        return _synthetic_bars(end)
+
+    monkeypatch.setattr("trader.pipeline._fetch_bars", _fake_fetch_bars)
+
+    equity_strategy = _RecordingStrategy("AAPL", Signal("AAPL", "hold", 0.0, "n/a"))
+    crypto_strategy = _RecordingStrategy("ETH/USD", Signal("ETH/USD", "hold", 0.0, "n/a"))
+
+    cached = precompute_crypto_signals(
+        _config_min(), [equity_strategy, crypto_strategy], cache_date=_date(2026, 8, 10)
+    )
+
+    assert cached == 1
+    assert calls == ["ETH/USD"]
+    assert (type(equity_strategy).__name__, "AAPL") not in _premarket_signals
+
+
+def _config_min() -> Config:
+    return Config(
+        alpaca_api_key="k", alpaca_secret_key="s", alpaca_paper=True,
+        autonomy="manual", openai_api_key=None, anthropic_api_key=None,
+        portfolio_db_path=":memory:", kill_switch_path="ks.flag",
+        risk=RiskLimits(),
+    )
