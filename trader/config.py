@@ -62,10 +62,7 @@ class RiskLimits:
     require_daily_pnl_check: bool = True    # False for CCXT (no last_equity available)
     daily_loss_halt_enabled: bool = False   # opt-in: halt NEW BUYS after daily loss hits daily_loss_limit_pct (env: DAILY_LOSS_HALT_ENABLED)
     stop_loss_pct: float = 0.08             # exit equity/ETF position if down this fraction from avg entry
-    crypto_stop_loss_pct: float = 0.08      # matches equity — 5% was tighter than crypto's own
-                                             # volatility, tripping on ordinary noise (Aug 4 incident:
-                                             # LINK -3.7%, XRP -7.2%, CRV -6.4%, DOT -0.7% all stopped
-                                             # out well within normal daily crypto swings)
+    crypto_stop_loss_pct: float = 0.05      # tighter stop for crypto — more volatile
     # Broker GTC stop is stop-LIMIT, not stop-market: caps worst-case fill slippage on
     # thin/gappy names. Trigger stays at stop_price; limit sits this far below it. If
     # the gap blows through the limit and the stop goes unfilled, the software stop
