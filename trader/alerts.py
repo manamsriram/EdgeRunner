@@ -28,8 +28,13 @@ def send_alert(
     alert_email: str | None = None,
     smtp_user: str | None = None,
     smtp_password: str | None = None,
+    email_body: str | None = None,
 ) -> None:
-    """Fire Slack webhook and/or email alert; swallows all errors."""
+    """Fire Slack webhook and/or email alert; swallows all errors.
+
+    `email_body` lets callers send a more detailed message to email while
+    keeping the Slack/subject text short; defaults to `message` when omitted.
+    """
     if webhook_url:
         try:
             resp = requests.post(webhook_url, json={"text": message}, timeout=5)
@@ -43,7 +48,7 @@ def send_alert(
             msg["Subject"] = f"EdgeRunner: {message[:80]}"
             msg["From"] = smtp_user
             msg["To"] = alert_email
-            msg.set_content(message)
+            msg.set_content(email_body if email_body is not None else message)
             with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as smtp:
                 smtp.starttls()
                 smtp.login(smtp_user, smtp_password)

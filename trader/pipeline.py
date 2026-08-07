@@ -17,6 +17,7 @@ _ALPACA_MIN_ORDER = 10.0
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
+from trader.alert_bodies import get_email_body_builder
 from trader.alerts import send_alert
 from trader.config import Config
 from trader.data.alpaca_bars import get_daily_bars, get_daily_bars_batch, get_live_prices_batch, get_intraday_bars_batch
@@ -194,6 +195,9 @@ def run_pipeline(
             alert_email=config.alert_email,
             smtp_user=config.smtp_user,
             smtp_password=config.smtp_password,
+            email_body=get_email_body_builder("daily_loss_breaker").build(
+                state=state, config=config, asof=asof,
+            ),
         )
         run_pipeline._loss_alert_date = asof.date()  # type: ignore[attr-defined]
 
@@ -229,6 +233,9 @@ def run_pipeline(
                     alert_email=config.alert_email,
                     smtp_user=config.smtp_user,
                     smtp_password=config.smtp_password,
+                    email_body=get_email_body_builder("live_quote_failure").build(
+                        equity_symbols=equity_symbols, asof=asof,
+                    ),
                 )
                 run_pipeline._quote_alert_date = asof.date()  # type: ignore[attr-defined]
     else:
@@ -1405,7 +1412,7 @@ def _execute_signal(
                         "placed GTC stop for %s at %.2f (anchor %.4f, qty %.4f)",
                         symbol, stop_price, stop_anchor, stop_qty,
                     )
-                except Exception:
+                except Exception as _stop_exc:
                     logger.exception("stop order failed for %s — software stop remains active", symbol)
                     send_alert(
                         f"BROKER STOP FAILED {symbol}: position unprotected — "
@@ -1414,6 +1421,10 @@ def _execute_signal(
                         alert_email=config.alert_email,
                         smtp_user=config.smtp_user,
                         smtp_password=config.smtp_password,
+                        email_body=get_email_body_builder("broker_stop_failed").build(
+                            symbol=symbol, stop_qty=stop_qty, stop_price=stop_price,
+                            stop_anchor=stop_anchor, config=config, exc=_stop_exc,
+                        ),
                     )
                     # If the deployment requires a broker-side stop, a failed stop
                     # placement is not acceptable. Cancel the newly-bought shares
@@ -1477,12 +1488,19 @@ def _execute_signal(
         # position (outcome deferred to reconciliation) — telling the operator it filled
         # would defeat the whole fill_confirmed guard at the notification layer.
         _tag = "FILL" if filled_order is not None else "SUBMITTED(unconfirmed)"
+        _filled_qty = getattr(filled_order, "filled_qty", None) if filled_order is not None else None
+        _filled_px = getattr(filled_order, "filled_avg_price", None) if filled_order is not None else None
         send_alert(
             f"{_tag} {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",
             config.slack_webhook_url,
             alert_email=config.alert_email,
             smtp_user=config.smtp_user,
             smtp_password=config.smtp_password,
+            email_body=get_email_body_builder("order_fill").build(
+                tag=_tag, symbol=symbol, signal=signal, strategy=strategy,
+                risk_decision=risk_decision, filled_qty=_filled_qty, filled_px=_filled_px,
+                client_order_id=client_order_id, env=_env, state=state, run_id=run_id,
+            ),
         )
         return PipelineRun(
             run_id=run_id, symbol=symbol, signal=signal,
@@ -1620,6 +1638,11 @@ def _execute_csp_entry(
         alert_email=config.alert_email,
         smtp_user=config.smtp_user,
         smtp_password=config.smtp_password,
+        email_body=get_email_body_builder("csp_open").build(
+            contract=contract, symbol=symbol, collateral=collateral,
+            strategy_tag=strategy_tag, config=config, client_order_id=client_order_id,
+            broker_order_id=broker_order_id, run_id=run_id,
+        ),
     )
     return PipelineRun(
         run_id=run_id, symbol=symbol, signal=signal,
