@@ -23,34 +23,30 @@ logger = logging.getLogger(__name__)
 # or halted on Alpaca and excluded from the screened universe.
 _MAX_BAR_AGE = timedelta(hours=48)
 
-# All crypto pairs currently tradeable on Alpaca (USD-quoted only).
-# Updated as Alpaca adds listings; symbols not in this list are never screened.
+# Alpaca-tradeable USD pairs with backtested DonchianBreakout edge (2yr, 10bps
+# slippage + 25bps taker fee — matches docs/crypto_backtest_25bps.md methodology).
+# The screener only ranks BY VOLUME within this pool, so a symbol never enters
+# live rotation on liquidity alone — it must have proven edge first.
+#
+# Rerun 2026-08-07 (see docs/crypto_universe_validation.md) after the Aug 4 incident
+# traced 7 same-day stop-loss/quick-exits to alt pairs the strategy was never
+# validated on. The original 25-pair pool was liquidity-only with zero edge filter;
+# 12 of 25 were net losers under Donchian (BCH -70%, AAVE -55%, UNI -56%, LTC -53%,
+# BAT -52%, DOT -30%, LINK -28%, AVAX -19%, FIL -19%, ETH -18%, ADA -5%, YFI -3%) and
+# 4 had no data on Alpaca at all (MATIC, ALGO, ATOM, COMP — delisted/unsupported).
+# Revalidate periodically — edge composition drifts with market regime; this is a
+# point-in-time cut, not a permanent list. `scripts/backtest_crypto_candidates.py`
+# reproduces it.
 CRYPTO_CANDIDATE_UNIVERSE: tuple[str, ...] = (
     "BTC/USD",
-    "ETH/USD",
-    "SOL/USD",
-    "DOGE/USD",
-    "AVAX/USD",
-    "LINK/USD",
-    "UNI/USD",
-    "AAVE/USD",
     "XRP/USD",
-    "LTC/USD",
-    "BCH/USD",
-    "DOT/USD",
-    "MATIC/USD",
-    "ADA/USD",
-    "ALGO/USD",
-    "ATOM/USD",
-    "CRV/USD",
-    "GRT/USD",
+    "DOGE/USD",
+    "SOL/USD",
     "MKR/USD",
-    "BAT/USD",
-    "SUSHI/USD",
-    "YFI/USD",
-    "COMP/USD",
-    "FIL/USD",
+    "GRT/USD",
     "SHIB/USD",
+    "CRV/USD",
+    "SUSHI/USD",
 )
 
 
