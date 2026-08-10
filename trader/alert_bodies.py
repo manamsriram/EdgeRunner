@@ -77,36 +77,6 @@ class BrokerStopFailedBody(AlertEmailBody):
         )
 
 
-class OrderFillBody(AlertEmailBody):
-    def build(self, **ctx: Any) -> str:
-        tag = ctx["tag"]
-        symbol = ctx["symbol"]
-        signal = ctx["signal"]
-        strategy = ctx["strategy"]
-        risk_decision = ctx["risk_decision"]
-        filled_qty = ctx["filled_qty"]
-        filled_px = ctx["filled_px"]
-        client_order_id = ctx["client_order_id"]
-        env = ctx["env"]
-        state = ctx["state"]
-        run_id = ctx["run_id"]
-        return (
-            f"{tag}: {symbol} {signal.side.upper()}\n\n"
-            f"Strategy: {type(strategy).__name__}\n"
-            f"Signal reason: {signal.reason}\n"
-            f"Approved notional: ${risk_decision.approved_notional:,.2f}\n"
-            + (
-                f"Filled qty: {filled_qty}\nFilled avg price: ${float(filled_px):.4f}\n"
-                if filled_qty is not None and filled_px is not None else
-                "Fill not yet confirmed — status will be reconciled on a later tick.\n"
-            )
-            + f"Order id: {client_order_id}\n"
-            f"Environment: {env}\n"
-            f"Account equity: ${state.equity:,.2f}\n"
-            f"Run id: {run_id}"
-        )
-
-
 class CspOpenBody(AlertEmailBody):
     def build(self, **ctx: Any) -> str:
         contract = ctx["contract"]
@@ -131,12 +101,30 @@ class CspOpenBody(AlertEmailBody):
         )
 
 
+class TradeDigestBody(AlertEmailBody):
+    def build(self, **ctx: Any) -> str:
+        orders: list[dict] = ctx["orders"]
+        since: datetime = ctx["since"]
+        asof: datetime = ctx["asof"]
+        lines = [
+            f"{o['ts']}  {o['side'].upper():4s} {o['symbol']:10s} "
+            f"${o['notional']:,.2f}"
+            + (f" @ ${o['fill_price']:.4f}" if o.get("fill_price") is not None else "")
+            + f"  ({o.get('strategy_name') or 'unknown'})"
+            for o in orders
+        ]
+        return (
+            f"Daily trade digest: {len(orders)} fill(s) between "
+            f"{since.isoformat()} and {asof.isoformat()}\n\n" + "\n".join(lines)
+        )
+
+
 _BUILDERS: dict[str, type[AlertEmailBody]] = {
     "daily_loss_breaker": DailyLossBreakerBody,
     "live_quote_failure": LiveQuoteFailureBody,
     "broker_stop_failed": BrokerStopFailedBody,
-    "order_fill": OrderFillBody,
     "csp_open": CspOpenBody,
+    "trade_digest": TradeDigestBody,
 }
 
 

@@ -366,6 +366,29 @@ def run_pipeline(
     return results
 
 
+def run_daily_trade_digest(config: Config, repo, since: datetime, asof: datetime) -> int:
+    """Send one email summarizing every fill since `since`. Called once/day from the
+    scheduler — per-trade emails were too noisy (crypto ticks every 5min, 24/7), so
+    only Slack fires instantly on fills; email gets this daily rollup instead.
+
+    Returns the number of fills included (0 sends no email).
+    """
+    orders = repo.get_orders_by_status("filled", since.isoformat())
+    if not orders:
+        return 0
+    send_alert(
+        f"Daily trade digest: {len(orders)} fill(s)",
+        None,
+        alert_email=config.alert_email,
+        smtp_user=config.smtp_user,
+        smtp_password=config.smtp_password,
+        email_body=get_email_body_builder("trade_digest").build(
+            orders=orders, since=since, asof=asof,
+        ),
+    )
+    return len(orders)
+
+
 def _advance_state(state, result, strategy, repo):
     """Return updated AccountState after an approved trade within a tick."""
     from dataclasses import replace as _replace
@@ -1561,19 +1584,12 @@ def _execute_signal(
         # position (outcome deferred to reconciliation) — telling the operator it filled
         # would defeat the whole fill_confirmed guard at the notification layer.
         _tag = "FILL" if filled_order is not None else "SUBMITTED(unconfirmed)"
-        _filled_qty = getattr(filled_order, "filled_qty", None) if filled_order is not None else None
-        _filled_px = getattr(filled_order, "filled_avg_price", None) if filled_order is not None else None
+        # Slack only — per-trade emails are too noisy (crypto ticks every 5min, 24/7).
+        # A single digest email covering all fills goes out once/day instead; see
+        # run_daily_trade_digest.
         send_alert(
             f"{_tag} {symbol} {signal.side.upper()} ${risk_decision.approved_notional:.0f} {_env}",
             config.slack_webhook_url,
-            alert_email=config.alert_email,
-            smtp_user=config.smtp_user,
-            smtp_password=config.smtp_password,
-            email_body=get_email_body_builder("order_fill").build(
-                tag=_tag, symbol=symbol, signal=signal, strategy=strategy,
-                risk_decision=risk_decision, filled_qty=_filled_qty, filled_px=_filled_px,
-                client_order_id=client_order_id, env=_env, state=state, run_id=run_id,
-            ),
         )
         return PipelineRun(
             run_id=run_id, symbol=symbol, signal=signal,

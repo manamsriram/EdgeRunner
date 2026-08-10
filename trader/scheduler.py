@@ -164,6 +164,7 @@ def start_scheduler(
     universe_date: date | None = None
     bandit_update_date: date | None = None
     signal_precomputed_date: date | None = None
+    digest_date: date | None = None
     tick_count = 0
     bandit_enabled = config.risk.bandit_weighting_shadow or config.risk.bandit_weighting_live
 
@@ -218,6 +219,20 @@ def start_scheduler(
                     # None = fetch failed; leave the date unset so the next closed tick retries.
                     if result is not None:
                         bandit_update_date = today
+
+            # Daily trade-fill digest email — one summary instead of one email per
+            # fill (crypto ticks every 5min/24/7 and would otherwise flood the inbox).
+            # Covers both equity and crypto fills since orders share one table.
+            if not market_open:
+                today = date.today()
+                if digest_date != today:
+                    from trader.pipeline import run_daily_trade_digest
+                    since = datetime.combine(today - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+                    try:
+                        run_daily_trade_digest(config, repo, since, datetime.now(timezone.utc))
+                    except Exception:
+                        logger.exception("daily trade digest failed — continuing")
+                    digest_date = today
 
             results = run_once(config, current_strategies, broker, repo, options_broker=options_broker)
             for r in results:
