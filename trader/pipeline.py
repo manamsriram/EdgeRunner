@@ -14,6 +14,10 @@ import os
 from dataclasses import dataclass
 
 _ALPACA_MIN_ORDER = 10.0
+# A same-trade pnl_pct this large is never a real fill — it's a bad print or an
+# unadjusted reverse split (e.g. TZA $3.92->$41.12 logged as +948%) corrupting
+# per-strategy stats. Drop the outcome instead of poisoning the average.
+_MAX_PLAUSIBLE_PNL_PCT = 0.90
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
@@ -565,19 +569,27 @@ def reconcile_order_statuses(broker, repo, max_age_days: int = 3) -> int:
             )
             last_buy, entry_price = None, 0.0
         if exit_price > 0 and entry_price > 0:
-            try:
-                repo.record_trade_outcome(TradeOutcomeRow(
-                    symbol=row["symbol"],
-                    strategy=row.get("strategy_name") or "unknown",
-                    regime=row.get("regime") or "unknown",
-                    side="buy", entry_price=entry_price, exit_price=exit_price,
-                    pnl_pct=(exit_price - entry_price) / entry_price,
-                    exit_reason="reconciled-exit",
-                    entry_overlay_rationale=(last_buy or {}).get("entry_rationale"),
-                    closed_at=datetime.now(timezone.utc).isoformat(),
-                ))
-            except Exception:
-                logger.warning("reconciliation: outcome record failed for %s", row["symbol"])
+            pnl_pct = (exit_price - entry_price) / entry_price
+            if abs(pnl_pct) > _MAX_PLAUSIBLE_PNL_PCT:
+                logger.warning(
+                    "reconciliation: implausible pnl_pct %.2f for %s (entry=%.4f exit=%.4f) "
+                    "— bad print or unadjusted split, outcome not recorded",
+                    pnl_pct, row["symbol"], entry_price, exit_price,
+                )
+            else:
+                try:
+                    repo.record_trade_outcome(TradeOutcomeRow(
+                        symbol=row["symbol"],
+                        strategy=row.get("strategy_name") or "unknown",
+                        regime=row.get("regime") or "unknown",
+                        side="buy", entry_price=entry_price, exit_price=exit_price,
+                        pnl_pct=pnl_pct,
+                        exit_reason="reconciled-exit",
+                        entry_overlay_rationale=(last_buy or {}).get("entry_rationale"),
+                        closed_at=datetime.now(timezone.utc).isoformat(),
+                    ))
+                except Exception:
+                    logger.warning("reconciliation: outcome record failed for %s", row["symbol"])
         else:
             logger.warning(
                 "reconciliation: missing fill prices for %s (entry=%.2f exit=%.2f) — "
@@ -1427,16 +1439,24 @@ def _execute_signal(
                 # trade_outcomes) isn't corrupted by mislabeled exits (e.g. a DipRecovery
                 # buy with its 2x catastrophe stop showing up as a SuperTrend loss).
                 _owner_name = state.position_owners.get((symbol, pool)) or type(strategy).__name__
-                try:
-                    repo.record_trade_outcome(TradeOutcomeRow(
-                        symbol=symbol, strategy=_owner_name, regime=regime,
-                        side="buy", entry_price=entry_price, exit_price=exit_price,
-                        pnl_pct=(exit_price - entry_price) / entry_price,
-                        exit_reason=exit_reason, entry_overlay_rationale=entry_rationale,
-                        closed_at=datetime.now(timezone.utc).isoformat(),
-                    ))
-                except Exception:
-                    logger.warning("failed to record trade outcome for %s", symbol)
+                pnl_pct = (exit_price - entry_price) / entry_price
+                if abs(pnl_pct) > _MAX_PLAUSIBLE_PNL_PCT:
+                    logger.warning(
+                        "implausible pnl_pct %.2f for %s (entry=%.4f exit=%.4f) — bad print "
+                        "or unadjusted split, outcome not recorded", pnl_pct, symbol,
+                        entry_price, exit_price,
+                    )
+                else:
+                    try:
+                        repo.record_trade_outcome(TradeOutcomeRow(
+                            symbol=symbol, strategy=_owner_name, regime=regime,
+                            side="buy", entry_price=entry_price, exit_price=exit_price,
+                            pnl_pct=pnl_pct,
+                            exit_reason=exit_reason, entry_overlay_rationale=entry_rationale,
+                            closed_at=datetime.now(timezone.utc).isoformat(),
+                        ))
+                    except Exception:
+                        logger.warning("failed to record trade outcome for %s", symbol)
         elif signal.side == "sell":
             logger.warning(
                 "%s sell not confirmed filled in time — outcome deferred to "
