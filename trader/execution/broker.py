@@ -556,13 +556,18 @@ class AlpacaBroker:
                 msg = str(exc).lower()
                 avail = _insufficient_qty_available(exc)
                 if avail and avail >= 1:
+                    # GTC stops must be whole shares — avail is often fractional
+                    # (e.g. shares tied up in another order's held_for_orders),
+                    # and submitting it as-is under GTC gets rejected with
+                    # "fractional orders must be DAY orders" (code 42210000).
+                    whole_avail = int(avail)
                     logger.warning(
-                        "stop qty %d exceeds available %d for %s; retrying with available",
-                        whole_qty, avail, symbol,
+                        "stop qty %d exceeds available %.4f for %s; retrying with %d",
+                        whole_qty, avail, symbol, whole_avail,
                     )
-                    day_oid = f"{client_order_id}-avail"
+                    avail_oid = f"{client_order_id}-avail"
                     return self._submit_idempotent(
-                        client, _build_request(avail, coid=day_oid), day_oid
+                        client, _build_request(whole_avail, coid=avail_oid), avail_oid
                     )
                 if "hard-to-borrow" in msg:
                     logger.warning(

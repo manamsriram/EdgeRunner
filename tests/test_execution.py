@@ -535,6 +535,25 @@ def test_short_sale_rejection_exhausts_and_raises(monkeypatch):
 
 # ---- wait_for_fill ----
 
+INSUF_ERR = (
+    '{"code":40310000,"available":"8.2066702","existing_qty":"37.2066702",'
+    '"held_for_orders":"29","message":"insufficient qty available for order '
+    '(requested: 37, available: 8.2066702)","symbol":"XLF"}'
+)
+
+
+def test_insufficient_qty_retry_floors_fractional_avail_for_gtc():
+    # avail=8.2066702 must not be submitted as-is under GTC — Alpaca rejects
+    # fractional qty on GTC stops with "fractional orders must be DAY orders".
+    client = StopRejectClient([INSUF_ERR])
+    order = _broker(client).place_stop_order(
+        symbol="XLF", qty=37, stop_price=10.0, client_order_id="stop-xlf"
+    )
+    assert float(order.qty) == 8.0
+    assert order.client_order_id == "stop-xlf-avail"
+    assert str(order.time_in_force).lower().endswith("gtc")
+
+
 def test_wait_for_fill_returns_order_once_filled():
     client = FakeClient()
     client._by_coid["buy-1"] = SimpleNamespace(status="filled", filled_qty="5")
