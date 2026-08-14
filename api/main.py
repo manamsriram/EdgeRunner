@@ -104,6 +104,10 @@ async def _scheduler_loop() -> None:
     from datetime import date as _date
     universe_date = None  # always None at start — loop fetches on first tick for dynamic mode
     signal_precomputed_date = None
+    digest_date = None
+    bandit_update_date = None
+    bandit_enabled = cfg.risk.bandit_weighting_shadow or cfg.risk.bandit_weighting_live
+    tick_count = 0
     while True:
         try:
             if cfg.risk.dynamic_universe:
@@ -118,7 +122,8 @@ async def _scheduler_loop() -> None:
                     strategies = strategies + _intraday_strategies  # re-append after refresh
                     universe_date = today
             from trader.scheduler import is_market_open as _is_open
-            if not await loop.run_in_executor(None, _is_open, broker):
+            market_open = await loop.run_in_executor(None, _is_open, broker)
+            if not market_open:
                 from datetime import date as _date, datetime as _dt, timezone as _tz
                 today = _date.today()
                 if signal_precomputed_date != today:
@@ -127,7 +132,43 @@ async def _scheduler_loop() -> None:
                         None, precompute_signals, cfg, strategies, _dt.now(_tz.utc)
                     )
                     signal_precomputed_date = today
+
+                # Nightly bandit refresh — first closed tick of the day.
+                if bandit_enabled and bandit_update_date != today:
+                    from trader.scheduler import run_nightly_bandit_update
+                    ci = 1 + max(
+                        (ci for _, ci in
+                         (await loop.run_in_executor(None, repo.get_all_bandit_weights)).values()),
+                        default=0,
+                    )
+                    result = await loop.run_in_executor(
+                        None, run_nightly_bandit_update, cfg, broker, repo, ci
+                    )
+                    if result is not None:  # None = fetch failed, retry next closed tick
+                        bandit_update_date = today
+
+                # Daily trade-fill digest — one summary/day instead of one email/fill.
+                if digest_date != today:
+                    from datetime import timedelta as _td
+                    from trader.pipeline import run_daily_trade_digest
+                    since = _dt.combine(today - _td(days=1), _dt.min.time(), tzinfo=_tz.utc)
+                    try:
+                        await loop.run_in_executor(
+                            None, run_daily_trade_digest, cfg, repo, since, _dt.now(_tz.utc)
+                        )
+                    except Exception:
+                        logger.exception("daily trade digest failed — continuing")
+                    digest_date = today
+
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
+
+            # Settle orders stuck at 'submitted' against broker truth every ~15 ticks.
+            if tick_count % 15 == 0:
+                from trader.pipeline import reconcile_order_statuses
+                n = await loop.run_in_executor(None, reconcile_order_statuses, broker, repo)
+                if n:
+                    logger.info("order-status reconciliation updated %d order(s)", n)
+            tick_count += 1
         except Exception:
             logger.exception("scheduler tick error")
         await loop.run_in_executor(None, _trim_heap, "equity")
@@ -185,6 +226,7 @@ async def _crypto_scheduler_loop() -> None:
 
     from datetime import date as _date
     crypto_universe_date = _date.today() if cfg.risk.dynamic_crypto_universe else None
+    tick_count = 0
     while True:
         try:
             if cfg.risk.dynamic_crypto_universe:
@@ -198,6 +240,14 @@ async def _crypto_scheduler_loop() -> None:
                     )
                     crypto_universe_date = today
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
+
+            # Settle orders stuck at 'submitted' against broker truth every ~15 ticks.
+            if tick_count % 15 == 0:
+                from trader.pipeline import reconcile_order_statuses
+                n = await loop.run_in_executor(None, reconcile_order_statuses, broker, repo)
+                if n:
+                    logger.info("crypto order-status reconciliation updated %d order(s)", n)
+            tick_count += 1
         except Exception:
             logger.exception("crypto scheduler tick error")
         await loop.run_in_executor(None, _trim_heap, "crypto")

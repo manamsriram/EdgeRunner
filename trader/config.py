@@ -77,8 +77,10 @@ class RiskLimits:
     # Observed 2026-07-23: SuperTrend stop-loss exits still averaging ~-16% vs the
     # configured 8% even after the floor-cap fix. Escalate to a market order once the
     # limit has rested unfilled past this window, so a bad fill is bounded and prompt
-    # instead of drifting for days.
-    stop_loss_escalation_minutes: float = 10.0  # env: STOP_LOSS_ESCALATION_MINUTES
+    # instead of drifting for days. Re-observed 2026-08-12 with the 10min default still
+    # in place: LCID -13.9%, AAPL -10.6%, GRAB -9.3% vs 8% configured — most of that gap
+    # is time spent resting unfilled, not the initial gap-through. Tightened to 3min.
+    stop_loss_escalation_minutes: float = 3.0  # env: STOP_LOSS_ESCALATION_MINUTES
     # Hard ceiling on effective stop distance regardless of a strategy's own
     # stop_loss_multiplier — applies to every strategy, current or future. A strategy
     # widening its stop for a legitimate reason (DipRecovery's catastrophe stop) must
@@ -254,7 +256,7 @@ def load_config() -> Config:
             require_spread_data=_env_bool("REQUIRE_SPREAD_DATA", False),
             require_broker_stop=_env_bool("REQUIRE_BROKER_STOP", False),
             stop_limit_slippage_pct=float(os.getenv("STOP_LIMIT_SLIPPAGE_PCT", "0.03")),
-            stop_loss_escalation_minutes=float(os.getenv("STOP_LOSS_ESCALATION_MINUTES", "10.0")),
+            stop_loss_escalation_minutes=float(os.getenv("STOP_LOSS_ESCALATION_MINUTES", "3.0")),
             max_stop_loss_pct=float(os.getenv("MAX_STOP_LOSS_PCT", "0.15")),
             min_equity_price=float(os.getenv("MIN_EQUITY_PRICE", "5.0")),
             block_leveraged_etfs=_env_bool("BLOCK_LEVERAGED_ETFS", True),
