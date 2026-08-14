@@ -663,6 +663,29 @@ def test_wait_for_fill_tolerates_lookup_errors(monkeypatch):
     assert order.status == "filled"
 
 
+def test_get_open_stop_qty_recognizes_real_alpaca_enums():
+    # Real Alpaca SDK order objects carry OrderType/OrderSide enum instances, not
+    # plain strings. str(OrderType.STOP_LIMIT) is "OrderType.STOP_LIMIT" — comparing
+    # that against {"stop", "stop_limit"} always failed, so get_open_stop_qty read 0
+    # coverage even when a stop order fully protected the position, and the pipeline's
+    # top-up logic kept firing redundant/failing stop orders every tick.
+    from alpaca.trading.enums import OrderSide, OrderType
+
+    client = FakeInsufClient()
+    client.open_orders = [
+        SimpleNamespace(
+            id="stop-real-1",
+            symbol="AAPL",
+            order_type=OrderType.STOP_LIMIT,
+            type=OrderType.STOP_LIMIT,
+            side=OrderSide.SELL,
+            qty="10",
+            stop_price="95.0",
+        )
+    ]
+    assert _broker(client).get_open_stop_qty("AAPL") == 10.0
+
+
 def test_place_stop_order_raises_for_fractional_qty():
     # Alpaca GTC stops must be whole shares; a fractional position must not be
     # silently left unprotected.

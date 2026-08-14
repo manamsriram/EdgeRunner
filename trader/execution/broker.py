@@ -44,6 +44,17 @@ def client_order_id_for(
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
+def _enum_str(value: Any) -> str:
+    """Lowercase string for an Alpaca enum or plain string alike.
+
+    Alpaca SDK order objects return real enum instances (e.g. OrderType.STOP_LIMIT)
+    whose str() is "OrderType.STOP_LIMIT", not "stop_limit" — comparing that against
+    a plain-string set silently never matches. `.value` gives the plain form; fall
+    back to str() for callers that already pass plain strings (tests, fakes).
+    """
+    return str(getattr(value, "value", value)).lower()
+
+
 def _normalize_position_symbol(position: Any) -> str:
     """Alpaca's positions endpoint drops the '/' from crypto pairs (BATUSD) while
     orders, quotes, and every strategy's `symbol` use the slash form (BAT/USD).
@@ -641,13 +652,13 @@ class AlpacaBroker:
                 filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
             )
             for order in open_orders:
-                order_type = str(
+                order_type = _enum_str(
                     getattr(order, "order_type", None) or getattr(order, "type", "")
-                ).lower()
+                )
                 if (
                     order.symbol == symbol
                     and order_type in {"stop", "stop_limit"}
-                    and str(getattr(order, "side", "")).lower() == "sell"
+                    and _enum_str(getattr(order, "side", "")) == "sell"
                 ):
                     try:
                         client.cancel_order_by_id(str(order.id))
@@ -682,13 +693,13 @@ class AlpacaBroker:
             )
             stops: list[dict] = []
             for order in open_orders:
-                order_type = str(
+                order_type = _enum_str(
                     getattr(order, "order_type", None) or getattr(order, "type", "")
-                ).lower()
+                )
                 if (
                     order.symbol == symbol
                     and order_type in {"stop", "stop_limit"}
-                    and str(getattr(order, "side", "")).lower() == "sell"
+                    and _enum_str(getattr(order, "side", "")) == "sell"
                 ):
                     try:
                         qty = float(getattr(order, "qty", 0) or 0)
