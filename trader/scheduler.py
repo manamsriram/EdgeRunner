@@ -588,6 +588,7 @@ if __name__ == "__main__":
         _crypto_thread = threading.Thread(
             target=start_crypto_scheduler,
             args=(cfg, _crypto_strategies, _broker, _repo),
+            kwargs={"poll_minutes": cfg.risk.crypto_poll_minutes},
             daemon=True,
             name="crypto-scheduler",
         )

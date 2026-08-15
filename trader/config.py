@@ -137,6 +137,13 @@ class RiskLimits:
     # over 14 days despite two rounds of targeted fixes (ADX filter, dip-depth/stop
     # tightening) and a tested market-stress gate — neither moved the win rate.
     disabled_strategies: frozenset[str] = frozenset()  # env: DISABLED_STRATEGIES
+    # Crypto stop-loss protection gap: Alpaca has no crypto stop-order support (market
+    # only), so crypto positions rely entirely on this poll loop to catch a breach —
+    # unlike equities, which also get a broker-side GTC stop between ticks. 2026-08-04:
+    # BAT/USD's software stop fired at -29% vs the 5% configured because the price
+    # gapped through between 5min polls on a thin alt. Tighter polling bounds (not
+    # eliminates) that gap.
+    crypto_poll_minutes: int = 5            # env: CRYPTO_POLL_MINUTES
 
 
 @dataclass(frozen=True)
@@ -263,6 +270,7 @@ def load_config() -> Config:
             disabled_strategies=frozenset(
                 s.strip() for s in (os.getenv("DISABLED_STRATEGIES") or "").split(",") if s.strip()
             ),
+            crypto_poll_minutes=int(os.getenv("CRYPTO_POLL_MINUTES", "5")),
         ),
         database_url=os.getenv("DATABASE_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),

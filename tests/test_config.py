@@ -31,3 +31,15 @@ def test_bandit_weighting_live_enabled_via_env(monkeypatch):
     monkeypatch.setenv("BANDIT_WEIGHTING_LIVE", "true")
     config = load_config()
     assert config.risk.bandit_weighting_live is True
+
+
+def test_crypto_poll_minutes_default(monkeypatch):
+    monkeypatch.delenv("CRYPTO_POLL_MINUTES", raising=False)
+    config = load_config()
+    assert config.risk.crypto_poll_minutes == 5
+
+
+def test_crypto_poll_minutes_via_env(monkeypatch):
+    monkeypatch.setenv("CRYPTO_POLL_MINUTES", "2")
+    config = load_config()
+    assert config.risk.crypto_poll_minutes == 2
