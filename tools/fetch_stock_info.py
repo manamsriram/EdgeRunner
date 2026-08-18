@@ -31,7 +31,7 @@ def get_stock_price(ticker, exchange=None, history=5):
                 ticker = f"{ticker}.NS"
             elif exchange.upper() == "BSE":
                 ticker = f"{ticker}.BO"
-            elif exchange.upper() in ["NYSE", "NASDAQ"]:
+            elif exchange.upper() in {"NYSE", "NASDAQ"}:
                 ticker = ticker  # Keep original for US stocks
         else:
             # Default to NSE for backward compatibility
@@ -112,7 +112,7 @@ def get_financial_statements(ticker, exchange=None):
                 ticker = f"{ticker}.NS"
             elif exchange.upper() == "BSE":
                 ticker = f"{ticker}.BO"
-            elif exchange.upper() in ["NYSE", "NASDAQ"]:
+            elif exchange.upper() in {"NYSE", "NASDAQ"}:
                 ticker = ticker  # Keep original for US stocks
         else:
             ticker = f"{ticker}.NS"  # Default to NSE
