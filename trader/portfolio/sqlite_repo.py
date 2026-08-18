@@ -298,14 +298,10 @@ class SQLiteRepository(PortfolioRepository):
     def try_approve_proposal(self, proposal_id: int) -> dict | None:
         with self._connect() as conn:
             cur = conn.execute(
-                "UPDATE proposals SET status=?, decided_at=? WHERE id=? AND status=?",
+                "UPDATE proposals SET status=?, decided_at=? WHERE id=? AND status=? RETURNING *",
                 (PROPOSAL_APPROVED, _now(), proposal_id, PROPOSAL_PENDING),
             )
-            if cur.rowcount == 0:
-                return None
-            row = conn.execute(
-                "SELECT * FROM proposals WHERE id=?", (proposal_id,)
-            ).fetchone()
+            row = cur.fetchone()
             return dict(row) if row else None
 
     # ---- reads ----
