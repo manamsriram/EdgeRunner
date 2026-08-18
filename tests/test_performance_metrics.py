@@ -4,7 +4,7 @@ No network, no Alpaca keys — all external calls are injected via mock broker/r
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +13,7 @@ from trader.performance.metrics import (
     LiveMetrics,
     _check_thresholds,
     _fifo_round_trips,
+    _parse_ts,
     _profit_factor,
     compute_live_metrics,
 )
@@ -53,7 +54,41 @@ def _make_config():
     return MagicMock()
 
 
+
+# ---- _parse_ts ----
+
+def test_parse_ts_valid_iso_offset():
+    ts_str = "2026-01-01T12:00:00+02:00"
+    dt = _parse_ts(ts_str)
+    assert dt.year == 2026
+    assert dt.month == 1
+    assert dt.hour == 12
+    assert dt.tzinfo is not None
+
+def test_parse_ts_valid_iso_z():
+    ts_str = "2026-01-01T12:00:00Z"
+    dt = _parse_ts(ts_str)
+    assert dt.year == 2026
+    assert dt.month == 1
+    assert dt.hour == 12
+    assert dt.tzinfo is not None
+    # 'Z' is replaced with '+00:00', which means UTC
+    assert dt.tzname() == "UTC+00:00" or str(dt.tzinfo) == "datetime.timezone.utc" or dt.utcoffset().total_seconds() == 0
+
+def test_parse_ts_invalid_fallback():
+    # If parsing fails, it should return datetime.now(timezone.utc)
+    # We can check that the returned object is a datetime in UTC
+    # and is very close to current time.
+    before = datetime.now(timezone.utc)
+    dt = _parse_ts("invalid-date")
+    after = datetime.now(timezone.utc)
+
+    assert dt.tzinfo is not None
+    assert dt.utcoffset().total_seconds() == 0
+    assert before <= dt <= after
+
 # ---- _fifo_round_trips ----
+
 
 def test_fifo_simple_win():
     fills = [
