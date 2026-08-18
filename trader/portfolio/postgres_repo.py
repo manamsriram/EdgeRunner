@@ -326,6 +326,13 @@ class PostgresRepository(PortfolioRepository):
 
     # ---- reads ----
 
+    def get_proposal(self, proposal_id: int) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM proposals WHERE id=%s", (proposal_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+
     def list_pending_proposals(self) -> list[dict]:
         with self._connect() as conn:
             with conn.cursor() as cur:

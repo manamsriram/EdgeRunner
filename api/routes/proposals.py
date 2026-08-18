@@ -22,15 +22,6 @@ from trader.portfolio.repository import (
 router = APIRouter(prefix="/proposals", tags=["proposals"])
 
 
-def _get_pending_proposal(proposal_id: int) -> dict | None:
-    """Fetch a pending proposal by id; used for reject (low race risk)."""
-    repo = get_repo()
-    for p in repo.list_pending_proposals():
-        if p["id"] == proposal_id:
-            return p
-    return None
-
-
 @router.get("")
 def list_proposals(username: str = Depends(get_current_user)):
     # Read through the shared TTL cache so the dashboard's REST refresh and the
@@ -137,8 +128,9 @@ def reject(proposal_id: int, username: str = Depends(get_current_user)):
     repo = get_repo()
     # Existence check reads the DB directly (not the cache): we want to catch a
     # proposal that was just approved by a concurrent request even if our cache
-    # is stale. _get_pending_proposal already does this.
-    if _get_pending_proposal(proposal_id) is None:
+    # is stale.
+    proposal = repo.get_proposal(proposal_id)
+    if proposal is None or proposal.get("status") != PROPOSAL_PENDING:
         raise HTTPException(status_code=409, detail="proposal already resolved or not found")
     repo.set_proposal_status(proposal_id, PROPOSAL_REJECTED)
     invalidate()
