@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import closing
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -165,18 +166,20 @@ def _ensure_history_schema() -> None:
     global _history_schema_initialized
     if _history_schema_initialized:
         return
-    with _pg_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(_HISTORY_SCHEMA)
+    with closing(_pg_connect()) as conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(_HISTORY_SCHEMA)
     _history_schema_initialized = True
 
 
 def save_query(username: str, query: str, response: str) -> None:
     _ensure_history_schema()
-    with _pg_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO queries (username, query, response, timestamp) "
-                "VALUES (%s, %s, %s, %s)",
-                (username, query, response, datetime.now(timezone.utc).isoformat()),
-            )
+    with closing(_pg_connect()) as conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO queries (username, query, response, timestamp) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (username, query, response, datetime.now(timezone.utc).isoformat()),
+                )
