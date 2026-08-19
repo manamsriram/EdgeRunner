@@ -162,6 +162,9 @@ class PortfolioRepository(ABC):
     def list_pending_proposals(self) -> list[dict]: ...
 
     @abstractmethod
+    def get_proposal(self, proposal_id: int) -> dict | None: ...
+
+    @abstractmethod
     def set_proposal_status(self, proposal_id: int, status: str) -> None: ...
 
     @abstractmethod
