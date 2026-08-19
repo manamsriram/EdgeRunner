@@ -315,12 +315,9 @@ class PostgresRepository(PortfolioRepository):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE proposals SET status=%s, decided_at=%s WHERE id=%s AND status=%s",
+                    "UPDATE proposals SET status=%s, decided_at=%s WHERE id=%s AND status=%s RETURNING *",
                     (PROPOSAL_APPROVED, _now(), proposal_id, PROPOSAL_PENDING),
                 )
-                if cur.rowcount == 0:
-                    return None
-                cur.execute("SELECT * FROM proposals WHERE id=%s", (proposal_id,))
                 row = cur.fetchone()
                 return dict(row) if row else None
 
