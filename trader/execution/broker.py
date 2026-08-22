@@ -649,7 +649,9 @@ class AlpacaBroker:
             from alpaca.trading.enums import QueryOrderStatus
 
             open_orders = client.get_orders(
-                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN, symbols=[symbol], limit=500
+                )
             )
             for order in open_orders:
                 order_type = _enum_str(
@@ -689,7 +691,9 @@ class AlpacaBroker:
             from alpaca.trading.enums import QueryOrderStatus
 
             open_orders = client.get_orders(
-                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN, symbols=[symbol], limit=500
+                )
             )
             stops: list[dict] = []
             for order in open_orders:
@@ -923,7 +927,7 @@ def _build_order_filters(today: date) -> tuple[Any, Any]:
     from alpaca.trading.requests import GetOrdersRequest
 
     midnight = _dt.combine(today, _time.min, tzinfo=timezone.utc)
-    open_filter = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+    open_filter = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500)
     closed_today_filter = GetOrdersRequest(
         status=QueryOrderStatus.CLOSED, after=midnight, limit=500
     )

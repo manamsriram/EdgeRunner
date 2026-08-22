@@ -809,8 +809,11 @@ def _top_up_stop_coverage(broker, repo, state, config) -> None:
                 "topped up stop coverage for %s: +%d shares at %.2f (was covering %.4f of %.4f)",
                 symbol, shortfall, stop_price, covered, qty,
             )
-        except Exception:
-            logger.exception("stop coverage top-up failed for %s", symbol)
+        except Exception as exc:
+            if getattr(exc, "code", None) == 40310000 or "insufficient qty" in str(exc):
+                logger.warning("stop coverage top-up for %s: insufficient qty (%s)", symbol, exc)
+            else:
+                logger.exception("stop coverage top-up failed for %s", symbol)
 
 
 def _log_decision_features(*, config, repo, run_id, signal, bars, strategy_name, regime, mode) -> None:
