@@ -364,8 +364,9 @@ def _run_migrations() -> None:
         logger.exception("alembic upgrade failed")
         raise
     finally:
-        # env.py calls fileConfig(alembic.ini) which resets root logger to WARNING.
-        # Restore so all subsequent app INFO logs are visible.
+        # env.py calls fileConfig(alembic.ini), which resets root logger to WARNING
+        # (disable_existing_loggers=False now stops it from also silencing loggers
+        # created before this point, e.g. this module's). Restore the level too.
         logging.getLogger().setLevel(logging.INFO)
         if lock_conn is not None:
             lock_conn.close()  # closing the session releases the advisory lock

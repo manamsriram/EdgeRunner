@@ -10,7 +10,12 @@ from alembic import context
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which sets .disabled = True on
+    # every logger that already exists at this point — including api.main's
+    # module-level logger, created at import time before this runs in-process
+    # via api/main.py's lifespan handler. That silences its logger.info calls
+    # for the rest of the process; root.setLevel() alone doesn't undo it.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = None
 
