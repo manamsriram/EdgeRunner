@@ -21,6 +21,13 @@ services:
       # so logs survive up to the moment of the kill.
       - key: PYTHONUNBUFFERED
         value: "1"
+      # Equity dynamic-universe screener default (100) plus held positions was
+      # resuming 148 symbols/tick — confirmed via RSS checkpoints as the point
+      # equity's run_once never returns from before the 512Mi OOM kill. Cut to
+      # trim per-tick indicator/fetch load; held positions are still always
+      # unioned in regardless of this value (see _refresh_dynamic_universe).
+      - key: UNIVERSE_SIZE
+        value: "40"
       - key: ALPACA_PAPER
         value: "true"
       # Account-level circuit breaker: halt NEW buys once the day's drawdown hits
