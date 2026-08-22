@@ -16,6 +16,11 @@ services:
           property: connectionString
       - key: AUTONOMY
         value: auto
+      # Render pipes stdout (not a tty) so Python block-buffers it by default —
+      # on an OOM SIGKILL, unflushed log lines are lost. Force line buffering
+      # so logs survive up to the moment of the kill.
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: ALPACA_PAPER
         value: "true"
       # Account-level circuit breaker: halt NEW buys once the day's drawdown hits
