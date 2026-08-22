@@ -229,6 +229,12 @@ async def _crypto_scheduler_loop() -> None:
         logger.error("DATABASE_URL not set — crypto scheduler disabled")
         return
 
+    # Both scheduler loops spawn together at boot; without this stagger, equity's
+    # and crypto's cold-start work (universe build + first tick, heaviest work
+    # either loop does) lands in the same instant and their peak RSS stacks in
+    # the same process. 30s lets equity's cold start finish first.
+    await asyncio.sleep(30)
+
     loop = asyncio.get_running_loop()
     repo = await loop.run_in_executor(None, PostgresRepository, cfg.database_url)
 
