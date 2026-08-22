@@ -166,6 +166,12 @@ CREATE TABLE IF NOT EXISTS decision_features (
 );
 CREATE INDEX IF NOT EXISTS idx_decision_features_symbol_ts ON decision_features(symbol, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_decision_features_order_id ON decision_features(order_id);
+CREATE TABLE IF NOT EXISTS universe_state (
+    universe_type   TEXT PRIMARY KEY,
+    symbols         TEXT NOT NULL,
+    refreshed_date  TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
 -- SQLite enforces CHECK constraints from CREATE TABLE IF NOT EXISTS onward; older
 -- DBs that already have a decision_features table from a prior pre-edit run need
 -- a re-key via a follow-up migration. Phase 1 ships fresh, so this is a non-issue
@@ -587,6 +593,28 @@ class SQLiteRepository(PortfolioRepository):
                 "ts=excluded.ts, result_side=excluded.result_side, "
                 "result_strength=excluded.result_strength, result_reason=excluded.result_reason",
                 (symbol, side, datetime.now(timezone.utc).isoformat(), result_side, result_strength, result_reason),
+            )
+
+    def get_universe_state(self, universe_type: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT symbols, refreshed_date FROM universe_state WHERE universe_type=?",
+                (universe_type,),
+            ).fetchone()
+        if row is None:
+            return None
+        import json
+        return {"symbols": json.loads(row["symbols"]), "refreshed_date": row["refreshed_date"]}
+
+    def set_universe_state(self, universe_type: str, symbols: list[str], refreshed_date: str) -> None:
+        import json
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO universe_state (universe_type, symbols, refreshed_date, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (universe_type) DO UPDATE SET "
+                "symbols=excluded.symbols, refreshed_date=excluded.refreshed_date, updated_at=excluded.updated_at",
+                (universe_type, json.dumps(symbols), refreshed_date, _now()),
             )
 
     def record_options_position(self, position: OptionsPositionRow) -> int:

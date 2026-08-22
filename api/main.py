@@ -86,10 +86,26 @@ async def _scheduler_loop() -> None:
     _intraday_symbols = [s.strip().upper() for s in _raw_intraday.split(",") if s.strip()]
     _intraday_strategies = _build_intraday_strategies_for(_intraday_symbols)
 
+    from datetime import date as _date
+
     if cfg.risk.dynamic_universe:
-        symbols: list[str] = []
-        strategies = []
-        logger.info("equity scheduler started — dynamic universe mode, strategies built on first tick poll=60s")
+        _persisted = await loop.run_in_executor(None, repo.get_universe_state, "equity")
+        if _persisted:
+            symbols = _persisted["symbols"]
+            strategies = _build_strategies_for(cfg, symbols) + _intraday_strategies
+            try:
+                _universe_date_seed = _date.fromisoformat(_persisted["refreshed_date"])
+            except ValueError:
+                _universe_date_seed = None
+            logger.info(
+                "equity scheduler started — dynamic universe mode, resumed %d symbols from DB (refreshed %s)",
+                len(symbols), _persisted["refreshed_date"],
+            )
+        else:
+            symbols = []
+            strategies = []
+            _universe_date_seed = None
+            logger.info("equity scheduler started — dynamic universe mode, strategies built on first tick poll=60s")
     else:
         symbols = list(cfg.risk.allowlist or [])
         _overlap = set(_intraday_symbols) & set(symbols)
@@ -100,9 +116,9 @@ async def _scheduler_loop() -> None:
             )
         strategies = _build_strategies_for(cfg, symbols) + _intraday_strategies
         logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
+        _universe_date_seed = None
 
-    from datetime import date as _date
-    universe_date = None  # always None at start — loop fetches on first tick for dynamic mode
+    universe_date = _universe_date_seed  # resumed from DB for dynamic mode, else None
     signal_precomputed_date = None
     digest_date = None
     bandit_update_date = None
@@ -111,16 +127,19 @@ async def _scheduler_loop() -> None:
     while True:
         try:
             if cfg.risk.dynamic_universe:
-                from datetime import date as _date
                 from trader.scheduler import _refresh_dynamic_universe
                 today = _date.today()
                 first_run = universe_date is None
                 if universe_date != today and (first_run or today.weekday() == 0):
-                    strategies = await loop.run_in_executor(
+                    refreshed = await loop.run_in_executor(
                         None, _refresh_dynamic_universe, cfg, broker, strategies
                     )
-                    strategies = strategies + _intraday_strategies  # re-append after refresh
+                    strategies = refreshed + _intraday_strategies  # re-append after refresh
                     universe_date = today
+                    await loop.run_in_executor(
+                        None, repo.set_universe_state, "equity",
+                        list(dict.fromkeys(s.symbol for s in refreshed)), today.isoformat(),
+                    )
             from trader.scheduler import is_market_open as _is_open
             market_open = await loop.run_in_executor(None, _is_open, broker)
             if not market_open:
@@ -201,36 +220,50 @@ async def _crypto_scheduler_loop() -> None:
 
     broker = AlpacaBroker(cfg)
 
+    from datetime import date as _date
+
     if cfg.risk.dynamic_crypto_universe:
-        from trader.universe.crypto_screener import fetch_dynamic_crypto_universe
-        symbols = None
-        for attempt in range(1, 4):
+        _persisted = await loop.run_in_executor(None, repo.get_universe_state, "crypto")
+        if _persisted:
+            symbols = _persisted["symbols"]
+            strategies = _build_crypto_strategies_for(cfg, symbols)
             try:
-                symbols = await loop.run_in_executor(
-                    None, fetch_dynamic_crypto_universe, cfg, cfg.risk.crypto_universe_size
-                )
-                break
-            except Exception:
-                logger.warning("crypto screener attempt %d/3 failed", attempt, exc_info=True)
-                if attempt < 3:
-                    await asyncio.sleep(60)
-        if symbols is None:
-            fallback = list(cfg.risk.crypto_allowlist) or ["BTC/USD", "ETH/USD"]
-            logger.warning("crypto screener failed 3 times — falling back to %s", fallback)
-            symbols = fallback
-        strategies = _build_crypto_strategies_for(cfg, symbols)
-        logger.info("crypto scheduler started — dynamic universe size=%d poll=240s", len(symbols))
+                crypto_universe_date = _date.fromisoformat(_persisted["refreshed_date"])
+            except ValueError:
+                crypto_universe_date = None
+            logger.info(
+                "crypto scheduler started — dynamic universe mode, resumed %d symbols from DB (refreshed %s) poll=240s",
+                len(symbols), _persisted["refreshed_date"],
+            )
+        else:
+            from trader.universe.crypto_screener import fetch_dynamic_crypto_universe
+            symbols = None
+            for attempt in range(1, 4):
+                try:
+                    symbols = await loop.run_in_executor(
+                        None, fetch_dynamic_crypto_universe, cfg, cfg.risk.crypto_universe_size
+                    )
+                    break
+                except Exception:
+                    logger.warning("crypto screener attempt %d/3 failed", attempt, exc_info=True)
+                    if attempt < 3:
+                        await asyncio.sleep(60)
+            if symbols is None:
+                fallback = list(cfg.risk.crypto_allowlist) or ["BTC/USD", "ETH/USD"]
+                logger.warning("crypto screener failed 3 times — falling back to %s", fallback)
+                symbols = fallback
+            strategies = _build_crypto_strategies_for(cfg, symbols)
+            crypto_universe_date = _date.today()
+            logger.info("crypto scheduler started — dynamic universe size=%d poll=240s", len(symbols))
     else:
         strategies = _build_crypto_strategies(cfg)
+        crypto_universe_date = None
         logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
 
-    from datetime import date as _date
-    crypto_universe_date = _date.today() if cfg.risk.dynamic_crypto_universe else None
     tick_count = 0
     while True:
         try:
             if cfg.risk.dynamic_crypto_universe:
-                from datetime import date as _date
                 from trader.scheduler import _refresh_dynamic_crypto_universe
                 today = _date.today()
                 first_run = crypto_universe_date is None
@@ -239,6 +272,10 @@ async def _crypto_scheduler_loop() -> None:
                         None, _refresh_dynamic_crypto_universe, cfg, broker, strategies
                     )
                     crypto_universe_date = today
+                    await loop.run_in_executor(
+                        None, repo.set_universe_state, "crypto",
+                        list(dict.fromkeys(s.symbol for s in strategies)), today.isoformat(),
+                    )
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
 
             # Settle orders stuck at 'submitted' against broker truth every ~15 ticks.

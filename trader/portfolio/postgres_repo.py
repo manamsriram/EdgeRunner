@@ -167,6 +167,12 @@ CREATE TABLE IF NOT EXISTS decision_features (
 );
 CREATE INDEX IF NOT EXISTS idx_decision_features_symbol_ts ON decision_features(symbol, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_decision_features_order_id ON decision_features(order_id);
+CREATE TABLE IF NOT EXISTS universe_state (
+    universe_type   TEXT PRIMARY KEY,
+    symbols         TEXT NOT NULL,
+    refreshed_date  TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
 """
 
 
@@ -635,6 +641,31 @@ class PostgresRepository(PortfolioRepository):
                     "ts=EXCLUDED.ts, result_side=EXCLUDED.result_side, "
                     "result_strength=EXCLUDED.result_strength, result_reason=EXCLUDED.result_reason",
                     (symbol, side, _now(), result_side, result_strength, result_reason),
+                )
+
+    def get_universe_state(self, universe_type: str) -> dict | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT symbols, refreshed_date FROM universe_state WHERE universe_type=%s",
+                    (universe_type,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        import json
+        return {"symbols": json.loads(row["symbols"]), "refreshed_date": row["refreshed_date"]}
+
+    def set_universe_state(self, universe_type: str, symbols: list[str], refreshed_date: str) -> None:
+        import json
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO universe_state (universe_type, symbols, refreshed_date, updated_at) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (universe_type) DO UPDATE SET "
+                    "symbols=EXCLUDED.symbols, refreshed_date=EXCLUDED.refreshed_date, updated_at=EXCLUDED.updated_at",
+                    (universe_type, json.dumps(symbols), refreshed_date, _now()),
                 )
 
     def record_options_position(self, position: OptionsPositionRow) -> int:

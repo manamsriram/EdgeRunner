@@ -296,6 +296,17 @@ class PortfolioRepository(ABC):
         """Upsert the overlay result cached for (symbol, side)."""
 
     @abstractmethod
+    def get_universe_state(self, universe_type: str) -> dict | None:
+        """Return the last-persisted dynamic universe for `universe_type` ("equity"
+        or "crypto"): {symbols: list[str], refreshed_date: str} or None if never
+        set. DB-backed so a crash-restart resumes the existing universe instead of
+        re-running the (network-calling) screener on every boot."""
+
+    @abstractmethod
+    def set_universe_state(self, universe_type: str, symbols: list[str], refreshed_date: str) -> None:
+        """Upsert the persisted dynamic universe for `universe_type`."""
+
+    @abstractmethod
     def record_options_position(self, position: OptionsPositionRow) -> int:
         """Persist a newly opened options contract. Idempotent on `opening_order_id` —
         a retried record for the same order returns the existing row's id rather than
