@@ -42,6 +42,15 @@ def _rss_mb() -> float:
     return rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
 
 
+def _log_rss(tag: str) -> None:
+    """Mid-tick memory checkpoint — cheap /proc read, no gc/trim (that's _trim_heap's job).
+
+    Pinpoints which phase of a tick drives a memory spike, since the only other
+    RSS log point is after the whole tick + trim completes.
+    """
+    logger.info("%s rss=%.0fMB", tag, _rss_mb())
+
+
 def _trim_heap(tag: str) -> None:
     """Reclaim fragmented pandas heap after a tick — glibc won't return it on its own."""
     import ctypes
@@ -118,6 +127,7 @@ async def _scheduler_loop() -> None:
         logger.info("equity scheduler started — autonomy=%s poll=60s symbols=%s", cfg.autonomy, symbols)
         _universe_date_seed = None
 
+    _log_rss("equity post-startup-strategy-build")
     universe_date = _universe_date_seed  # resumed from DB for dynamic mode, else None
     signal_precomputed_date = None
     digest_date = None
@@ -140,6 +150,7 @@ async def _scheduler_loop() -> None:
                         None, repo.set_universe_state, "equity",
                         list(dict.fromkeys(s.symbol for s in refreshed)), today.isoformat(),
                     )
+                    _log_rss("equity post-universe-refresh")
             from trader.scheduler import is_market_open as _is_open
             market_open = await loop.run_in_executor(None, _is_open, broker)
             if not market_open:
@@ -178,8 +189,10 @@ async def _scheduler_loop() -> None:
                     except Exception:
                         logger.exception("daily trade digest failed — continuing")
                     digest_date = today
+                _log_rss("equity post-closed-market-tasks")
 
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
+            _log_rss("equity post-run_once")
 
             # Settle orders stuck at 'submitted' against broker truth every ~15 ticks.
             if tick_count % 15 == 0:
@@ -187,6 +200,7 @@ async def _scheduler_loop() -> None:
                 n = await loop.run_in_executor(None, reconcile_order_statuses, broker, repo)
                 if n:
                     logger.info("order-status reconciliation updated %d order(s)", n)
+                _log_rss("equity post-reconcile")
             tick_count += 1
         except Exception:
             logger.exception("scheduler tick error")
@@ -260,6 +274,7 @@ async def _crypto_scheduler_loop() -> None:
         crypto_universe_date = None
         logger.info("crypto scheduler loop started — autonomy=%s poll=240s symbols=%s", cfg.autonomy, list(cfg.risk.crypto_allowlist))
 
+    _log_rss("crypto post-startup-strategy-build")
     tick_count = 0
     while True:
         try:
@@ -276,7 +291,9 @@ async def _crypto_scheduler_loop() -> None:
                         None, repo.set_universe_state, "crypto",
                         list(dict.fromkeys(s.symbol for s in strategies)), today.isoformat(),
                     )
+                    _log_rss("crypto post-universe-refresh")
             await loop.run_in_executor(None, run_once_crypto, cfg, strategies, broker, repo)
+            _log_rss("crypto post-run_once")
 
             # Settle orders stuck at 'submitted' against broker truth every ~15 ticks.
             if tick_count % 15 == 0:
