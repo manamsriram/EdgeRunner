@@ -162,6 +162,7 @@ async def _scheduler_loop() -> None:
                         None, precompute_signals, cfg, strategies, _dt.now(_tz.utc)
                     )
                     signal_precomputed_date = today
+                    _log_rss("equity post-precompute")
 
                 # Nightly bandit refresh — first closed tick of the day.
                 if bandit_enabled and bandit_update_date != today:
@@ -176,6 +177,7 @@ async def _scheduler_loop() -> None:
                     )
                     if result is not None:  # None = fetch failed, retry next closed tick
                         bandit_update_date = today
+                    _log_rss("equity post-bandit-update")
 
                 # Daily trade-fill digest — one summary/day instead of one email/fill.
                 if digest_date != today:
@@ -189,6 +191,7 @@ async def _scheduler_loop() -> None:
                     except Exception:
                         logger.exception("daily trade digest failed — continuing")
                     digest_date = today
+                    _log_rss("equity post-digest")
                 _log_rss("equity post-closed-market-tasks")
 
             await loop.run_in_executor(None, run_once, cfg, strategies, broker, repo)
