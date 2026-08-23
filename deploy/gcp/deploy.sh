@@ -1,49 +1,49 @@
 #!/usr/bin/env bash
-# Deploy a tagged release to the live box.
-#   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh              # latest live-* tag
-#   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh live-2026-08-23   # a specific one
-#   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh live-2026-08-10   # rollback
+# Deploy the live box.
+#   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh          # whatever origin/live points at
+#   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh <sha>    # pin/rollback to a commit
 #
-# Live tracks TAGS, not main. Paper (Render) auto-deploys main and is where
-# changes are proven; this box moves only when you tag and run this. Rollback is
-# a checkout of the previous tag, not a revert commit written under pressure
-# while positions are open.
+# Live tracks the `live` branch, never `main`. `live` carries no commits of its
+# own — it is a pointer you fast-forward from `main` once a change has proven
+# itself on paper. Nothing is ever merged back from `live` into `main`.
+#
+#   git checkout live && git merge --ff-only main && git push origin live
+#
+# Then run this. Nothing on this box moves until you do.
 set -euo pipefail
 
 APP_DIR=/opt/edgerunner
+LIVE_BRANCH="${LIVE_BRANCH:-live}"
 cd "$APP_DIR/app"
 
-git fetch --tags --force --prune origin
+git fetch --force --prune origin "+refs/heads/*:refs/remotes/origin/*"
 
-REF="${1:-}"
-if [[ -z "$REF" ]]; then
-	REF=$(git tag -l 'live-*' --sort=-creatordate | head -1)
-	[[ -n "$REF" ]] || {
-		echo "!! No live-* tag exists. Create one first:"
-		echo "     git tag live-\$(date +%F) && git push origin live-\$(date +%F)"
-		exit 1
-	}
-fi
-git rev-parse -q --verify "refs/tags/${REF}" >/dev/null || {
-	echo "!! Tag '$REF' not found. Available:"
-	git tag -l 'live-*' --sort=-creatordate | head -10
+REF="${1:-origin/${LIVE_BRANCH}}"
+git rev-parse -q --verify "${REF}^{commit}" >/dev/null || {
+	echo "!! '$REF' is not a known commit or branch."
 	exit 1
 }
 
-CURRENT=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
-echo "==> $CURRENT  ->  $REF"
+CURRENT=$(git rev-parse --short HEAD)
+TARGET=$(git rev-parse --short "$REF")
+if [[ "$CURRENT" == "$TARGET" ]]; then
+	echo "==> already on $TARGET, restarting anyway"
+else
+	echo "==> $CURRENT -> $TARGET ($REF)"
+	git log --oneline "${CURRENT}..${TARGET}" 2>/dev/null | head -20 || true
+fi
 
-# Detached HEAD at the tag: there is no branch to accidentally fast-forward.
-git checkout -q --detach "refs/tags/${REF}"
+# Detached HEAD: no local branch to drift, and the deployed commit is explicit.
+git checkout -q --detach "$REF"
 "$APP_DIR/venv/bin/pip" install -q -r requirements.txt
 chown -R edgerunner:edgerunner "$APP_DIR/app"
 
 systemctl restart edgerunner
 sleep 5
 if systemctl is-active --quiet edgerunner; then
-	echo "==> running $REF"
+	echo "==> running $TARGET"
 else
-	echo "!! FAILED to start on $REF. Roll back with:"
+	echo "!! FAILED to start on $TARGET. Roll back with:"
 	echo "     sudo bash $0 $CURRENT"
 	systemctl --no-pager --lines=30 status edgerunner
 	exit 1

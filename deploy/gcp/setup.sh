@@ -5,7 +5,8 @@ set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/manamsriram/EdgeRunner.git}"
 APP_DIR=/opt/edgerunner
-DUCKDNS_DOMAIN="${DUCKDNS_DOMAIN:?set DUCKDNS_DOMAIN, e.g. myedgerunner}"
+DUCKDNS_DOMAIN="${DUCKDNS_DOMAIN:-edgerunner-live}"
+LIVE_BRANCH="${LIVE_BRANCH:-live}"
 DUCKDNS_TOKEN="${DUCKDNS_TOKEN:?set DUCKDNS_TOKEN from duckdns.org}"
 
 echo "==> packages"
@@ -32,23 +33,20 @@ id -u edgerunner &>/dev/null || useradd --system --home "$APP_DIR" --shell /usr/
 mkdir -p "$APP_DIR/state" /var/log/caddy
 
 echo "==> app"
-# Full clone, not --depth 1: shallow clones carry no tags, and live is pinned to
-# a tag (see deploy.sh). LIVE_REF overrides; default is the newest live-* tag,
-# falling back to main only when none exists yet (first-ever install).
+# Full clone, not --depth 1: deploy.sh needs real history to diff and roll back.
+# This box tracks the `live` branch, never `main` — see deploy.sh.
 if [[ ! -d "$APP_DIR/app/.git" ]]; then
 	git clone "$REPO_URL" "$APP_DIR/app"
 fi
 cd "$APP_DIR/app"
-git fetch --tags --force --prune origin
-LIVE_REF="${LIVE_REF:-$(git tag -l 'live-*' --sort=-creatordate | head -1)}"
-if [[ -n "$LIVE_REF" ]]; then
-	echo "   pinning to $LIVE_REF"
-	git checkout -q --detach "refs/tags/${LIVE_REF}"
-else
-	echo "   !! no live-* tag found — using main. Tag a release before trading:"
-	echo "      git tag live-\$(date +%F) && git push origin live-\$(date +%F)"
-	git checkout -q main && git pull -q --ff-only
+git fetch --force --prune origin "+refs/heads/*:refs/remotes/origin/*"
+if ! git rev-parse -q --verify "origin/${LIVE_BRANCH}^{commit}" >/dev/null; then
+	echo "!! Branch 'origin/${LIVE_BRANCH}' does not exist. Create it from main first:"
+	echo "     git checkout -b ${LIVE_BRANCH} main && git push -u origin ${LIVE_BRANCH}"
+	exit 1
 fi
+echo "   pinning to origin/${LIVE_BRANCH} ($(git rev-parse --short "origin/${LIVE_BRANCH}"))"
+git checkout -q --detach "origin/${LIVE_BRANCH}"
 python3.11 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install -q --upgrade pip
 "$APP_DIR/venv/bin/pip" install -q -r "$APP_DIR/app/requirements.txt"
@@ -73,7 +71,7 @@ if ! command -v caddy &>/dev/null; then
 		>/etc/apt/sources.list.d/caddy-stable.list
 	apt-get update -qq && apt-get install -y -qq caddy
 fi
-sed "s/YOUR-SUBDOMAIN/${DUCKDNS_DOMAIN}/" "$APP_DIR/app/deploy/gcp/Caddyfile" >/etc/caddy/Caddyfile
+sed "s/edgerunner-live\.duckdns\.org/${DUCKDNS_DOMAIN}.duckdns.org/" "$APP_DIR/app/deploy/gcp/Caddyfile" >/etc/caddy/Caddyfile
 chown -R caddy:caddy /var/log/caddy
 
 echo "==> duckdns updater"

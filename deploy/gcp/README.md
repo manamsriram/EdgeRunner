@@ -9,7 +9,7 @@ Always Free instance. Target cost: **$0/month**.
 |---|---|
 | `gcp.env` | Live environment. **Gitignored, contains secrets.** Generated from the Render paper service with live-specific values replaced. |
 | `setup.sh` | One-time VM provisioning: swap, venv, Caddy, DuckDNS, systemd. |
-| `deploy.sh` | Pull latest `main` + restart. |
+| `deploy.sh` | Deploy `origin/live` (or a pinned commit) + restart. |
 | `edgerunner.service` | systemd unit. Single uvicorn worker. |
 | `Caddyfile` | HTTPS reverse proxy, auto Let's Encrypt cert. |
 
@@ -56,7 +56,7 @@ gcloud compute firewall-rules create allow-http-https \
 ## Prerequisites
 
 1. **DuckDNS subdomain** — sign in at https://duckdns.org with GitHub, copy the
-   token from the top of the page, add a domain (e.g. `edgerunner-live`).
+   token from the top of the page, add a domain — registered: **`edgerunner-live`**.
    Pass the **name only** as `DUCKDNS_DOMAIN` — `edgerunner-live`, not
    `edgerunner-live.duckdns.org`; the script appends the suffix itself.
    Needed because Vercel is HTTPS: browsers hard-block HTTPS→HTTP requests, and
@@ -79,7 +79,7 @@ gcloud compute ssh edgerunner-live --zone=us-central1-a
 sudo mkdir -p /opt/edgerunner && sudo mv ~/gcp.env /opt/edgerunner/gcp.env
 sudo nano /opt/edgerunner/gcp.env      # fill the three REPLACE_WITH_ placeholders
 git clone --depth 1 https://github.com/manamsriram/EdgeRunner.git /tmp/er
-sudo DUCKDNS_DOMAIN=your-subdomain DUCKDNS_TOKEN=your-token \
+sudo DUCKDNS_DOMAIN=edgerunner-live DUCKDNS_TOKEN=<your-duckdns-token> \
      bash /tmp/er/deploy/gcp/setup.sh
 ```
 
@@ -87,7 +87,7 @@ Verify:
 
 ```bash
 journalctl -u edgerunner -f
-curl https://your-subdomain.duckdns.org/
+curl https://edgerunner-live.duckdns.org/
 free -h          # confirm 4G swap present
 ```
 
@@ -132,7 +132,7 @@ anyway, so this costs nothing today.
 Add to Vercel, then redeploy:
 
 ```
-VITE_LIVE_API_URL=https://your-subdomain.duckdns.org
+VITE_LIVE_API_URL=https://edgerunner-live.duckdns.org
 ```
 
 Set `FRONTEND_ORIGIN` in `gcp.env` to the Vercel URL or CORS will reject the
@@ -142,34 +142,44 @@ The "Real money" nav group (Calendar / Approvals / Controls) reads this variable
 If it's unset the frontend silently falls back to `VITE_API_URL` — meaning those
 tabs would show **paper** data under a REAL MONEY badge. Set it before shipping.
 
-## Releases — live tracks tags, not `main`
+## Releases — live tracks the `live` branch, never `main`
 
-Paper (Render) auto-deploys `main` and is where changes get proven. This box
-moves only when you tag a release and deploy it explicitly.
-
-```bash
-# on your laptop, once a change has run clean on paper for a few days
-git tag live-2026-08-23
-git push origin live-2026-08-23
-
-# on the VM
-sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh              # newest live-* tag
-sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh live-2026-08-23   # a specific one
+```
+main  ──●──●──●──●──●──●──▶   Render paper + Vercel, auto-deploy every push
+              │
+             live                GCP live box, moves only when you say so
 ```
 
-Rollback is the same command with an older tag:
+`live` carries **no commits of its own**. It is a pointer you fast-forward from
+`main` once a change has proven itself on paper. Nothing is ever merged back
+from `live` into `main` — there is nothing to merge back, which is the point.
 
 ```bash
-sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh live-2026-08-10
+# laptop — promote main to live
+git checkout live
+git merge --ff-only main
+git push origin live
+
+# VM — nothing moves until this runs
+sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh
 ```
 
-Why tags and not a `release` branch: a branch is a mutable pointer needing
-cherry-picks and merges, and it drifts from what's actually deployed. A tag is
-immutable — `git describe` on the box tells you exactly what's running, and
-rolling back is a checkout rather than a revert commit written under pressure
-while positions are open. `deploy.sh` checks out a detached HEAD so there's no
-branch to fast-forward by accident, and prints the rollback command if the
-service fails to start on the new tag.
+`--ff-only` is what keeps `live` a pure subset of `main`. If it refuses, `live`
+has drifted — someone committed directly to it. Fix that rather than forcing.
+
+Rollback pins a commit directly:
+
+```bash
+sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh a1b2c3d
+```
+
+`deploy.sh` checks out a detached HEAD (no local branch to drift), prints the
+commits being introduced before it switches, and prints the exact rollback
+command if the service fails to start.
+
+**Frontend note:** Vercel builds from `main`, and one frontend serves both
+accounts. UI changes — including the Real money tabs — must be on `main` to
+exist at all. Only the backend is pinned to `live`.
 
 No auto-deploy on push, deliberately. This service holds real money; updates
 should be a decision, not a side effect of merging.
