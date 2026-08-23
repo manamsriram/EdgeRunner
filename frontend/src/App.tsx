@@ -23,6 +23,10 @@ export default function App() {
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/calendar" element={<Calendar />} />
+            {/* Live calendar is auth-gated in the UI and again server-side via
+                PROTECT_READS on the GCP deployment — the route guard alone only
+                hides the tab, it doesn't protect the endpoint. */}
+            <Route path="/calendar/live" element={<RequireAuth><Calendar account="live" /></RequireAuth>} />
             <Route path="/approvals" element={<RequireAuth><Approvals /></RequireAuth>} />
             <Route path="/analysis" element={<Analysis />} />
             <Route path="/controls" element={<RequireAuth><Controls /></RequireAuth>} />

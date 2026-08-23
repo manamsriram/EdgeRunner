@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 logger = logging.getLogger(__name__)
 
-from api.deps import get_broker, get_repo
+from api.deps import get_broker, get_repo, require_read_auth
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -27,7 +27,7 @@ def _cached(key: str, compute):
 
 
 @router.get("/positions")
-def positions():
+def positions(_user: str | None = Depends(require_read_auth)):
     try:
         return _cached("positions", lambda: get_broker().get_positions())
     except Exception:
@@ -36,12 +36,12 @@ def positions():
 
 
 @router.get("/orders")
-def orders():
+def orders(_user: str | None = Depends(require_read_auth)):
     return get_repo().get_orders(limit=50)
 
 
 @router.get("/history")
-def portfolio_history():
+def portfolio_history(_user: str | None = Depends(require_read_auth)):
     history = _cached("history", lambda: get_broker().get_portfolio_history())
     if history is None:
         return {"timestamp": [], "equity": []}

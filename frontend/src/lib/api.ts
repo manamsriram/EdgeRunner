@@ -1,15 +1,24 @@
 import axios from 'axios'
+import type { InternalAxiosRequestConfig } from 'axios'
 import { supabase } from './supabase'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/',
 })
 
+// Second backend: the real-money deployment on the GCP VM. Separate service and
+// separate database from paper — the schema has no account column, so the two
+// must never share one. Approvals and Controls talk only to this one; paper runs
+// unattended on AUTONOMY=auto and has nothing to approve.
+export const liveApi = axios.create({
+  baseURL: import.meta.env.VITE_LIVE_API_URL ?? import.meta.env.VITE_API_URL ?? '/',
+})
+
 // Bearer token from the current Supabase session, not a cookie: frontend (Vercel)
 // and backend (Render) are different domains, and browsers increasingly block or
 // partition third-party cookies regardless of SameSite/Secure. Public routes just
 // never check this header server-side, so sending it (or not) on those is harmless.
-api.interceptors.request.use(async (config) => {
+const attachBearer = async (config: InternalAxiosRequestConfig) => {
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token
   if (token) {
@@ -17,12 +26,14 @@ api.interceptors.request.use(async (config) => {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
-})
+}
+api.interceptors.request.use(attachBearer)
+liveApi.interceptors.request.use(attachBearer)
 
-// ---- proposals ----
-export const getProposals = () => api.get<Proposal[]>('/api/proposals')
-export const approveProposal = (id: number) => api.post(`/api/proposals/${id}/approve`)
-export const rejectProposal = (id: number) => api.post(`/api/proposals/${id}/reject`)
+// ---- proposals (live money only) ----
+export const getProposals = () => liveApi.get<Proposal[]>('/api/proposals')
+export const approveProposal = (id: number) => liveApi.post(`/api/proposals/${id}/approve`)
+export const rejectProposal = (id: number) => liveApi.post(`/api/proposals/${id}/reject`)
 
 // ---- portfolio ----
 export const getPositions = () => api.get<Position[]>('/api/portfolio/positions')
@@ -35,16 +46,17 @@ export const getPerformance = () => api.get<PerformanceMetrics>('/api/performanc
 
 // ---- calendar ----
 export const getCalendar = () => api.get<CalendarDay[]>('/api/calendar')
+export const getLiveCalendar = () => liveApi.get<CalendarDay[]>('/api/calendar')
 
-// ---- controls ----
+// ---- controls (live money only) ----
 export const getKillSwitch = () =>
-  api.get<{ engaged: boolean; note: string | null }>('/api/controls/kill-switch')
-export const engageKillSwitch = () => api.post('/api/controls/kill-switch/engage')
-export const disengageKillSwitch = () => api.post('/api/controls/kill-switch/disengage')
-export const getAutonomy = () => api.get<{ mode: string }>('/api/controls/autonomy')
+  liveApi.get<{ engaged: boolean; note: string | null }>('/api/controls/kill-switch')
+export const engageKillSwitch = () => liveApi.post('/api/controls/kill-switch/engage')
+export const disengageKillSwitch = () => liveApi.post('/api/controls/kill-switch/disengage')
+export const getAutonomy = () => liveApi.get<{ mode: string }>('/api/controls/autonomy')
 export const setAutonomy = (mode: 'manual' | 'auto') =>
-  api.post<{ mode: string }>('/api/controls/autonomy', { mode })
-export const getRuns = () => api.get<RunEntry[]>('/api/controls/runs')
+  liveApi.post<{ mode: string }>('/api/controls/autonomy', { mode })
+export const getRuns = () => liveApi.get<RunEntry[]>('/api/controls/runs')
 
 // ---- types ----
 export interface Proposal {

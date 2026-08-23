@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getCalendar } from '../lib/api'
+import { getCalendar, getLiveCalendar } from '../lib/api'
 import type { CalendarDay, CalendarTrade } from '../lib/api'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -105,7 +105,11 @@ function DayPanel({ day, onClose }: { day: CalendarDay; onClose: () => void }) {
   )
 }
 
-export default function Calendar() {
+// `account` drives both the data source and the cache key — without a distinct
+// queryKey the two calendars would share one react-query cache entry and the
+// live tab would render paper's P&L.
+export default function Calendar({ account = 'paper' }: { account?: 'paper' | 'live' } = {}) {
+  const isLive = account === 'live'
   const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
@@ -114,8 +118,8 @@ export default function Calendar() {
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null)
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ['calendar'],
-    queryFn: () => getCalendar().then(r => r.data),
+    queryKey: ['calendar', account],
+    queryFn: () => (isLive ? getLiveCalendar() : getCalendar()).then(r => r.data),
     staleTime: 60_000,
   })
 
@@ -144,7 +148,20 @@ export default function Calendar() {
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white tracking-tight">P&L Calendar</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-white tracking-tight">P&L Calendar</h1>
+          {/* Unmissable marker: these two tabs are visually identical otherwise,
+              and mistaking live for paper is the expensive direction of that error. */}
+          <span
+            className={
+              isLive
+                ? 'px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                : 'px-2 py-0.5 rounded text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700'
+            }
+          >
+            {isLive ? 'REAL MONEY' : 'PAPER'}
+          </span>
+        </div>
         <div className="flex items-center gap-3">
           <button onClick={prevMonth} className="text-zinc-500 hover:text-zinc-100 w-8 h-8 flex items-center justify-center rounded-md hover:bg-zinc-800 transition-colors">‹</button>
           <span className="text-zinc-200 font-semibold w-40 text-center">{MONTHS[month]} {year}</span>
