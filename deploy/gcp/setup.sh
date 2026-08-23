@@ -38,6 +38,9 @@ echo "==> app"
 if [[ ! -d "$APP_DIR/app/.git" ]]; then
 	git clone "$REPO_URL" "$APP_DIR/app"
 fi
+# The tree is chowned to the edgerunner user below, so root's git refuses it as
+# "dubious ownership" on every rerun. Both scripts run as root against this repo.
+git config --global --add safe.directory "$APP_DIR/app" 2>/dev/null || true
 cd "$APP_DIR/app"
 git fetch --force --prune origin "+refs/heads/*:refs/remotes/origin/*"
 if ! git rev-parse -q --verify "origin/${LIVE_BRANCH}^{commit}" >/dev/null; then
@@ -78,12 +81,21 @@ echo "==> duckdns updater"
 # The VM uses an ephemeral external IP (a reserved static IP bills when the VM
 # is stopped; ephemeral does not). The IP changes across stop/start, so refresh
 # the DNS record every 5 min.
+# DuckDNS answers 200 with a body of "KO" when the token or domain is wrong,
+# so curl's exit status says nothing. Check the body or the failure is silent
+# and the only symptom is Caddy failing to get a cert ten minutes later.
 cat >/usr/local/bin/duckdns-update <<EOF
 #!/bin/sh
-curl -fsS "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=" -o /dev/null
+resp=\$(curl -fsS "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=")
+[ "\$resp" = "OK" ] || { echo "duckdns update failed: \$resp" >&2; exit 1; }
 EOF
 chmod 700 /usr/local/bin/duckdns-update
-/usr/local/bin/duckdns-update
+if ! /usr/local/bin/duckdns-update; then
+	echo "!! DuckDNS rejected the update (bad token or the domain is not on this account)."
+	echo "   Verify with:  curl \"https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=<token>&ip=\""
+	echo "   It must print OK. Then rerun this script with the correct DUCKDNS_TOKEN."
+	exit 1
+fi
 cat >/etc/cron.d/duckdns <<'EOF'
 */5 * * * * root /usr/local/bin/duckdns-update
 EOF

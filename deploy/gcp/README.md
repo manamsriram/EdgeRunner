@@ -78,10 +78,20 @@ gcloud compute ssh edgerunner-live --zone=us-central1-a
 # on the VM
 sudo mkdir -p /opt/edgerunner && sudo mv ~/gcp.env /opt/edgerunner/gcp.env
 sudo nano /opt/edgerunner/gcp.env      # fill the three REPLACE_WITH_ placeholders
-git clone --depth 1 https://github.com/manamsriram/EdgeRunner.git /tmp/er
-sudo DUCKDNS_DOMAIN=edgerunner-live DUCKDNS_TOKEN=<your-duckdns-token> \
-     bash /tmp/er/deploy/gcp/setup.sh
+
+# The stock debian-12 image has no git, and setup.sh is what installs it —
+# so bootstrap git before cloning the repo that contains setup.sh.
+sudo apt-get update -qq && sudo apt-get install -y -qq git
+git clone https://github.com/manamsriram/EdgeRunner.git /tmp/er
+sudo DUCKDNS_TOKEN=<your-duckdns-token> bash /tmp/er/deploy/gcp/setup.sh
 ```
+
+`DUCKDNS_DOMAIN` defaults to `edgerunner-live`; override it only if you
+registered a different name.
+
+Not using an interactive shell? `gcloud compute ssh` needs a TTY for
+`journalctl -f` and `nano`. For one-shot commands use
+`gcloud compute ssh edgerunner-live --zone=us-central1-a --command='...'`.
 
 Verify:
 

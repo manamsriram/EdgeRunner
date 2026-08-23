@@ -67,9 +67,14 @@ def fetch_dynamic_universe(config: "Config", top_n: int = 100) -> list[str]:
     # leveraged/inverse products consistently ("Direxion Daily ... Bull 3X Shares"),
     # which catches new launches the hand-maintained symbol list hasn't caught up to yet.
     try:
+        # paper= must be explicit: alpaca-py defaults it to True, which sends live
+        # credentials to paper-api and 401s. Silently degrades the name-based
+        # leveraged-ETF filter below to the hand-maintained symbol list — on the
+        # live account, exactly where that filter matters most.
         trading_client = TradingClient(
             api_key=config.alpaca_api_key,
             secret_key=config.alpaca_secret_key,
+            paper=config.alpaca_paper,
         )
         assets = trading_client.get_all_assets(
             GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)
