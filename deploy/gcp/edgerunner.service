@@ -2,6 +2,10 @@
 Description=EdgeRunner live trading API + scheduler
 After=network-online.target
 Wants=network-online.target
+# These belong in [Unit], not [Service] — systemd ignores them (with a warning)
+# in [Service], leaving the crash-loop guard silently inactive.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -15,11 +19,10 @@ EnvironmentFile=/opt/edgerunner/gcp.env
 # account. It also keeps RSS to one Python heap on a 1 GB box.
 ExecStart=/opt/edgerunner/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port ${PORT} --workers 1
 
+# Don't hammer Alpaca if the process crash-loops on a bad config; the limit
+# itself is declared in [Unit] above.
 Restart=always
 RestartSec=10
-# Don't hammer Alpaca if the process is crash-looping on a bad config.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # The OOM killer picking this process over sshd is the desired outcome: losing
 # the trader is recoverable, losing access to the box is not.
