@@ -5,9 +5,9 @@ import asyncio
 import logging
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from api.deps import get_broker, get_repo
+from api.deps import get_broker, get_repo, require_read_auth
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _compute_sync(broker, repo) -> list[dict]:
 
 
 @router.get("")
-async def get_calendar():
+async def get_calendar(_user: str | None = Depends(require_read_auth)):
     now = time.monotonic()
     if _cache.get("computed_at", 0) + _CACHE_TTL > now:
         return _cache["result"]

@@ -142,6 +142,25 @@ def get_current_user(request: Request) -> str:
     return payload.get("email") or payload["sub"]
 
 
+@lru_cache(maxsize=1)
+def _protect_reads() -> bool:
+    import os
+    return (os.getenv("PROTECT_READS") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def require_read_auth(request: Request) -> str | None:
+    """Auth for read-only endpoints — opt-in per deployment (env: PROTECT_READS).
+
+    Paper is public on purpose: fake money, and an open calendar/portfolio there
+    costs nothing. The live-money deployment sets PROTECT_READS=true so positions,
+    order flow and the equity curve aren't readable by whoever port-scans the host.
+    One flag rather than two route sets, because both deployments run this same code.
+    """
+    if not _protect_reads():
+        return None
+    return get_current_user(request)
+
+
 # ---- query history ----
 
 _history_schema_initialized = False

@@ -1,11 +1,18 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
+// `live: true` groups the tabs backed by the real-money GCP deployment. They're
+// separated in the nav rather than mixed in, so clicking Approvals is never an
+// accident about which account you're acting on.
 const NAV = [
   { to: '/portfolio', label: 'Portfolio' },
   { to: '/performance', label: 'Performance' },
   { to: '/calendar', label: 'Calendar' },
-  { to: '/approvals', label: 'Approvals' },
   { to: '/analysis', label: 'Analysis' },
+]
+
+const LIVE_NAV = [
+  { to: '/calendar/live', label: 'Calendar' },
+  { to: '/approvals', label: 'Approvals' },
   { to: '/controls', label: 'Controls' },
 ]
 
@@ -17,14 +24,38 @@ export default function ProtectedLayout() {
         <div className="text-white font-bold text-lg mb-5 px-2 tracking-tight">
           EdgeRunner
         </div>
+        <div className="text-zinc-600 text-[11px] font-semibold uppercase tracking-wider px-3 pb-1">
+          Paper
+        </div>
         {NAV.map(({ to, label }) => (
           <NavLink
             key={to}
             to={to}
+            end
             className={({ isActive }) =>
               `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                 isActive
                   ? 'bg-emerald-600 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+              }`
+            }
+          >
+            {label}
+          </NavLink>
+        ))}
+
+        <div className="text-amber-500/70 text-[11px] font-semibold uppercase tracking-wider px-3 pt-5 pb-1">
+          Real money
+        </div>
+        {LIVE_NAV.map(({ to, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end
+            className={({ isActive }) =>
+              `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                isActive
+                  ? 'bg-amber-600 text-white'
                   : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
               }`
             }

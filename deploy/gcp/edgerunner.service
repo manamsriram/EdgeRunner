@@ -1,0 +1,43 @@
+[Unit]
+Description=EdgeRunner live trading API + scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=edgerunner
+Group=edgerunner
+WorkingDirectory=/opt/edgerunner/app
+EnvironmentFile=/opt/edgerunner/gcp.env
+
+# Single worker, deliberately. The scheduler runs inside the FastAPI lifespan
+# (api/main.py), so N workers would mean N schedulers racing the same broker
+# account. It also keeps RSS to one Python heap on a 1 GB box.
+ExecStart=/opt/edgerunner/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port ${PORT} --workers 1
+
+Restart=always
+RestartSec=10
+# Don't hammer Alpaca if the process is crash-looping on a bad config.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# The OOM killer picking this process over sshd is the desired outcome: losing
+# the trader is recoverable, losing access to the box is not.
+OOMScoreAdjust=200
+
+# Give in-flight orders a chance to settle before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=edgerunner
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/edgerunner/state
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+deploy/gcp/gcp.env
 .mcp.json
 
 # Local databases (real user data + trading state — do not track)

@@ -2,13 +2,15 @@ import { useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
 async function wsUrl(): Promise<string> {
-  const apiUrl = import.meta.env.VITE_API_URL
+  // Only Approvals consumes this, and approvals exist only on the real-money
+  // deployment (paper runs AUTONOMY=auto and never queues a proposal). Falls
+  // back to the paper origin so local dev with one backend still works.
+  const apiUrl = import.meta.env.VITE_LIVE_API_URL ?? import.meta.env.VITE_API_URL
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token
   const query = token ? `?token=${encodeURIComponent(token)}` : ''
   if (apiUrl) {
-    // VITE_API_URL is the Render backend origin (e.g. https://foo.onrender.com) —
-    // the WS endpoint lives there too, not on location.host (that's Vercel).
+    // The WS endpoint lives on the backend origin, not location.host (that's Vercel).
     return apiUrl.replace(/^http/, 'ws') + `/ws/updates${query}`
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'

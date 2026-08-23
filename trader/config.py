@@ -177,6 +177,10 @@ class Config:
     reddit_client_secret: str | None = None
     supabase_jwt_secret: str | None = None      # legacy HS256 verify for Supabase Auth JWTs
     supabase_url: str | None = None             # e.g. https://<ref>.supabase.co — ES256 JWKS verify
+    # Real-money opt-in. ALPACA_PAPER=false alone is NOT enough to trade live: this must
+    # also be true. Two independent flags so a stray ALPACA_PAPER on a paper deployment
+    # can never reach a live account by itself. Set on the live deployment only.
+    allow_live_trading: bool = False            # env: ALLOW_LIVE_TRADING
 
     @property
     def alpaca_base_url(self) -> str:
@@ -199,11 +203,14 @@ class Config:
                 f"Alpaca {mode} credentials missing. Set ALPACA_API_KEY and "
                 "ALPACA_SECRET_KEY in your .env (see .env.example)."
             )
-        if not self.alpaca_paper:
-            # A deliberate speed bump on the road to real money.
+        if not self.alpaca_paper and not self.allow_live_trading:
+            # A deliberate speed bump on the road to real money. Requiring a second,
+            # independently-named flag means no single misconfigured env var (a stale
+            # ALPACA_PAPER=false, a copy-pasted env file) can put real money at risk.
             raise RuntimeError(
-                "ALPACA_PAPER is false (LIVE trading). Live mode is intentionally "
-                "gated: prove edge in backtest + paper first, then remove this guard."
+                "ALPACA_PAPER is false (LIVE trading) but ALLOW_LIVE_TRADING is not set. "
+                "Set ALLOW_LIVE_TRADING=true only on the deployment intended to trade "
+                "real money."
             )
 
 
@@ -216,6 +223,7 @@ def load_config() -> Config:
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY"),
         alpaca_paper=_env_bool("ALPACA_PAPER", default=True),
         alpaca_options_paper=_env_bool("ALPACA_OPTIONS_PAPER", default=True),
+        allow_live_trading=_env_bool("ALLOW_LIVE_TRADING", default=False),
         autonomy=os.getenv("AUTONOMY", "manual").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),

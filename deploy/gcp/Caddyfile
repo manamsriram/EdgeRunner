@@ -1,0 +1,18 @@
+# setup.sh substitutes DUCKDNS_DOMAIN for the placeholder below; this default
+# matches the registered name so the file is also usable as-is.
+# Caddy solves the ACME HTTP-01 challenge on :80 and gets a real Let's Encrypt
+# cert automatically — required because the Vercel frontend is HTTPS and
+# browsers block mixed-content requests to a plain-HTTP backend.
+edgerunner-live.duckdns.org {
+	encode gzip
+
+	# The app binds to loopback only; Caddy is the sole public listener.
+	reverse_proxy 127.0.0.1:8000
+
+	log {
+		output file /var/log/caddy/edgerunner.log {
+			roll_size 10mb
+			roll_keep 3
+		}
+	}
+}
