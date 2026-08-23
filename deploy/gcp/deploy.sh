@@ -3,6 +3,9 @@
 #   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh          # whatever origin/live points at
 #   sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh <sha>    # pin/rollback to a commit
 #
+# ONLY_IF_CHANGED=1 turns the restart into a no-op when the box already holds
+# the target commit. The nightly timer in /etc/cron.d/edgerunner-deploy uses it.
+#
 # Live tracks the `live` branch, never `main`. `live` carries no commits of its
 # own — it is a pointer you fast-forward from `main` once a change has proven
 # itself on paper. Nothing is ever merged back from `live` into `main`.
@@ -30,6 +33,13 @@ git rev-parse -q --verify "${REF}^{commit}" >/dev/null || {
 CURRENT=$(git rev-parse --short HEAD)
 TARGET=$(git rev-parse --short "$REF")
 if [[ "$CURRENT" == "$TARGET" ]]; then
+	# The nightly timer sets this. Without it an unchanged `live` would still
+	# bounce the process every night, which costs a warm-up and an open-order
+	# reconciliation for no reason.
+	if [[ -n "${ONLY_IF_CHANGED:-}" ]]; then
+		echo "==> already on $TARGET, nothing to do"
+		exit 0
+	fi
 	echo "==> already on $TARGET, restarting anyway"
 else
 	echo "==> $CURRENT -> $TARGET ($REF)"
