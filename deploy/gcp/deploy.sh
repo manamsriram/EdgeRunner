@@ -14,6 +14,9 @@ set -euo pipefail
 
 APP_DIR=/opt/edgerunner
 LIVE_BRANCH="${LIVE_BRANCH:-live}"
+# The tree is owned by the edgerunner user; this script runs as root, and git
+# refuses another user's repo as "dubious ownership" without this.
+git config --global --add safe.directory "$APP_DIR/app" 2>/dev/null || true
 cd "$APP_DIR/app"
 
 git fetch --force --prune origin "+refs/heads/*:refs/remotes/origin/*"

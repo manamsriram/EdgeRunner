@@ -38,6 +38,9 @@ echo "==> app"
 if [[ ! -d "$APP_DIR/app/.git" ]]; then
 	git clone "$REPO_URL" "$APP_DIR/app"
 fi
+# The tree is chowned to the edgerunner user below, so root's git refuses it as
+# "dubious ownership" on every rerun. Both scripts run as root against this repo.
+git config --global --add safe.directory "$APP_DIR/app" 2>/dev/null || true
 cd "$APP_DIR/app"
 git fetch --force --prune origin "+refs/heads/*:refs/remotes/origin/*"
 if ! git rev-parse -q --verify "origin/${LIVE_BRANCH}^{commit}" >/dev/null; then
