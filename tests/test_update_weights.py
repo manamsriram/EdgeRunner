@@ -104,6 +104,63 @@ def test_multiple_strategies_bucketed_separately():
     assert result[("B", "calm")] == [pytest.approx(-100.0)]
 
 
+def test_fractional_crypto_qty_not_truncated():
+    # Crypto fills have fractional qty; per-unit int() expansion used to drop them.
+    orders = [
+        {"broker_order_id": "b1", "strategy_name": "CryptoMomo",
+         "regime": "calm", "symbol": "BTC/USD"},
+        {"broker_order_id": "s1", "strategy_name": "CryptoMomo",
+         "regime": "calm", "symbol": "BTC/USD"},
+    ]
+    fills = [
+        {"order_id": "b1", "symbol": "BTC/USD", "side": "buy",  "qty": 0.5, "price": 100.0},
+        {"order_id": "s1", "symbol": "BTC/USD", "side": "sell", "qty": 0.5, "price": 120.0},
+    ]
+    result = compute_pnls_from_fills(orders=orders, fills=fills)
+    assert result[("CryptoMomo", "calm")] == [pytest.approx(10.0)]
+
+
+def test_partial_sell_across_two_buy_lots():
+    orders = [
+        {"broker_order_id": "b1", "strategy_name": "A", "regime": "calm", "symbol": "AAPL"},
+        {"broker_order_id": "b2", "strategy_name": "A", "regime": "calm", "symbol": "AAPL"},
+        {"broker_order_id": "s1", "strategy_name": "A", "regime": "calm", "symbol": "AAPL"},
+    ]
+    fills = [
+        {"order_id": "b1", "symbol": "AAPL", "side": "buy",  "qty": 5, "price": 100.0},
+        {"order_id": "b2", "symbol": "AAPL", "side": "buy",  "qty": 5, "price": 110.0},
+        {"order_id": "s1", "symbol": "AAPL", "side": "sell", "qty": 8, "price": 120.0},
+    ]
+    result = compute_pnls_from_fills(orders=orders, fills=fills)
+    # FIFO: 5 @100 → +100, 3 @110 → +30 = +130 total for the sell
+    assert result[("A", "calm")] == [pytest.approx(130.0)]
+
+
+def test_huge_qty_fill_stays_bounded_in_memory():
+    # SHIB-scale fill (72.7M units) must not expand one list entry per unit —
+    # that allocated ~580MB in prod and OOM-killed the 512Mi Render instance.
+    import tracemalloc
+    orders = [
+        {"broker_order_id": "b1", "strategy_name": "CryptoMomo",
+         "regime": "calm", "symbol": "SHIB/USD", "signal_strength": 0.5},
+        {"broker_order_id": "s1", "strategy_name": "CryptoMomo",
+         "regime": "calm", "symbol": "SHIB/USD", "signal_strength": 0.5},
+    ]
+    fills = [
+        {"order_id": "b1", "symbol": "SHIB/USD", "side": "buy",
+         "qty": 72_768_717, "price": 0.00001},
+        {"order_id": "s1", "symbol": "SHIB/USD", "side": "sell",
+         "qty": 72_768_717, "price": 0.00002},
+    ]
+    tracemalloc.start()
+    pnls = compute_pnls_from_fills(orders=orders, fills=fills)
+    compute_ic_from_broker_fills(orders=orders, fills=fills)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 10 * 1024 * 1024
+    assert pnls[("CryptoMomo", "calm")] == [pytest.approx(727.68717)]
+
+
 # ---- compute_ic_from_broker_fills ----
 
 def _round_trip(bid, sid, strategy, regime, symbol, strength, buy_px, sell_px, qty=1):

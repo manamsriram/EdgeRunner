@@ -44,8 +44,10 @@ def compute_pnls_from_fills(
         if o.get("broker_order_id") and o.get("strategy_name") and o.get("regime")
     }
 
-    # bucket fills by (strategy, regime, symbol) → buy queue and sell list
-    buy_queues: dict[tuple, list[float]] = defaultdict(list)  # fifo prices
+    # bucket fills by (strategy, regime, symbol) → FIFO buy lots and sell list.
+    # Lots are [qty, price] — never expanded per unit: a single SHIB fill can be
+    # 70M+ units, and per-unit lists OOM-killed the 512Mi prod instance.
+    buy_queues: dict[tuple, list[list[float]]] = defaultdict(list)  # [remaining_qty, price]
     sell_prices: dict[tuple, list[tuple[float, float]]] = defaultdict(list)  # (qty, price)
 
     for fill in fills:
@@ -54,7 +56,7 @@ def compute_pnls_from_fills(
             continue
         key = (order["strategy_name"], order["regime"], fill["symbol"])
         if fill["side"] == "buy":
-            buy_queues[key].extend([fill["price"]] * int(fill["qty"]))
+            buy_queues[key].append([float(fill["qty"]), float(fill["price"])])
         elif fill["side"] == "sell":
             sell_prices[key].append((float(fill["qty"]), float(fill["price"])))
 
@@ -65,15 +67,20 @@ def compute_pnls_from_fills(
         arm = (strategy, regime)
         buy_q = buy_queues.get(key, [])
         for qty, sell_price in sells:
-            n = int(qty)
-            matched = min(n, len(buy_q))
-            if matched == 0:
-                continue
-            buy_slice = buy_q[:matched]
-            buy_q = buy_q[matched:]
-            avg_buy = sum(buy_slice) / len(buy_slice)
-            pnls[arm].append((sell_price - avg_buy) * matched)
-        buy_queues[key] = buy_q
+            pnl = 0.0
+            matched_any = False
+            remaining = qty
+            while remaining > 0 and buy_q:
+                lot = buy_q[0]
+                take = min(remaining, lot[0])
+                pnl += (sell_price - lot[1]) * take
+                lot[0] -= take
+                remaining -= take
+                matched_any = True
+                if lot[0] <= 0:
+                    buy_q.pop(0)
+            if matched_any:
+                pnls[arm].append(pnl)
 
     return dict(pnls)
 
@@ -96,8 +103,11 @@ def compute_ic_from_broker_fills(
         if o.get("broker_order_id") and o.get("strategy_name") and o.get("regime")
     }
 
-    # FIFO buy queue per (strategy, regime, symbol): each unit is (buy_price, strength)
-    buy_queues: dict[tuple, list[tuple[float, float]]] = defaultdict(list)
+    # FIFO buy lots per (strategy, regime, symbol): [remaining_qty, buy_price, strength].
+    # Lots, not per-unit entries — see compute_pnls_from_fills for the OOM rationale.
+    # One (strength, return) pair per matched lot, so a 70M-unit crypto fill counts
+    # once, same as a 10-share equity fill.
+    buy_queues: dict[tuple, list[list[float]]] = defaultdict(list)
     sell_prices: dict[tuple, list[tuple[float, float]]] = defaultdict(list)  # (qty, price)
 
     for fill in fills:
@@ -109,7 +119,9 @@ def compute_ic_from_broker_fills(
             strength = order.get("signal_strength")
             if strength is None:
                 continue  # can't pair a return with a missing entry strength
-            buy_queues[key].extend([(float(fill["price"]), float(strength))] * int(fill["qty"]))
+            buy_queues[key].append(
+                [float(fill["qty"]), float(fill["price"]), float(strength)]
+            )
         elif fill["side"] == "sell":
             sell_prices[key].append((float(fill["qty"]), float(fill["price"])))
 
@@ -122,15 +134,17 @@ def compute_ic_from_broker_fills(
         buy_q = buy_queues.get(key, [])
         strengths, returns = pairs[arm]
         for qty, sell_price in sells:
-            n = int(qty)
-            matched = min(n, len(buy_q))
-            for buy_price, strength in buy_q[:matched]:
-                if buy_price == 0:
-                    continue
-                strengths.append(strength)
-                returns.append(sell_price / buy_price - 1.0)
-            buy_q = buy_q[matched:]
-        buy_queues[key] = buy_q
+            remaining = qty
+            while remaining > 0 and buy_q:
+                lot = buy_q[0]
+                take = min(remaining, lot[0])
+                if lot[1] != 0:
+                    strengths.append(lot[2])
+                    returns.append(sell_price / lot[1] - 1.0)
+                lot[0] -= take
+                remaining -= take
+                if lot[0] <= 0:
+                    buy_q.pop(0)
 
     ic_by_arm: dict[tuple[str, str], float] = {}
     for arm, (strengths, returns) in pairs.items():
