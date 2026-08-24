@@ -131,6 +131,26 @@ after precompute/bandit/digest — read those before changing anything else.
 | `ALLOW_LIVE_TRADING` | unset | `true` |
 | Dashboard tabs | Portfolio, Performance, Calendar, Analysis | Calendar, Approvals, Controls, Logs |
 
+## Auth lives in the live Supabase project
+
+`SUPABASE_URL` in `gcp.env` and `VITE_SUPABASE_URL` on Vercel must name the
+**same** project — the frontend mints the JWT there, the VM verifies it against
+that project's JWKS (`api/deps.py:72`). Point them at different projects and
+every live route returns 401 with no useful message.
+
+Both name the live project, `ykovhiheebckbdrpmmpz`, so the auth boundary matches
+the money boundary. Paper's reads on Render are public (`PROTECT_READS` unset),
+so nothing there depends on the token.
+
+The one thing to remember: **the dashboard user must exist in the live project.**
+A user created in the paper project fails as "Invalid login credentials", which
+reads like a typo.
+
+`SUPABASE_JWT_SECRET` is intentionally absent. `verify_supabase_jwt` prefers
+`SUPABASE_URL` (ES256/JWKS) and only falls back to the HS256 shared secret when
+the URL is unset — so a stale secret sitting in the env is a silent alternate
+verification path, not a backup.
+
 ## Logs without SSH
 
 The **Logs** tab (`/logs`, real-money group) reads `GET /api/controls/logs`,
