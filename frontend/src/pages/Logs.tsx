@@ -15,6 +15,10 @@ const RANGES = [
   { value: '7 days ago', label: 'Last 7 days' },
 ]
 
+// uvicorn access lines and per-tick RSS pings drown out everything else; hide them
+// unless Debug is on.
+const NOISE = /INFO:\s+\S+:\d+ - "(GET|POST|OPTIONS) |rss=\d+MB/
+
 // journalctl -o short-iso lines start "2026-08-23T17:04:11-0700 host unit[pid]: msg".
 // Colouring on the message body alone avoids matching the hostname or a pid.
 function lineClass(line: string): string {
@@ -31,6 +35,7 @@ export default function Logs() {
   const [lines, setLines] = useState(200)
   const [follow, setFollow] = useState(true)
   const [filter, setFilter] = useState('')
+  const [debug, setDebug] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery({
@@ -42,7 +47,8 @@ export default function Logs() {
   })
 
   const shown = (data?.lines ?? []).filter(
-    (l) => !filter || l.toLowerCase().includes(filter.toLowerCase()),
+    (l) =>
+      (debug || !NOISE.test(l)) && (!filter || l.toLowerCase().includes(filter.toLowerCase())),
   )
 
   useEffect(() => {
@@ -119,6 +125,16 @@ export default function Logs() {
             className="accent-amber-600"
           />
           Follow
+        </label>
+
+        <label className="flex items-center gap-1.5 text-sm text-zinc-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={debug}
+            onChange={(e) => setDebug(e.target.checked)}
+            className="accent-amber-600"
+          />
+          Debug (HTTP + RSS)
         </label>
 
         <span className="text-zinc-600 text-xs ml-auto">
