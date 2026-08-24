@@ -1,10 +1,12 @@
-"""Controls routes: kill switch, autonomy mode, run log."""
+"""Controls routes: kill switch, autonomy mode, run log, journal tail."""
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -76,3 +78,51 @@ def run_log(username: str = Depends(get_current_user)):
     except Exception:
         logger.exception("failed to fetch run log")
         raise HTTPException(status_code=500, detail="run log unavailable; see server logs")
+
+
+# Only units this box actually owns. Not a caller-supplied name: journalctl -u takes a
+# glob, so an unvalidated value would read any unit's log through an authenticated
+# endpoint.
+_JOURNAL_UNITS = {"edgerunner", "caddy"}
+_JOURNAL_TAGS = {"edgerunner-deploy"}
+
+
+@router.get("/logs")
+def journal_tail(
+    username: str = Depends(get_current_user),
+    unit: str = Query("edgerunner"),
+    lines: int = Query(200, ge=1, le=2000),
+    since: str | None = Query(None, description="journalctl --since value, e.g. '1 hour ago'"),
+):
+    """Tail this host's systemd journal — the logs SSH would show, over the API.
+
+    Covers what /controls/runs cannot: tracebacks, OOM kills, systemd restarts, and
+    nightly deploy output. Journald-only, so it returns 503 on Render (no systemd)
+    rather than pretending to be empty.
+    """
+    if unit not in _JOURNAL_UNITS and unit not in _JOURNAL_TAGS:
+        raise HTTPException(status_code=400, detail=f"unknown unit '{unit}'")
+
+    journalctl = shutil.which("journalctl")
+    if not journalctl:
+        raise HTTPException(status_code=503, detail="journalctl unavailable on this host")
+
+    selector = ["-t", unit] if unit in _JOURNAL_TAGS else ["-u", unit]
+    cmd = [journalctl, *selector, "-n", str(lines), "--no-pager", "-o", "short-iso"]
+    if since:
+        cmd += ["--since", since]
+
+    try:
+        # No shell: argv is fixed and `unit` is allowlisted above.
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="journalctl timed out")
+
+    if proc.returncode != 0:
+        # Most likely cause is the service user lacking systemd-journal group
+        # membership, which journald reports as an empty read rather than a hard
+        # error — surface stderr so that is diagnosable without SSH.
+        logger.error("journalctl failed (rc=%s): %s", proc.returncode, proc.stderr.strip())
+        raise HTTPException(status_code=500, detail="journal read failed; see server logs")
+
+    return {"unit": unit, "lines": proc.stdout.splitlines()}

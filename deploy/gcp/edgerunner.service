@@ -11,6 +11,10 @@ StartLimitBurst=5
 Type=simple
 User=edgerunner
 Group=edgerunner
+# Lets GET /api/controls/logs shell out to journalctl. Without this journald
+# returns an empty read (not an error) for other units, so the endpoint would
+# silently report "no logs" instead of failing.
+SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/edgerunner/app
 EnvironmentFile=/opt/edgerunner/gcp.env
 
