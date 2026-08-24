@@ -51,6 +51,30 @@ git checkout -q --detach "$REF"
 "$APP_DIR/venv/bin/pip" install -q -r requirements.txt
 chown -R edgerunner:edgerunner "$APP_DIR/app"
 
+# Sync systemd units from the tree. Without this only setup.sh ever installed
+# them, so unit edits shipped through `live` silently never took effect — the
+# code would update and the unit on disk would stay whatever it was at install.
+# daemon-reload only when something actually changed, so an unchanged deploy
+# doesn't churn systemd state.
+units_changed=0
+for unit in edgerunner.service edgerunner-deploy.service edgerunner-deploy.timer; do
+	src="$APP_DIR/app/deploy/gcp/$unit"
+	[[ -f "$src" ]] || continue
+	if ! cmp -s "$src" "/etc/systemd/system/$unit"; then
+		echo "==> unit changed: $unit"
+		cp "$src" "/etc/systemd/system/$unit"
+		units_changed=1
+	fi
+done
+if ((units_changed)); then
+	systemctl daemon-reload
+	# The timer's own unit may have just changed underneath the run that is
+	# executing this script; restarting it here is safe because systemd tracks
+	# the running job separately from the unit definition.
+	systemctl is-enabled --quiet edgerunner-deploy.timer 2>/dev/null &&
+		systemctl restart edgerunner-deploy.timer
+fi
+
 systemctl restart edgerunner
 sleep 5
 if systemctl is-active --quiet edgerunner; then

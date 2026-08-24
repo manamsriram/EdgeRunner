@@ -58,6 +58,12 @@ export const setAutonomy = (mode: 'manual' | 'auto') =>
   liveApi.post<{ mode: string }>('/api/controls/autonomy', { mode })
 export const getRuns = () => liveApi.get<RunEntry[]>('/api/controls/runs')
 
+export type JournalUnit = 'edgerunner' | 'caddy' | 'edgerunner-deploy'
+export const getLogs = (unit: JournalUnit, lines: number, since?: string) =>
+  liveApi.get<{ unit: string; lines: string[] }>('/api/controls/logs', {
+    params: { unit, lines, ...(since ? { since } : {}) },
+  })
+
 // ---- types ----
 export interface Proposal {
   id: number

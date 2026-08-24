@@ -1,0 +1,17 @@
+[Unit]
+Description=Poll origin/live every 5 minutes and deploy when it moves
+
+[Timer]
+# Not at boot-time zero: setup.sh has just deployed, and racing its own restart
+# would be pointless work.
+OnBootSec=5min
+OnUnitActiveSec=5min
+# The poll is a git fetch against GitHub. Jitter costs nothing and keeps this box
+# off the top of the minute with everyone else's cron.
+RandomizedDelaySec=60
+# Catch up after the VM has been stopped, so a box brought back up converges on
+# `live` without waiting a full interval.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

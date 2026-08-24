@@ -45,8 +45,8 @@ def test_returns_journal_lines(client):
     assert "--no-pager" in run.call_args[0][0]
 
 
-def test_tag_units_use_dash_t(client):
-    """The nightly deploy logs under a syslog tag, not a unit."""
+def test_deploy_timer_unit_is_readable(client):
+    """The deploy poller is its own systemd unit; its log must be reachable too."""
     with patch("shutil.which", return_value="/usr/bin/journalctl"), patch(
         "subprocess.run", return_value=_completed("")
     ) as run:
@@ -54,8 +54,7 @@ def test_tag_units_use_dash_t(client):
 
     assert resp.status_code == 200
     argv = run.call_args[0][0]
-    assert "-t" in argv and "edgerunner-deploy" in argv
-    assert "-u" not in argv
+    assert argv[argv.index("-u") + 1] == "edgerunner-deploy"
 
 
 def test_503_when_journalctl_missing(client):

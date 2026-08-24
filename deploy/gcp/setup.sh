@@ -116,23 +116,20 @@ if [[ "${RESOLVED:-}" != "$MY_IP" ]]; then
 	exit 1
 fi
 
-echo "==> nightly deploy timer"
-# 06:00 UTC = 02:00 ET: equity is closed and pre-market (04:00 ET) has not opened,
-# so a restart cannot land mid-session. Crypto trades 24/7 and has no safe window;
-# this is its quietest. ONLY_IF_CHANGED means nothing restarts unless you actually
-# fast-forwarded `live` — pushing the branch is still the deliberate act.
-cat >/etc/cron.d/edgerunner-deploy <<'EOF'
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-0 6 * * * root ONLY_IF_CHANGED=1 bash /opt/edgerunner/app/deploy/gcp/deploy.sh 2>&1 | logger -t edgerunner-deploy
-EOF
-chmod 644 /etc/cron.d/edgerunner-deploy
-
 echo "==> services"
-cp "$APP_DIR/app/deploy/gcp/edgerunner.service" /etc/systemd/system/
+# An earlier revision used /etc/cron.d for this; a systemd timer logs to the
+# journal on its own (so GET /api/controls/logs can read it), inherits no cron
+# PATH surprises, and catches up after the VM has been stopped.
+rm -f /etc/cron.d/edgerunner-deploy
+cp "$APP_DIR/app/deploy/gcp"/edgerunner.service /etc/systemd/system/
+cp "$APP_DIR/app/deploy/gcp"/edgerunner-deploy.service /etc/systemd/system/
+cp "$APP_DIR/app/deploy/gcp"/edgerunner-deploy.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now edgerunner caddy
+systemctl enable --now edgerunner-deploy.timer
 systemctl restart caddy
 
 echo
 echo "Done. Watch it start:  journalctl -u edgerunner -f"
+echo "Deploy poller:         systemctl list-timers edgerunner-deploy.timer"
 echo "Health:                curl https://${DUCKDNS_DOMAIN}.duckdns.org/"

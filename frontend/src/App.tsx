@@ -6,6 +6,7 @@ import Approvals from './pages/Approvals'
 import Calendar from './pages/Calendar'
 import Portfolio from './pages/Portfolio'
 import Controls from './pages/Controls'
+import Logs from './pages/Logs'
 import Performance from './pages/Performance'
 import ProtectedLayout from './components/ProtectedLayout'
 import RequireAuth from './components/RequireAuth'
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/approvals" element={<RequireAuth><Approvals /></RequireAuth>} />
             <Route path="/analysis" element={<Analysis />} />
             <Route path="/controls" element={<RequireAuth><Controls /></RequireAuth>} />
+            <Route path="/logs" element={<RequireAuth><Logs /></RequireAuth>} />
             <Route path="/" element={<Navigate to="/calendar" replace />} />
           </Route>
         </Routes>

@@ -14,6 +14,7 @@ const LIVE_NAV = [
   { to: '/calendar/live', label: 'Calendar' },
   { to: '/approvals', label: 'Approvals' },
   { to: '/controls', label: 'Controls' },
+  { to: '/logs', label: 'Logs' },
 ]
 
 export default function ProtectedLayout() {

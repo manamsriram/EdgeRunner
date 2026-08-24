@@ -129,7 +129,29 @@ after precompute/bandit/digest — read those before changing anything else.
 | `AUTONOMY` | `auto` — trades unattended | **`manual`** — queues a proposal, waits for you |
 | `PROTECT_READS` | unset (public reads) | **`true`** — reads need a JWT |
 | `ALLOW_LIVE_TRADING` | unset | `true` |
-| Dashboard tabs | Portfolio, Performance, Calendar, Analysis | Calendar, Approvals, Controls |
+| Dashboard tabs | Portfolio, Performance, Calendar, Analysis | Calendar, Approvals, Controls, Logs |
+
+## Logs without SSH
+
+The **Logs** tab (`/logs`, real-money group) reads `GET /api/controls/logs`,
+which tails this host's journal behind the same auth as the rest of Controls.
+Units: `edgerunner` (app), `edgerunner-deploy` (the poller), `caddy` (TLS).
+
+It exists because `/controls/runs` shows what the bot *did* and nothing about
+tracebacks, OOM kills, systemd restarts, or deploy output. Polls every 10 s while
+"Follow" is on — polling rather than streaming, because `journalctl -f` would
+hold a request open per viewer and this box runs a single uvicorn worker.
+
+The unit name is allowlisted server-side before it reaches `journalctl`, which
+matters: `-u` accepts a glob, so an unvalidated value would read any unit on the
+box through an authenticated endpoint.
+
+`edgerunner.service` sets `SupplementaryGroups=systemd-journal`. Without it
+journald returns an *empty read* rather than an error for units the service user
+does not own, so the tab would show "no log lines" instead of failing.
+
+GCP Cloud Logging would be the conventional answer and is deliberately not used:
+the Ops Agent costs 100–250 MB RSS on a 1 GB box already running the trader.
 
 Under `AUTONOMY=manual` the risk gate runs identically, then `pipeline.py:1289`
 calls `create_proposal()` instead of submitting — nothing reaches the broker
@@ -177,31 +199,44 @@ sudo bash /opt/edgerunner/app/deploy/gcp/deploy.sh
 `--ff-only` is what keeps `live` a pure subset of `main`. If it refuses, `live`
 has drifted — someone committed directly to it. Fix that rather than forcing.
 
-### Nightly auto-deploy
+### Auto-deploy — `edgerunner-deploy.timer`
 
-`setup.sh` installs `/etc/cron.d/edgerunner-deploy`, which runs `deploy.sh` at
-**06:00 UTC (02:00 ET)** with `ONLY_IF_CHANGED=1`.
+`setup.sh` installs a systemd timer that polls `origin/live` **every 5 minutes**
+and runs `deploy.sh` with `ONLY_IF_CHANGED=1`. Push `live`, and the box picks it
+up within ~5 minutes with no SSH.
 
-That hour is the only one that is safe on both sides: equity is closed and
-pre-market (04:00 ET) has not started, so a restart cannot land mid-session.
-Crypto runs 24/7 and has no genuinely safe window — 02:00 ET is its quietest.
+`ONLY_IF_CHANGED=1` makes the run a no-op when the box already holds the target
+commit, so an idle week costs zero restarts — the poll is a `git fetch` and
+nothing else.
 
-`ONLY_IF_CHANGED=1` makes the run a no-op when the box already holds
-`origin/live`, so an idle week means zero restarts. This does **not** make
-deploys automatic on push: `main` still moves without touching the box, and
-nothing ships until you fast-forward `live` yourself. The cron only decides
-*when* your decision takes effect, not *whether* it does.
-
-Watch it:
+This is still not auto-deploy on push: `main` moves without touching the box.
+Only fast-forwarding `live` ships anything. The timer decides *when* your
+decision lands, not *whether*.
 
 ```bash
-journalctl -t edgerunner-deploy --since '2 days ago'
+systemctl list-timers edgerunner-deploy.timer   # when it next fires
+journalctl -u edgerunner-deploy --since '2 days ago'
 ```
 
-If a nightly deploy fails to start the service, `deploy.sh` exits non-zero and
-the box is left on the **new, broken** commit — it does not auto-roll-back. The
-journal line prints the exact rollback command. Check the log after promoting
-anything non-trivial rather than assuming silence means success.
+**Restarts are no longer confined to a safe hour.** The previous nightly cron
+fired at 02:00 ET specifically so a restart could not land mid-session. A
+5-minute poll gives that up: if you push `live` at 10:30 ET, the trader bounces
+at 10:30 ET, mid-session, with positions open. `warm_up()` re-syncs open orders
+on start and `AUTONOMY=manual` means nothing enters without you, so the blast
+radius is small — but it is not zero. **Push `live` outside market hours unless
+you specifically want it live now.**
+
+If a deploy fails to start the service, `deploy.sh` exits non-zero and the box is
+left on the **new, broken** commit — there is no auto-rollback. The journal line
+prints the exact rollback command, and the Logs tab surfaces it without SSH.
+
+### Unit files ship through `live` too
+
+`deploy.sh` diffs `deploy/gcp/*.service` and `*.timer` against
+`/etc/systemd/system/` on every run, copies what changed, and reloads systemd
+only then. Before this, only `setup.sh` ever installed units, so a unit edit
+merged to `live` silently never took effect — the code updated and the unit on
+disk stayed whatever it was at install time.
 
 Rollback pins a commit directly:
 

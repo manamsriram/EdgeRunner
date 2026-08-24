@@ -83,8 +83,7 @@ def run_log(username: str = Depends(get_current_user)):
 # Only units this box actually owns. Not a caller-supplied name: journalctl -u takes a
 # glob, so an unvalidated value would read any unit's log through an authenticated
 # endpoint.
-_JOURNAL_UNITS = {"edgerunner", "caddy"}
-_JOURNAL_TAGS = {"edgerunner-deploy"}
+_JOURNAL_UNITS = {"edgerunner", "caddy", "edgerunner-deploy"}
 
 
 @router.get("/logs")
@@ -100,15 +99,14 @@ def journal_tail(
     nightly deploy output. Journald-only, so it returns 503 on Render (no systemd)
     rather than pretending to be empty.
     """
-    if unit not in _JOURNAL_UNITS and unit not in _JOURNAL_TAGS:
+    if unit not in _JOURNAL_UNITS:
         raise HTTPException(status_code=400, detail=f"unknown unit '{unit}'")
 
     journalctl = shutil.which("journalctl")
     if not journalctl:
         raise HTTPException(status_code=503, detail="journalctl unavailable on this host")
 
-    selector = ["-t", unit] if unit in _JOURNAL_TAGS else ["-u", unit]
-    cmd = [journalctl, *selector, "-n", str(lines), "--no-pager", "-o", "short-iso"]
+    cmd = [journalctl, "-u", unit, "-n", str(lines), "--no-pager", "-o", "short-iso"]
     if since:
         cmd += ["--since", since]
 

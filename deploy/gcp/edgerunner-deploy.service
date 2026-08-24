@@ -1,0 +1,20 @@
+[Unit]
+Description=Deploy origin/live to the live box
+# Needs DNS and a route to GitHub; a fetch failure here is a failed deploy run,
+# not a failed boot.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The whole point of the timer: only act when `live` actually moved. Without it
+# every poll would bounce the trader, costing a warm-up and an open-order
+# reconciliation for nothing.
+Environment=ONLY_IF_CHANGED=1
+ExecStart=/bin/bash /opt/edgerunner/app/deploy/gcp/deploy.sh
+# pip install on a burstable e2-micro is slow; well clear of it, but bounded so
+# a hung fetch cannot wedge the timer forever.
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=edgerunner-deploy
