@@ -455,10 +455,15 @@ app.add_middleware(_SecurityHeadersMiddleware)
 # No CSRF guard needed: auth is a bearer token in the Authorization header, not a
 # cookie, so the browser never attaches it automatically to a cross-site request —
 # there's nothing for a forged form/script on another site to ride along on.
-_FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+# Comma-separated: Vercel serves the same build from both a stable alias and a
+# per-deployment URL, and a browser sitting on the wrong one gets a 400 on every
+# preflight (which surfaces as "could not read the journal", not as a CORS error).
+_FRONTEND_ORIGINS = [
+    o.strip() for o in os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").split(",") if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[_FRONTEND_ORIGIN],
+    allow_origins=_FRONTEND_ORIGINS,
     allow_methods=["*"],
     allow_headers=["Content-Type", "Authorization"],
 )

@@ -188,7 +188,12 @@ VITE_LIVE_API_URL=https://edgerunner-live.duckdns.org
 ```
 
 Set `FRONTEND_ORIGIN` in `gcp.env` to the Vercel URL or CORS will reject the
-browser calls.
+browser calls. It takes a comma-separated list, because Vercel serves the same
+build from both a stable alias (`edge-runner-xi.vercel.app`) and a
+per-deployment URL (`edge-runner-<hash>-<scope>.vercel.app`) — list both, or
+browse only the alias. A browser on an unlisted origin gets a 400 on every
+preflight, which the dashboard shows as "could not read the journal" or a dead
+autonomy toggle rather than as a CORS error.
 
 The "Real money" nav group (Calendar / Approvals / Controls) reads this variable.
 If it's unset the frontend silently falls back to `VITE_API_URL` — meaning those
