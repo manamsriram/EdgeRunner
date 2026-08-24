@@ -7,6 +7,13 @@
 | Backend    | Render   | FastAPI; auto-deploys from `main`    |
 | Frontend   | Vercel   | React; auto-deploys from `main`      |
 | Database   | Supabase | PostgreSQL; use pooler URI (port 6543, IPv4-compatible) for `DATABASE_URL` |
+| Live money | GCP VM   | auto-deploys from `live` (paper only writes go through `main`) |
+
+### Branch policy
+
+`main` is the only branch we commit or push to. `live` (real-money VM) never receives
+direct commits — once `main` is confirmed stable, sync `live` by fast-forwarding it
+to `main`, not by committing on `live` directly.
 
 ### Key env vars (Render)
 - `DATABASE_URL` — Supabase pooler URI (`postgresql://postgres.[REF]:[PW]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`)
