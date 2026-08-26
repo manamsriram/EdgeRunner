@@ -88,6 +88,34 @@ class DecisionFeaturesRow:
 
 
 @dataclass(frozen=True)
+class OverlayDecisionRow:
+    """What the LLM overlay was actually shown, and what it answered.
+
+    decision_features captures a 22-number summary; the prompt carries far more —
+    full news headline text, the strategy's free-text signal reason, and the model's
+    own rationale. A distillation model trained on the numbers alone plateaus at ~73%
+    agreement with the LLM even though the LLM is ~96% self-consistent, so the missing
+    ~23% lives in the text this row preserves.
+
+    `prompt_text` is stored once per distinct prompt in overlay_prompts and referenced
+    here by `prompt_hash`; the 30-minute overlay cache replays the same prompt many
+    times, so de-duplicating it keeps this from dominating the database.
+
+    Only genuine LLM calls are recorded. The 30-minute cache replays a stored
+    decision without re-asking the model, so a replay is not an independent sample —
+    the absence of a row here for a given decision_features tick is what marks one.
+    """
+
+    run_id: int
+    symbol: str
+    prompt_hash: str
+    action: str                   # "approve" | "veto"
+    strength_post: float
+    rationale: str
+    provider: str
+
+
+@dataclass(frozen=True)
 class OptionsPositionRow:
     """One options contract position — CSP or CC, opened by CSP-on-dip or the Wheel.
 
@@ -294,6 +322,14 @@ class PortfolioRepository(ABC):
     def set_overlay_cache(self, symbol: str, side: str, result_side: str,
                           result_strength: float, result_reason: str) -> None:
         """Upsert the overlay result cached for (symbol, side)."""
+
+    @abstractmethod
+    def record_overlay_decision(self, row: OverlayDecisionRow, prompt_text: str) -> None:
+        """Persist one overlay decision plus the prompt behind it.
+
+        Upserts prompt_text into overlay_prompts keyed by row.prompt_hash (no-op when
+        that prompt was already stored), then inserts the decision row. Best-effort by
+        contract: callers wrap this so a logging failure can never affect trading."""
 
     @abstractmethod
     def get_universe_state(self, universe_type: str) -> dict | None:

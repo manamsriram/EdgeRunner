@@ -123,6 +123,7 @@ def apply_earnings_gate(
 def apply_overlay(
     signal: Signal, bars: pd.DataFrame, config=None,
     repo=None, strategy_name: str | None = None, regime: str | None = None,
+    run_id: int | None = None,
 ) -> Signal:
     """Apply LLM overlay when at least one API key is configured; otherwise pass through.
 
@@ -154,5 +155,5 @@ def apply_overlay(
         gemini_key=gemini_key, gemini_model=gemini_model,
         config=config,
         sentiment_client=sentiment_client,
-        repo=repo, strategy_name=strategy_name, regime=regime,
+        repo=repo, strategy_name=strategy_name, regime=regime, run_id=run_id,
     )

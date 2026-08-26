@@ -1153,6 +1153,7 @@ def _prepare_signal(
             signal = apply_overlay(
                 signal, bars, config,
                 repo=repo, strategy_name=type(strategy).__name__, regime=regime,
+                run_id=run_id,
             )
 
         repo.record_signal(SignalRow(

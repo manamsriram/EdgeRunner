@@ -167,6 +167,24 @@ CREATE TABLE IF NOT EXISTS decision_features (
 );
 CREATE INDEX IF NOT EXISTS idx_decision_features_symbol_ts ON decision_features(symbol, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_decision_features_order_id ON decision_features(order_id);
+CREATE TABLE IF NOT EXISTS overlay_prompts (
+    prompt_hash TEXT PRIMARY KEY,
+    prompt_text TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS overlay_decisions (
+    id            SERIAL PRIMARY KEY,
+    run_id        INTEGER NOT NULL,
+    ts            TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    prompt_hash   TEXT NOT NULL REFERENCES overlay_prompts(prompt_hash),
+    action        TEXT NOT NULL,
+    strength_post REAL NOT NULL,
+    rationale     TEXT NOT NULL,
+    provider      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_overlay_decisions_run_symbol ON overlay_decisions(run_id, symbol);
+CREATE INDEX IF NOT EXISTS idx_overlay_decisions_ts ON overlay_decisions(ts);
 CREATE TABLE IF NOT EXISTS universe_state (
     universe_type   TEXT PRIMARY KEY,
     symbols         TEXT NOT NULL,
@@ -431,6 +449,25 @@ class PostgresRepository(PortfolioRepository):
                      json.dumps(row.features, allow_nan=False), row.backfilled),
                 )
                 return int(cur.fetchone()["id"])
+
+    def record_overlay_decision(self, row, prompt_text: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                # ON CONFLICT DO NOTHING: the same prompt recurs constantly (30-minute
+                # overlay cache, unchanged daily features), so this is the common path.
+                cur.execute(
+                    "INSERT INTO overlay_prompts (prompt_hash, prompt_text, created_at) "
+                    "VALUES (%s, %s, %s) ON CONFLICT (prompt_hash) DO NOTHING",
+                    (row.prompt_hash, prompt_text, _now()),
+                )
+                cur.execute(
+                    "INSERT INTO overlay_decisions "
+                    "(run_id, ts, symbol, prompt_hash, action, strength_post, "
+                    "rationale, provider) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (row.run_id, _now(), row.symbol, row.prompt_hash, row.action,
+                     row.strength_post, row.rationale, row.provider),
+                )
 
     def link_order_to_decision_features(self, run_id: int, order_id: int) -> None:
         with self._connect() as conn:

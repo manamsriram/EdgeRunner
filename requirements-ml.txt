@@ -1,0 +1,4 @@
+# Training-time only — NOT installed on Render/VM runtime.
+# Runtime inference (trader/ml_overlay/predict.py) is numpy-only by design:
+# the trading process has a documented OOM history, so sklearn/scipy stay out of it.
+scikit-learn>=1.5

@@ -6,6 +6,7 @@ It never originates a trade, flips buy↔sell, or sets position size.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -156,6 +157,38 @@ def _parse_response(text: str) -> dict:
     return json.loads(text.strip())
 
 
+def _record_overlay_decision(repo, run_id, symbol, prompt_text, *, action,
+                            strength_post, rationale, provider) -> None:
+    """Best-effort capture of one genuine LLM decision. Never raises.
+
+    Feeds the ML-overlay research track: a model trained on the numeric feature vector
+    alone plateaued at ~73% agreement with the LLM, so the text the LLM actually read
+    (news headlines, the strategy's signal reason) is preserved here for a later retrain.
+    """
+    if repo is None or run_id is None:
+        return
+    try:
+        from trader.portfolio.repository import OverlayDecisionRow
+
+        repo.record_overlay_decision(
+            OverlayDecisionRow(
+                run_id=run_id,
+                symbol=symbol,
+                prompt_hash=hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+                # Store what the LLM literally said; the caller's fallbacks for an
+                # invalid action or out-of-range strength are applied after this, and
+                # training needs the unrepaired answer.
+                action=str(action),
+                strength_post=float(strength_post) if isinstance(strength_post, (int, float)) else -1.0,
+                rationale=rationale,
+                provider=provider,
+            ),
+            prompt_text,
+        )
+    except Exception:
+        logger.warning("overlay-decision logging failed for %s", symbol, exc_info=True)
+
+
 def apply_claude_overlay(
     signal: Signal,
     bars: pd.DataFrame,
@@ -170,8 +203,13 @@ def apply_claude_overlay(
     repo=None,  # optional PortfolioRepository — enables trade-memory context
     strategy_name: str | None = None,
     regime: str | None = None,
+    run_id: int | None = None,
 ) -> Signal:
-    """Call LLM to review a quant signal. Returns original signal on any failure."""
+    """Call LLM to review a quant signal. Returns original signal on any failure.
+
+    When `run_id` and `repo` are both given, the prompt and the parsed answer are
+    persisted to overlay_decisions (see _record_overlay_decision). Cache hits return
+    before that point on purpose — a replayed decision is not a new LLM judgement."""
     try:
         cache_key = (signal.symbol, signal.side)
         now = time.monotonic()
@@ -261,6 +299,13 @@ def apply_claude_overlay(
 
         action = parsed.get("action")
         rationale = str(parsed.get("rationale", ""))
+
+        _record_overlay_decision(
+            repo, run_id, signal.symbol, user_message,
+            action=action, strength_post=parsed.get("strength"),
+            rationale=rationale,
+            provider=usage.provider if usage else "unknown",
+        )
 
         if action not in {"approve", "veto"}:
             logger.warning("overlay: invalid action %r for %s, approving", action, signal.symbol)
