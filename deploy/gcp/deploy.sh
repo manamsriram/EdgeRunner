@@ -18,8 +18,10 @@ set -euo pipefail
 APP_DIR=/opt/edgerunner
 LIVE_BRANCH="${LIVE_BRANCH:-live}"
 # The tree is owned by the edgerunner user; this script runs as root, and git
-# refuses another user's repo as "dubious ownership" without this.
-git config --global --add safe.directory "$APP_DIR/app" 2>/dev/null || true
+# refuses another user's repo as "dubious ownership" without this. --system
+# (not --global) because systemd's oneshot unit has no $HOME, so --global
+# silently writes nowhere and the fetch below fails "dubious ownership" anyway.
+git config --system --add safe.directory "$APP_DIR/app"
 cd "$APP_DIR/app"
 
 git fetch --force --prune origin "+refs/heads/*:refs/remotes/origin/*"
