@@ -21,6 +21,8 @@ ccxt>=4.3.0
 # --- Phase 9: Postgres support for Render two-service deployment ---
 psycopg2-binary>=2.9
 alembic>=1.13
+# SQLAlchemy 2.1 made psycopg v3 the default postgresql:// driver; this app uses psycopg2.
+SQLAlchemy>=2.0,<2.1
 # --- Phase 8: FastAPI backend (replaces Streamlit) ---
 pydantic>=2.0
 fastapi>=0.111.0
