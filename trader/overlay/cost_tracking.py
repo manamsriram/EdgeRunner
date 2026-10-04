@@ -15,6 +15,8 @@ _PRICING_PER_1M: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash-lite": (0.10, 0.40),
     "llama-3.1-8b-instant": (0.05, 0.08),
     "claude-haiku-4-5-20251001": (1.00, 5.00),
+    "jev-latest": (0.042, 0.0),  # output tokens are free
+    "jev-1.13.0": (0.042, 0.0),
 }
 
 

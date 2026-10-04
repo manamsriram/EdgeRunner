@@ -125,7 +125,7 @@ def apply_overlay(
     repo=None, strategy_name: str | None = None, regime: str | None = None,
     run_id: int | None = None,
 ) -> Signal:
-    """Apply LLM overlay when at least one API key is configured; otherwise pass through.
+    """Apply the overlay (LLM, or Jev when overlay_provider=="jev") when a key is configured; otherwise pass through.
 
     Invariants preserved by the overlay implementation:
       - Signal.side remains one of {"buy", "sell", "hold"}.
@@ -137,6 +137,18 @@ def apply_overlay(
     """
     if config is None:
         return signal
+    provider = getattr(config, "overlay_provider", "llm")
+    typesafe_key = getattr(config, "typesafe_api_key", None)
+    if provider == "jev" and typesafe_key:
+        from trader.overlay.jev_overlay import apply_jev_overlay
+
+        finnhub_client = _get_finnhub_client(config)
+        return apply_jev_overlay(
+            signal, bars, typesafe_key, config=config,
+            sentiment_client=_get_sentiment_client(config, finnhub_client),
+            repo=repo, run_id=run_id,
+        )
+
     groq_key = getattr(config, "groq_api_key", None)
     claude_key = getattr(config, "anthropic_api_key", None)
     gemini_key = getattr(config, "gemini_api_key", None)
@@ -156,4 +168,5 @@ def apply_overlay(
         config=config,
         sentiment_client=sentiment_client,
         repo=repo, strategy_name=strategy_name, regime=regime, run_id=run_id,
+        jev_shadow_key=typesafe_key if provider == "shadow" else None,
     )

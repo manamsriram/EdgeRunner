@@ -172,6 +172,8 @@ class Config:
     ccxt_secret_key: str | None = None
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
+    typesafe_api_key: str | None = None        # Jev overlay (TypeSafe AI)
+    overlay_provider: str = "llm"              # "llm" | "shadow" (LLM decides, Jev logged) | "jev"
     finnhub_api_key: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
@@ -291,6 +293,8 @@ def load_config() -> Config:
         ccxt_api_key=os.getenv("CCXT_API_KEY") or None,
         ccxt_secret_key=os.getenv("CCXT_SECRET_KEY") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+        typesafe_api_key=os.getenv("TYPESAFE_API_KEY") or None,
+        overlay_provider=os.getenv("OVERLAY_PROVIDER", "llm").strip().lower(),
         finnhub_api_key=os.getenv("FINNHUB_API_KEY") or None,
         reddit_client_id=os.getenv("REDDIT_CLIENT_ID") or None,
         reddit_client_secret=os.getenv("REDDIT_CLIENT_SECRET") or None,

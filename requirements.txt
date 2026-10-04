@@ -11,6 +11,8 @@ pytest==9.0.3
 google-genai>=1.0.0
 groq>=0.11.0
 anthropic>=0.40.0
+# Jev (TypeSafe AI) overlay provider — lazy-imported, optional at runtime
+typesafe-sdk>=0.7.2
 # NOTE: indicators are implemented natively in trader/strategy/indicators.py.
 # pandas-ta is intentionally NOT used: its current release requires Python >=3.12
 # and pulls in the removed numpy.NaN symbol, which breaks on this stack.

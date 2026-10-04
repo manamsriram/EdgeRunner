@@ -204,6 +204,7 @@ def apply_claude_overlay(
     strategy_name: str | None = None,
     regime: str | None = None,
     run_id: int | None = None,
+    jev_shadow_key: str | None = None,  # when set, Jev also judges the signal and is only logged
 ) -> Signal:
     """Call LLM to review a quant signal. Returns original signal on any failure.
 
@@ -306,6 +307,10 @@ def apply_claude_overlay(
             rationale=rationale,
             provider=usage.provider if usage else "unknown",
         )
+        if jev_shadow_key:
+            from trader.overlay.jev_overlay import shadow_jev
+
+            shadow_jev(signal, bars, news or "", sentiment_str, jev_shadow_key, repo, run_id)
 
         if action not in {"approve", "veto"}:
             logger.warning("overlay: invalid action %r for %s, approving", action, signal.symbol)
